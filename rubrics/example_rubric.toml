@@ -1,0 +1,18 @@
+# schema: ../config/rubric.schema.json
+# @schema ../config/rubric.schema.json
+#:schema ../config/rubric.schema.json
+
+[[criterion]]
+name = "Criterion 1"
+desc = "Description of criterion 1"
+pts = 10
+rating = "ternary"
+grading = "standard"
+
+
+[[criterion]]
+name = "Criterion 2"
+desc = "Description of criterion 2"
+pts = 20
+grading = "custom"
+rating = "likert"

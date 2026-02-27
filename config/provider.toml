@@ -1,0 +1,39 @@
+# schema: provider.schema.json
+# @schema provider.schema.json
+#:schema provider.schema.json
+
+[providers.ollama]
+base_url = "http://localhost:11434/v1"
+api_key = "ollama"
+model = "qwen3.5:35b-a3b"
+mode = "markdown_json_mode"
+
+[providers.deepseek_reasoner]
+base_url = "https://api.deepseek.com"
+api_key = "${DEEPSEEK_API_KEY}"
+model = "deepseek-reasoner"
+mode = "tool_call"
+
+[providers.deepseek_reasoner_strict]
+base_url = "https://api.deepseek.com/beta"
+api_key = "${DEEPSEEK_API_KEY}"
+model = "deepseek-reasoner"
+mode = "tools_strict"
+
+[providers.deepseek_chat]
+base_url = "https://api.deepseek.com"
+api_key = "${DEEPSEEK_API_KEY}"
+model = "deepseek-chat"
+mode = "markdown_json_mode"
+
+[providers.deepseek_chat_tool]
+base_url = "https://api.deepseek.com"
+api_key = "${DEEPSEEK_API_KEY}"
+model = "deepseek-chat"
+mode = "tool_call"
+
+[providers.deepseek_chat_tool_strict]
+base_url = "https://api.deepseek.com/beta"
+api_key = "${DEEPSEEK_API_KEY}"
+model = "deepseek-chat"
+mode = "tools_strict"

@@ -1,0 +1,7 @@
+.env
+
+*.schema.json
+
+assignments
+
+**/__pycache__
