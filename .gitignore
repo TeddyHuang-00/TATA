@@ -5,5 +5,7 @@
 assignments/*
 !assignments/example
 
-**/__pycache__
+__pycache__/
 .vscode
+.hermesignore
+HERMES.md
