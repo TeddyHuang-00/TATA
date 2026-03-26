@@ -9,7 +9,7 @@ import instructor
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from assignment_config import load_assignment_file
+from assignment_config import ensure_assignment_dirs, load_assignment_file, resolve_assignment_paths
 from provider import get_providers
 from rubric import generate_grading_model, get_rubric_definition
 
@@ -33,15 +33,15 @@ class GradingCheckpoint(BaseModel):
 
 def _load_assignment_config(config_path: Path) -> AssignmentConfig:
     cfg = load_assignment_file(config_path)
-
-    assignment = cfg.assignment
     grading = cfg.grading
+    paths = resolve_assignment_paths(cfg, config_path.parent)
+    ensure_assignment_dirs(paths)
 
-    name = str(assignment.name)
-    processed_dir = assignment.resolve_processed_dir(config_path.parent)
-    graded_dir = assignment.resolve_graded_dir(config_path.parent)
-    logs_dir = assignment.resolve_logs_dir(config_path.parent)
-    reference_file = assignment.resolve_reference_file(config_path.parent)
+    name = str(cfg.assignment.name)
+    processed_dir = paths.processed_dir
+    graded_dir = paths.graded_dir
+    logs_dir = paths.logs_dir
+    reference_file = paths.reference_file
 
     rubric_file = (config_path.parents[2] / grading.rubric).resolve()
     system_prompt_file = (config_path.parents[2] / grading.system_prompt).resolve()
@@ -161,6 +161,27 @@ def grade_assignment(config_path: Path) -> None:
 
     checkpoint = _load_checkpoint(checkpoint_file)
 
+    if not cfg.rubric_file.exists():
+        msg = (
+            f"Rubric file not found: {cfg.rubric_file}\n"
+            "Set [grading.rubric] to an existing TOML file, e.g. rubrics/example_rubric.toml."
+        )
+        raise FileNotFoundError(msg)
+
+    if not cfg.system_prompt_file.exists():
+        msg = (
+            f"System prompt file not found: {cfg.system_prompt_file}\n"
+            "Set [grading.system_prompt] to an existing markdown file, e.g. prompt/lab.md."
+        )
+        raise FileNotFoundError(msg)
+
+    if not cfg.reference_file.exists():
+        msg = (
+            f"Reference file not found: {cfg.reference_file}\n"
+            "Create processed/reference.md or set [assignment.reference_file] in config."
+        )
+        raise FileNotFoundError(msg)
+
     rubric_def = get_rubric_definition(cfg.rubric_file)
     response_model = generate_grading_model(rubric_def)
 
@@ -169,7 +190,10 @@ def grade_assignment(config_path: Path) -> None:
 
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
     if not submissions:
-        print(f"No submissions found in: {cfg.processed_dir}")
+        print(
+            f"No submissions found in: {cfg.processed_dir}\n"
+            "Run preprocess first and ensure processed/*.md exists (excluding reference.md)."
+        )
         return
 
     pending_submissions = [s for s in submissions if s.name not in checkpoint.done]

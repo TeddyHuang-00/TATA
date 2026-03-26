@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from assignment_config import load_assignment_file
+from assignment_config import ensure_assignment_dirs, load_assignment_file, resolve_assignment_paths
 from rubric import get_rubric_definition
 
 
@@ -166,25 +166,28 @@ def score_submission(
 def score_assignment(assignment_config_path: Path) -> None:
     """Score all graded submissions for an assignment."""
     cfg = load_assignment_file(assignment_config_path)
-    assignment = cfg.assignment
     grading = cfg.grading
+    paths = resolve_assignment_paths(cfg, assignment_config_path.parent)
+    ensure_assignment_dirs(paths)
 
     # Determine paths
-    graded_dir = assignment.resolve_graded_dir(assignment_config_path.parent)
+    graded_dir = paths.graded_dir
     rubric_file = (assignment_config_path.parents[2] / grading.rubric).resolve()
 
-    if not graded_dir.exists():
-        msg = f"Graded directory not found: {graded_dir}"
-        raise FileNotFoundError(msg)
-
     if not rubric_file.exists():
-        msg = f"Rubric file not found: {rubric_file}"
+        msg = (
+            f"Rubric file not found: {rubric_file}\n"
+            "Set [grading.rubric] to an existing TOML file, e.g. rubrics/example_rubric.toml."
+        )
         raise FileNotFoundError(msg)
 
     # Process each graded JSON file
     graded_files = sorted(graded_dir.glob("*.json"))
     if not graded_files:
-        print(f"No graded files found in: {graded_dir}")
+        print(
+            f"No graded files found in: {graded_dir}\n"
+            "Run grade stage first so graded/*.json is generated."
+        )
         return
 
     for graded_file in graded_files:

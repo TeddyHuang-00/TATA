@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 InputFormat = Literal["ipynb", "html", "markdown"]
 
@@ -48,9 +49,9 @@ class ProcessingSection(BaseModel):
 
 
 class GradingSection(BaseModel):
-    rubric: str
-    system_prompt: str
-    provider: str
+    rubric: str = Field(..., min_length=1)
+    system_prompt: str = Field(..., min_length=1)
+    provider: str = Field(..., min_length=1)
     max_parallel_tasks: int = Field(default=10, ge=1, le=10)
 
 
@@ -60,13 +61,80 @@ class AssignmentFileConfig(BaseModel):
     grading: GradingSection
 
 
+@dataclass(frozen=True)
+class AssignmentPaths:
+    raw_dir: Path
+    processed_dir: Path
+    graded_dir: Path
+    logs_dir: Path
+    reference_file: Path
+
+
+def resolve_assignment_paths(cfg: AssignmentFileConfig, base_dir: Path) -> AssignmentPaths:
+    return AssignmentPaths(
+        raw_dir=cfg.assignment.resolve_raw_dir(base_dir),
+        processed_dir=cfg.assignment.resolve_processed_dir(base_dir),
+        graded_dir=cfg.assignment.resolve_graded_dir(base_dir),
+        logs_dir=cfg.assignment.resolve_logs_dir(base_dir),
+        reference_file=cfg.assignment.resolve_reference_file(base_dir),
+    )
+
+
+def ensure_assignment_dirs(paths: AssignmentPaths) -> None:
+    for directory in (paths.raw_dir, paths.processed_dir, paths.graded_dir, paths.logs_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+
 def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
     if not config_path.exists():
         msg = f"Assignment config not found: {config_path}"
         raise FileNotFoundError(msg)
 
-    cfg = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    return AssignmentFileConfig.model_validate(cfg)
+    try:
+        cfg = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        msg = (
+            f"Invalid TOML in config file: {config_path}\n"
+            f"Details: {exc}\n"
+            "Tip: start from assignments/example/config.toml and edit only [grading] first."
+        )
+        raise ValueError(msg) from exc
+
+    try:
+        return AssignmentFileConfig.model_validate(cfg)
+    except ValidationError as exc:
+        missing_required = []
+        other_errors = []
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err.get("loc", []))
+            if err.get("type") == "missing":
+                missing_required.append(loc)
+            else:
+                other_errors.append(f"{loc}: {err.get('msg')}")
+
+        detail_lines = []
+        if missing_required:
+            detail_lines.append(
+                "Missing required config fields: " + ", ".join(sorted(missing_required))
+            )
+        if other_errors:
+            detail_lines.append("Validation issues: " + "; ".join(other_errors))
+
+        guidance = (
+            "Required minimum is [grading] with rubric, system_prompt, provider.\n"
+            "Example:\n"
+            "[grading]\n"
+            'rubric = "rubrics/example_rubric.toml"\n'
+            'system_prompt = "prompt/lab.md"\n'
+            'provider = "deepseek_chat_tool"'
+        )
+
+        msg = (
+            f"Invalid assignment config: {config_path}\n"
+            + ("\n".join(detail_lines) + "\n" if detail_lines else "")
+            + guidance
+        )
+        raise ValueError(msg) from exc
 
 
 def write_assignment_schema(output_path: Path) -> Path:

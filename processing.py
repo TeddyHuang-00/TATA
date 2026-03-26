@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from assignment_config import load_assignment_file
+from assignment_config import ensure_assignment_dirs, load_assignment_file, resolve_assignment_paths
 
 
 InputFormat = Literal["ipynb", "html", "markdown"]
@@ -222,16 +222,13 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
         raise FileNotFoundError(msg)
 
     cfg = load_assignment_file(assignment_config_path)
-    assignment = cfg.assignment
     processing = cfg.processing
 
-    # Determine paths
-    raw_dir = assignment.resolve_raw_dir(assignment_config_path.parent)
-    processed_dir = assignment.resolve_processed_dir(assignment_config_path.parent)
+    paths = resolve_assignment_paths(cfg, assignment_config_path.parent)
+    ensure_assignment_dirs(paths)
 
-    if not raw_dir.exists():
-        msg = f"Raw directory not found: {raw_dir}"
-        raise FileNotFoundError(msg)
+    raw_dir = paths.raw_dir
+    processed_dir = paths.processed_dir
 
     processed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -248,7 +245,12 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".md"}
         ]
         if not supported_files:
-            print(f"No supported files found in raw directory: {raw_dir}")
+            print(
+                "No supported files found in raw directory: "
+                f"{raw_dir}\n"
+                "Add student files to raw/ (supported: .ipynb, .html, .md), "
+                "then run preprocess again."
+            )
             return
 
         first_file = supported_files[0]
@@ -285,7 +287,10 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
         raw_files = [p for p in sorted(raw_dir.glob("*")) if p.is_file()]
 
     if not raw_files:
-        print(f"No files found for input format '{input_format}' in: {raw_dir}")
+        print(
+            f"No files found for input format '{input_format}' in: {raw_dir}\n"
+            "Check [processing.input_format] in config or place matching files in raw/."
+        )
         return
 
     for raw_file in raw_files:
