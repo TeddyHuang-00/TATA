@@ -12,7 +12,7 @@ from assignment_config import (
 from rubric import get_rubric_definition
 
 
-def _calculate_criterion_score(
+def calculate_criterion_score(
     criterion_pts: int | float,
     rating: str,
     grading_scheme: str | None,
@@ -81,7 +81,7 @@ def _calculate_criterion_score(
             return 0.0
 
     elif grading_scheme == "round up":
-        standard_score = _calculate_criterion_score(
+        standard_score = calculate_criterion_score(
             criterion_pts, rating, "standard", custom_scale
         )
         return float(round(standard_score))
@@ -138,7 +138,7 @@ def score_submission(
         feedback = criterion_result["feedback"]
 
         # Calculate score
-        score = _calculate_criterion_score(
+        score = calculate_criterion_score(
             criterion.pts,
             rating,
             criterion.grading,
@@ -215,6 +215,10 @@ def score_assignment(assignment_config_path: Path) -> None:
 
         except Exception as exc:
             print(f"[error] Failed to score {graded_file.name}: {exc}")
+
+
+# Backward compatibility for older imports.
+_calculate_criterion_score = calculate_criterion_score
 
 
 def main() -> None:

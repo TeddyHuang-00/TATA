@@ -87,6 +87,12 @@ Score only:
 uv run main.py --stage score --config assignments/my-assignment/config.toml
 ```
 
+Analyze grading quality (meta analysis):
+
+```bash
+uv run main.py --stage analyze --config assignments/my-assignment/config.toml
+```
+
 Run all stages:
 
 ```bash
@@ -99,6 +105,7 @@ uv run main.py --stage all --config assignments/my-assignment/config.toml
 - Structured grading JSON: `graded/*.json`
 - Score summaries: `graded/*.md`
 - Logs and checkpoint: `logs/`
+- Meta analysis reports: `logs/meta_analysis.json`, `logs/meta_analysis.md`
 
 ## 9. Need help?
 

@@ -10,7 +10,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - Optional default paths for assignment folders
 - Dynamic rubric-based grading schema generation
 - Parallel grading with bounded concurrency
-- Stage-based CLI: preprocess, grade, score, all, schema
+- Stage-based CLI: preprocess, grade, score, analyze, all, schema
 
 ## Quick Start
 
@@ -32,6 +32,12 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
    ```bash
    uv run main.py --stage all --config assignments/my-assignment/config.toml
+   ```
+
+5. Run post-scoring meta analysis (optional):
+
+   ```bash
+   uv run main.py --stage analyze --config assignments/my-assignment/config.toml
    ```
 
 ## Documentation

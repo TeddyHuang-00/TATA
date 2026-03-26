@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from analysis import analyze_assignment
 from grading import grade_assignment
 from processing import preprocess_assignment
 from schema_tools import generate_all_schemas
@@ -14,7 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="TATA unified grading entrypoint.")
     parser.add_argument(
         "--stage",
-        choices=["preprocess", "grade", "score", "all", "schema"],
+        choices=["preprocess", "grade", "score", "analyze", "all", "schema"],
         default="all",
         help="Pipeline stage to run.",
     )
@@ -47,6 +48,10 @@ def main() -> None:
     if args.stage in ("score", "all"):
         print("Running scoring...")
         score_assignment(args.config)
+
+    if args.stage == "analyze":
+        print("Running meta analysis...")
+        analyze_assignment(args.config)
 
 
 if __name__ == "__main__":
