@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +9,7 @@ import instructor
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from assignment_config import load_assignment_file
 from provider import get_providers
 from rubric import generate_grading_model, get_rubric_definition
 
@@ -33,31 +32,21 @@ class GradingCheckpoint(BaseModel):
 
 
 def _load_assignment_config(config_path: Path) -> AssignmentConfig:
-    if not config_path.exists():
-        msg = f"Assignment config not found: {config_path}"
-        raise FileNotFoundError(msg)
+    cfg = load_assignment_file(config_path)
 
-    cfg = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assignment = cfg.assignment
+    grading = cfg.grading
 
-    assignment = cfg.get("assignment", {})
-    grading = cfg.get("grading", {})
+    name = str(assignment.name)
+    processed_dir = assignment.resolve_processed_dir(config_path.parent)
+    graded_dir = assignment.resolve_graded_dir(config_path.parent)
+    logs_dir = assignment.resolve_logs_dir(config_path.parent)
+    reference_file = assignment.resolve_reference_file(config_path.parent)
 
-    name = str(assignment.get("name", "assignment"))
-    processed_dir = (
-        config_path.parent / assignment.get("processed_dir", "processed")
-    ).resolve()
-    graded_dir = (config_path.parent / assignment.get("graded_dir", "graded")).resolve()
-    logs_dir = (config_path.parent / assignment.get("logs_dir", "logs")).resolve()
-    reference_file = (config_path.parent / assignment["reference_file"]).resolve()
-
-    rubric_file = (config_path.parents[2] / grading["rubric"]).resolve()
-    system_prompt_file = (config_path.parents[2] / grading["system_prompt"]).resolve()
-    provider_name = str(grading["provider"])
-    max_parallel_tasks = int(grading.get("max_parallel_tasks", 10))
-    if max_parallel_tasks < 1:
-        max_parallel_tasks = 1
-    if max_parallel_tasks > 10:
-        max_parallel_tasks = 10
+    rubric_file = (config_path.parents[2] / grading.rubric).resolve()
+    system_prompt_file = (config_path.parents[2] / grading.system_prompt).resolve()
+    provider_name = str(grading.provider)
+    max_parallel_tasks = grading.max_parallel_tasks
 
     return AssignmentConfig(
         assignment_name=name,

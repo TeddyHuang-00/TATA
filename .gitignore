@@ -2,6 +2,7 @@
 
 *.schema.json
 
-assignments
+assignments/*
+!assignments/example
 
 **/__pycache__

@@ -4,31 +4,13 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import tomllib
+from assignment_config import load_assignment_file
 
 
 InputFormat = Literal["ipynb", "html", "markdown"]
-
-
-@dataclass
-class ProcessingConfig:
-    raw_dir: Path
-    processed_dir: Path
-    input_format: InputFormat | None
-    indent_level: int = 4
-    remove_base64_images: bool = True
-    clean_filenames: bool = True
-    strip_canvas_suffix: bool = True
-    strip_html_callouts: bool = True
-    strip_html_div_tags: bool = True
-    strip_html_escaped_backslashes: bool = True
-    remove_nbconvert_assets: bool = True
-    nbconvert_template: str | None = None
-    nbconvert_template_dir: Path | None = None
 
 
 def _detect_input_format(file_path: Path) -> InputFormat:
@@ -239,19 +221,13 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
         msg = f"Assignment config not found: {assignment_config_path}"
         raise FileNotFoundError(msg)
 
-    # Load assignment config
-    cfg = tomllib.loads(assignment_config_path.read_text(encoding="utf-8"))
-
-    assignment = cfg.get("assignment", {})
-    processing = cfg.get("processing", {})
+    cfg = load_assignment_file(assignment_config_path)
+    assignment = cfg.assignment
+    processing = cfg.processing
 
     # Determine paths
-    raw_dir = (
-        assignment_config_path.parent / assignment.get("raw_dir", "raw")
-    ).resolve()
-    processed_dir = (
-        assignment_config_path.parent / assignment.get("processed_dir", "processed")
-    ).resolve()
+    raw_dir = assignment.resolve_raw_dir(assignment_config_path.parent)
+    processed_dir = assignment.resolve_processed_dir(assignment_config_path.parent)
 
     if not raw_dir.exists():
         msg = f"Raw directory not found: {raw_dir}"
@@ -260,7 +236,7 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     # Get input format (auto-detect from first supported file or config override)
-    input_format = processing.get("input_format")
+    input_format = processing.input_format
     if input_format is not None and input_format not in {"ipynb", "html", "markdown"}:
         msg = f"Unsupported input_format in config: {input_format}"
         raise ValueError(msg)
@@ -280,19 +256,17 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
         print(f"Auto-detected input format: {input_format} (from {first_file.name})")
 
     # Processing options
-    remove_base64 = processing.get("remove_base64_images", True)
-    clean_filenames = processing.get("clean_filenames", True)
-    strip_canvas_suffix = processing.get("strip_canvas_suffix", True)
-    strip_html_callouts = processing.get("strip_html_callouts", True)
-    strip_html_div_tags = processing.get("strip_html_div_tags", True)
-    strip_html_escaped_backslashes = processing.get(
-        "strip_html_escaped_backslashes", True
-    )
-    remove_nbconvert_assets = processing.get("remove_nbconvert_assets", True)
-    nbconvert_template = processing.get("nbconvert_template")
+    remove_base64 = processing.remove_base64_images
+    clean_filenames = processing.clean_filenames
+    strip_canvas_suffix = processing.strip_canvas_suffix
+    strip_html_callouts = processing.strip_html_callouts
+    strip_html_div_tags = processing.strip_html_div_tags
+    strip_html_escaped_backslashes = processing.strip_html_escaped_backslashes
+    remove_nbconvert_assets = processing.remove_nbconvert_assets
+    nbconvert_template = processing.nbconvert_template
 
     default_template_dir = assignment_config_path.parents[2] / "templates"
-    nbconvert_template_dir = processing.get("nbconvert_template_dir")
+    nbconvert_template_dir = processing.nbconvert_template_dir
     if nbconvert_template_dir is not None:
         template_dir_path = (
             assignment_config_path.parent / nbconvert_template_dir

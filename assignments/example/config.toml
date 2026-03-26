@@ -1,0 +1,8 @@
+# schema: ../../config/assignment.schema.json
+# @schema ../../config/assignment.schema.json
+#:schema ../../config/assignment.schema.json
+
+[grading]
+rubric = "rubrics/example_rubric.toml"
+system_prompt = "prompt/lab.md"
+provider = "deepseek_chat_tool"

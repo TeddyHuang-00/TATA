@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from assignment_config import load_assignment_file
 from rubric import get_rubric_definition
 
 
@@ -164,23 +165,13 @@ def score_submission(
 
 def score_assignment(assignment_config_path: Path) -> None:
     """Score all graded submissions for an assignment."""
-    if not assignment_config_path.exists():
-        msg = f"Assignment config not found: {assignment_config_path}"
-        raise FileNotFoundError(msg)
-
-    # Load config
-    import tomllib
-
-    cfg = tomllib.loads(assignment_config_path.read_text(encoding="utf-8"))
-
-    assignment = cfg.get("assignment", {})
-    grading = cfg.get("grading", {})
+    cfg = load_assignment_file(assignment_config_path)
+    assignment = cfg.assignment
+    grading = cfg.grading
 
     # Determine paths
-    graded_dir = (
-        assignment_config_path.parent / assignment.get("graded_dir", "graded")
-    ).resolve()
-    rubric_file = (assignment_config_path.parents[2] / grading["rubric"]).resolve()
+    graded_dir = assignment.resolve_graded_dir(assignment_config_path.parent)
+    rubric_file = (assignment_config_path.parents[2] / grading.rubric).resolve()
 
     if not graded_dir.exists():
         msg = f"Graded directory not found: {graded_dir}"
