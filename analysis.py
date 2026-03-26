@@ -13,6 +13,7 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from hooks_runtime import HookRuntime
 from rubric import RubricDefinition, get_rubric_definition, slugify_criterion_name
 from scoring import calculate_criterion_score
 
@@ -231,6 +232,20 @@ def _build_markdown_report(result: dict[str, Any]) -> str:
 
 
 def analyze_assignment(assignment_config_path: Path) -> None:
+    cfg = load_assignment_file(assignment_config_path)
+    hook_runtime = HookRuntime.from_config(
+        cfg,
+        assignment_config_path=assignment_config_path,
+    )
+
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "before_analyze",
+            {
+                "assignment_config": str(assignment_config_path),
+            },
+        )
+
     rubric_def, graded_files, paths = _load_rubric_and_files(assignment_config_path)
     if not graded_files or rubric_def is None:
         return
@@ -245,6 +260,16 @@ def analyze_assignment(assignment_config_path: Path) -> None:
 
     print(f"[analysis] {json_output}")
     print(f"[analysis] {md_output}")
+
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "after_analyze",
+            {
+                "assignment_config": str(assignment_config_path),
+                "json_output": str(json_output),
+                "md_output": str(md_output),
+            },
+        )
 
 
 def main() -> None:

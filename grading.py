@@ -18,6 +18,7 @@ from assignment_config import (
 )
 from provider import get_providers
 from rubric import generate_grading_model, get_rubric_definition
+from hooks_runtime import HookRuntime
 
 
 @dataclass
@@ -181,6 +182,8 @@ def _run_single_grading_task(
     response_model: type[BaseModel],
     system_prompt: str,
     reference_text: str,
+    hook_runtime: HookRuntime | None,
+    assignment_config_path: Path,
 ) -> tuple[str, str, str | None]:
     """Run grading for one submission.
 
@@ -189,6 +192,23 @@ def _run_single_grading_task(
     """
     try:
         student_text = submission.read_text(encoding="utf-8")
+
+        if hook_runtime is not None:
+            before_payload = hook_runtime.run(
+                "before_grade_submission",
+                {
+                    "assignment_config": str(assignment_config_path),
+                    "submission_name": submission.name,
+                    "submission_path": str(submission),
+                    "student_text": student_text,
+                    "reference_text": reference_text,
+                    "system_prompt": system_prompt,
+                },
+            )
+            student_text = str(before_payload.get("student_text", student_text))
+            reference_text = str(before_payload.get("reference_text", reference_text))
+            system_prompt = str(before_payload.get("system_prompt", system_prompt))
+
         result = _grade_one_submission(
             client=client,
             model_name=model_name,
@@ -197,13 +217,45 @@ def _run_single_grading_task(
             reference_text=reference_text,
             student_text=student_text,
         )
-        return submission.name, result.model_dump_json(indent=2), None
+        result_json = result.model_dump_json(indent=2)
+
+        if hook_runtime is not None:
+            after_payload = hook_runtime.run(
+                "after_grade_submission",
+                {
+                    "assignment_config": str(assignment_config_path),
+                    "submission_name": submission.name,
+                    "submission_path": str(submission),
+                    "result_json": result_json,
+                    "error": None,
+                },
+            )
+            result_json = str(after_payload.get("result_json", result_json))
+
+        return submission.name, result_json, None
     except Exception as exc:  # noqa: BLE001
-        return submission.name, "", f"{type(exc).__name__}: {exc}"
+        error_message = f"{type(exc).__name__}: {exc}"
+        if hook_runtime is not None:
+            hook_runtime.run(
+                "after_grade_submission",
+                {
+                    "assignment_config": str(assignment_config_path),
+                    "submission_name": submission.name,
+                    "submission_path": str(submission),
+                    "result_json": "",
+                    "error": error_message,
+                },
+            )
+        return submission.name, "", error_message
 
 
 def grade_assignment(config_path: Path) -> None:
     cfg = _load_assignment_config(config_path)
+    cfg_model = load_assignment_file(config_path)
+    hook_runtime = HookRuntime.from_config(
+        cfg_model,
+        assignment_config_path=config_path,
+    )
 
     cfg.graded_dir.mkdir(parents=True, exist_ok=True)
     cfg.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -256,9 +308,24 @@ def grade_assignment(config_path: Path) -> None:
 
     client, model_name = _build_client(cfg.provider_name)
     worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))
+
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "before_grade",
+            {
+                "assignment_config": str(config_path),
+                "submission_count": len(pending_submissions),
+                "processed_dir": str(cfg.processed_dir),
+                "graded_dir": str(cfg.graded_dir),
+            },
+        )
+
     print(
         f"Grading {len(pending_submissions)} submissions with {worker_count} parallel task(s)..."
     )
+
+    done_count = 0
+    error_count = 0
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_submission = {
@@ -270,6 +337,8 @@ def grade_assignment(config_path: Path) -> None:
                 response_model=response_model,
                 system_prompt=system_prompt,
                 reference_text=reference_text,
+                hook_runtime=hook_runtime,
+                assignment_config_path=config_path,
             ): submission
             for submission in pending_submissions
         }
@@ -290,10 +359,24 @@ def grade_assignment(config_path: Path) -> None:
                 checkpoint.done.append(submission_name)
                 _save_checkpoint(checkpoint_file, checkpoint)
                 print(f"[done] {submission_name}")
+                done_count += 1
             else:
                 with error_log_file.open("a", encoding="utf-8") as f:
                     f.write(f"{submission_name}: {error_message}\n")
                 print(f"[error] {submission_name}: {error_message}")
+                error_count += 1
+
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "after_grade",
+            {
+                "assignment_config": str(config_path),
+                "done_count": done_count,
+                "error_count": error_count,
+                "graded_dir": str(cfg.graded_dir),
+                "errors_log": str(error_log_file),
+            },
+        )
 
 
 def main() -> None:

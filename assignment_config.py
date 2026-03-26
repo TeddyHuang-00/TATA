@@ -9,6 +9,22 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 InputFormat = Literal["ipynb", "html", "markdown"]
+ScoreReportDetail = Literal["full", "slim"]
+ScoreOutputStyle = Literal["markdown", "plain", "html"]
+HookMountPoint = Literal[
+    "before_preprocess",
+    "before_preprocess_file",
+    "after_preprocess_file",
+    "after_preprocess",
+    "before_grade",
+    "before_grade_submission",
+    "after_grade_submission",
+    "after_grade",
+    "before_score",
+    "after_score",
+    "before_analyze",
+    "after_analyze",
+]
 
 
 class AssignmentSection(BaseModel):
@@ -43,9 +59,21 @@ class ProcessingSection(BaseModel):
     strip_html_callouts: bool = Field(default=True)
     strip_html_div_tags: bool = Field(default=True)
     strip_html_escaped_backslashes: bool = Field(default=True)
+    strip_html_style_blocks: bool = Field(default=True)
+    convert_html_tables_to_markdown: bool = Field(default=True)
+    strip_colab_dataframe_widgets: bool = Field(default=True)
+    strip_html_script_tags: bool = Field(default=True)
+    strip_html_button_tags: bool = Field(default=True)
+    strip_html_svg_tags: bool = Field(default=True)
+    normalize_dtype_label_html: bool = Field(default=True)
     remove_nbconvert_assets: bool = Field(default=True)
     nbconvert_template: str | None = Field(default=None)
     nbconvert_template_dir: str | None = Field(default=None)
+
+
+class HooksSection(BaseModel):
+    dir: str = Field(default="hooks")
+    mounts: dict[HookMountPoint, str] = Field(default_factory=dict)
 
 
 class GradingSection(BaseModel):
@@ -55,10 +83,17 @@ class GradingSection(BaseModel):
     max_parallel_tasks: int = Field(default=10, ge=1, le=10)
 
 
+class ScoringSection(BaseModel):
+    report_detail: ScoreReportDetail = Field(default="full")
+    output_style: ScoreOutputStyle = Field(default="markdown")
+
+
 class AssignmentFileConfig(BaseModel):
     assignment: AssignmentSection = Field(default_factory=AssignmentSection)
     processing: ProcessingSection = Field(default_factory=ProcessingSection)
+    hooks: HooksSection = Field(default_factory=HooksSection)
     grading: GradingSection
+    scoring: ScoringSection = Field(default_factory=ScoringSection)
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import json
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from hooks_runtime import HookRuntime
 from rubric import get_rubric_definition
 
 
@@ -105,18 +107,70 @@ def _generate_criterion_feedback(
 """
 
 
+def _generate_criterion_feedback_plain(
+    criterion_name: str,
+    criterion_pts: int | float,
+    rating: str,
+    feedback: str,
+    score: float,
+) -> str:
+    """Generate plain-text feedback for a single criterion."""
+    return "\n".join(
+        [
+            f"- {criterion_name} ({score:.1f}/{criterion_pts} pts)",
+            f"  - Rating: {rating.upper()}",
+            f"  - Feedback: {feedback}",
+        ]
+    )
+
+
+def _generate_criterion_feedback_html(
+    criterion_name: str,
+    criterion_pts: int | float,
+    rating: str,
+    feedback: str,
+    score: float,
+) -> str:
+    """Generate HTML feedback for a single criterion."""
+    return (
+        f"<section class=\"criterion\">"
+        f"<h3>{escape(criterion_name)} ({score:.1f}/{criterion_pts} pts)</h3>"
+        f"<p><strong>Rating:</strong> {escape(rating.upper())}</p>"
+        f"<p><strong>Feedback:</strong> {escape(feedback)}</p>"
+        f"</section>"
+    )
+
+
+def _summary_suffix_for_style(output_style: str) -> str:
+    if output_style == "html":
+        return ".html"
+    if output_style == "plain":
+        return ".txt"
+    return ".md"
+
+
+def _summary_subdir_for_style(output_style: str) -> str:
+    if output_style == "html":
+        return "html"
+    if output_style == "plain":
+        return "txt"
+    return "md"
+
+
 def score_submission(
     rubric_def_path: Path,
     grading_response: dict[str, Any],
+    report_detail: str = "full",
+    output_style: str = "markdown",
 ) -> tuple[float, str]:
-    """Score a single submission and generate markdown summary.
+    """Score a single submission and generate summary.
 
     Args:
         rubric_def_path: Path to the rubric TOML file
         grading_response: The grading response dict from LLM
 
     Returns:
-        Tuple of (total_score, markdown_summary)
+        Tuple of (total_score, summary)
     """
     rubric_def = get_rubric_definition(rubric_def_path)
 
@@ -146,23 +200,77 @@ def score_submission(
         )
         total_score += score
 
-        # Generate feedback
-        criterion_feedbacks.append(
-            _generate_criterion_feedback(
-                criterion.name,
-                criterion.pts,
-                rating,
-                feedback,
-                score,
-            )
-        )
+        is_full_mark = score >= float(criterion.pts)
+        if report_detail == "slim" and is_full_mark:
+            continue
 
-    # Generate final summary
-    summary_lines = [
-        f"## Grading Summary: {Path(grading_response.get('_filename', 'submission')).stem}\n",
-        *criterion_feedbacks,
-        f"### Total Score: {total_score:.1f}/{sum(c.pts for c in rubric_def.criterion):.1f}",
-    ]
+        if output_style == "plain":
+            criterion_feedbacks.append(
+                _generate_criterion_feedback_plain(
+                    criterion.name,
+                    criterion.pts,
+                    rating,
+                    feedback,
+                    score,
+                )
+            )
+        elif output_style == "html":
+            criterion_feedbacks.append(
+                _generate_criterion_feedback_html(
+                    criterion.name,
+                    criterion.pts,
+                    rating,
+                    feedback,
+                    score,
+                )
+            )
+        else:
+            criterion_feedbacks.append(
+                _generate_criterion_feedback(
+                    criterion.name,
+                    criterion.pts,
+                    rating,
+                    feedback,
+                    score,
+                )
+            )
+
+    max_score = sum(c.pts for c in rubric_def.criterion)
+    submission_name = Path(grading_response.get("_filename", "submission")).stem
+
+    if output_style == "plain":
+        summary_lines = [f"Grading Summary: {submission_name}"]
+        if report_detail == "slim" and not criterion_feedbacks:
+            summary_lines.append("- All criteria received full marks.")
+        else:
+            summary_lines.extend(criterion_feedbacks)
+        summary_lines.append(f"Total Score: {total_score:.1f}/{max_score:.1f}")
+    elif output_style == "html":
+        summary_lines = [
+            "<!doctype html>",
+            "<html lang=\"en\">",
+            "<head>",
+            "<meta charset=\"utf-8\">",
+            "<title>Grading Summary</title>",
+            "<style>body{font-family:Arial,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.5}h1,h2,h3{margin:0.6rem 0}section.criterion{border:1px solid #ddd;border-radius:8px;padding:0.8rem 1rem;margin:0.8rem 0}footer{margin-top:1.5rem;font-weight:700}</style>",
+            "</head>",
+            "<body>",
+            f"<h1>Grading Summary: {escape(submission_name)}</h1>",
+        ]
+        if report_detail == "slim" and not criterion_feedbacks:
+            summary_lines.append("<p>All criteria received full marks.</p>")
+        else:
+            summary_lines.extend(criterion_feedbacks)
+        summary_lines.append(f"<footer>Total Score: {total_score:.1f}/{max_score:.1f}</footer>")
+        summary_lines.append("</body>")
+        summary_lines.append("</html>")
+    else:
+        summary_lines = [f"## Grading Summary: {submission_name}\n"]
+        if report_detail == "slim" and not criterion_feedbacks:
+            summary_lines.append("- All criteria received full marks.")
+        else:
+            summary_lines.extend(criterion_feedbacks)
+        summary_lines.append(f"### Total Score: {total_score:.1f}/{max_score:.1f}")
 
     return total_score, "\n".join(summary_lines)
 
@@ -171,11 +279,19 @@ def score_assignment(assignment_config_path: Path) -> None:
     """Score all graded submissions for an assignment."""
     cfg = load_assignment_file(assignment_config_path)
     grading = cfg.grading
+    scoring = cfg.scoring
+    hook_runtime = HookRuntime.from_config(
+        cfg,
+        assignment_config_path=assignment_config_path,
+    )
     paths = resolve_assignment_paths(cfg, assignment_config_path.parent)
     ensure_assignment_dirs(paths)
 
     # Determine paths
     graded_dir = paths.graded_dir
+    scored_base_dir = (assignment_config_path.parent / "scored").resolve()
+    scored_style_dir = scored_base_dir / _summary_subdir_for_style(scoring.output_style)
+    scored_style_dir.mkdir(parents=True, exist_ok=True)
     rubric_file = (assignment_config_path.parents[2] / grading.rubric).resolve()
 
     if not rubric_file.exists():
@@ -194,6 +310,19 @@ def score_assignment(assignment_config_path: Path) -> None:
         )
         return
 
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "before_score",
+            {
+                "assignment_config": str(assignment_config_path),
+                "graded_dir": str(graded_dir),
+                "graded_count": len(graded_files),
+            },
+        )
+
+    scored_count = 0
+    error_count = 0
+
     for graded_file in graded_files:
         try:
             # Load grading response
@@ -203,18 +332,37 @@ def score_assignment(assignment_config_path: Path) -> None:
             grading_data["_filename"] = graded_file.name
 
             # Score the submission
-            total_score, summary = score_submission(rubric_file, grading_data)
+            total_score, summary = score_submission(
+                rubric_file,
+                grading_data,
+                report_detail=scoring.report_detail,
+                output_style=scoring.output_style,
+            )
 
-            # Write summary to markdown file
-            summary_file = graded_file.with_suffix(".md")
+            summary_file = scored_style_dir / (
+                graded_file.stem + _summary_suffix_for_style(scoring.output_style)
+            )
             summary_file.write_text(summary, encoding="utf-8")
 
             print(
                 f"[scored] {graded_file.name} -> {summary_file.name} (Score: {total_score:.1f})"
             )
+            scored_count += 1
 
         except Exception as exc:
             print(f"[error] Failed to score {graded_file.name}: {exc}")
+            error_count += 1
+
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "after_score",
+            {
+                "assignment_config": str(assignment_config_path),
+                "graded_dir": str(graded_dir),
+                "scored_count": scored_count,
+                "error_count": error_count,
+            },
+        )
 
 
 # Backward compatibility for older imports.

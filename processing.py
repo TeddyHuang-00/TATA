@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import unescape
+from html.parser import HTMLParser
 import re
 import shutil
 import subprocess
@@ -12,6 +14,7 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from hooks_runtime import HookRuntime
 
 
 InputFormat = Literal["ipynb", "html", "markdown"]
@@ -65,6 +68,142 @@ def _remove_base64_images(content: str) -> str:
     # Pattern matches ![alt](data:image/...base64,...)
     pattern = r"!\[.*?\]\(data:image/[^;]+;base64,[^)]+\)"
     return re.sub(pattern, "", content, flags=re.MULTILINE)
+
+
+class _TableHTMLParser(HTMLParser):
+    """Lightweight HTML table parser for converting DataFrame HTML to markdown tables."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_table = False
+        self.in_row = False
+        self.in_cell = False
+        self.current_cell_parts: list[str] = []
+        self.current_row: list[str] = []
+        self.current_row_is_header = False
+        self.rows: list[list[str]] = []
+        self.row_is_header: list[bool] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        lower = tag.lower()
+        if lower == "table":
+            self.in_table = True
+        elif self.in_table and lower == "tr":
+            self.in_row = True
+            self.current_row = []
+            self.current_row_is_header = False
+        elif self.in_row and lower in ("th", "td"):
+            self.in_cell = True
+            self.current_cell_parts = []
+            if lower == "th":
+                self.current_row_is_header = True
+        elif self.in_cell and lower == "br":
+            self.current_cell_parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        lower = tag.lower()
+        if lower == "table":
+            self.in_table = False
+        elif self.in_row and lower == "tr":
+            if self.current_row:
+                self.rows.append(self.current_row)
+                self.row_is_header.append(self.current_row_is_header)
+            self.in_row = False
+            self.current_row = []
+        elif self.in_cell and lower in ("th", "td"):
+            value = unescape("".join(self.current_cell_parts))
+            value = re.sub(r"\s+", " ", value).strip()
+            self.current_row.append(value)
+            self.in_cell = False
+            self.current_cell_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self.in_cell:
+            self.current_cell_parts.append(data)
+
+
+def _markdown_escape_cell(value: str) -> str:
+    escaped = value.replace("|", "\\|")
+    return escaped if escaped else " "
+
+
+def _table_html_to_markdown(table_html: str) -> str:
+    parser = _TableHTMLParser()
+    parser.feed(table_html)
+
+    rows = parser.rows
+    if not rows:
+        return ""
+
+    max_cols = max(len(r) for r in rows)
+    normalized = [r + [""] * (max_cols - len(r)) for r in rows]
+
+    if parser.row_is_header and parser.row_is_header[0]:
+        header = normalized[0]
+        data_rows = normalized[1:]
+    else:
+        header = normalized[0]
+        data_rows = normalized[1:]
+
+    md_lines = [
+        "| " + " | ".join(_markdown_escape_cell(v) for v in header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+
+    for row in data_rows:
+        md_lines.append("| " + " | ".join(_markdown_escape_cell(v) for v in row) + " |")
+
+    return "\n".join(md_lines)
+
+
+def _convert_html_tables_to_markdown(content: str) -> str:
+    table_pattern = re.compile(r"<table\b[^>]*>.*?</table>", flags=re.IGNORECASE | re.DOTALL)
+
+    def replace_table(match: re.Match[str]) -> str:
+        table_html = match.group(0)
+        md_table = _table_html_to_markdown(table_html)
+        if not md_table:
+            return ""
+        return f"\n\n{md_table}\n\n"
+
+    return table_pattern.sub(replace_table, content)
+
+
+def _strip_colab_dataframe_widgets(content: str) -> str:
+    processed = content
+
+    # Remove Colab dataframe widget buttons and script payloads.
+    processed = re.sub(
+        r"<button\b[^>]*class=\"colab-df-[^\"]*\"[^>]*>.*?</button>",
+        "",
+        processed,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    processed = re.sub(
+        r"<script\b[^>]*>.*?(google\.colab|convertToInteractive|generateWithVariable).*?</script>",
+        "",
+        processed,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # Remove occasional leftover SVG fragments from dataframe widgets.
+    processed = re.sub(
+        r"<svg\b[^>]*>.*?</svg>",
+        "",
+        processed,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    return processed
+
+
+def _normalize_dtype_label_html(content: str) -> str:
+    return re.sub(
+        r"<br\s*/?>\s*<label>\s*<b>\s*dtype:\s*</b>\s*([^<]+)\s*</label>",
+        r"\ndtype: \1",
+        content,
+        flags=re.IGNORECASE,
+    )
 
 
 def _convert_ipynb_to_markdown(
@@ -145,19 +284,63 @@ def _postprocess_markdown(
     strip_html_callouts: bool,
     strip_html_div_tags: bool,
     strip_html_escaped_backslashes: bool,
+    strip_html_style_blocks: bool,
+    convert_html_tables_to_markdown: bool,
+    strip_colab_dataframe_widgets: bool,
+    strip_html_script_tags: bool,
+    strip_html_button_tags: bool,
+    strip_html_svg_tags: bool,
+    normalize_dtype_label_html: bool,
 ) -> str:
     processed = content
 
     if remove_base64:
         processed = _remove_base64_images(processed)
 
-    if source_format == "html":
+    if source_format in ("html", "ipynb"):
+        if strip_html_style_blocks:
+            processed = re.sub(
+                r"<style\b[^>]*>.*?</style>",
+                "",
+                processed,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+        if convert_html_tables_to_markdown:
+            processed = _convert_html_tables_to_markdown(processed)
+        if strip_colab_dataframe_widgets:
+            processed = _strip_colab_dataframe_widgets(processed)
+        if strip_html_script_tags:
+            processed = re.sub(
+                r"<script\b[^>]*>.*?</script>",
+                "",
+                processed,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+        if strip_html_button_tags:
+            processed = re.sub(
+                r"<button\b[^>]*>.*?</button>",
+                "",
+                processed,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+        if strip_html_svg_tags:
+            processed = re.sub(
+                r"<svg\b[^>]*>.*?</svg>",
+                "",
+                processed,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
         if strip_html_callouts:
             processed = re.sub(r"(?m)^:::.+$\n?", "", processed)
         if strip_html_div_tags:
             processed = re.sub(r"</?div[^>]*>", "", processed)
         if strip_html_escaped_backslashes:
             processed = processed.replace("\\\\", " ")
+        if normalize_dtype_label_html:
+            processed = _normalize_dtype_label_html(processed)
+
+        # Compact excessive empty lines after stripping bulky HTML blocks.
+        processed = re.sub(r"\n{3,}", "\n\n", processed)
 
     return processed
 
@@ -170,6 +353,13 @@ def _process_single_file(
     strip_html_callouts: bool,
     strip_html_div_tags: bool,
     strip_html_escaped_backslashes: bool,
+    strip_html_style_blocks: bool,
+    convert_html_tables_to_markdown: bool,
+    strip_colab_dataframe_widgets: bool,
+    strip_html_script_tags: bool,
+    strip_html_button_tags: bool,
+    strip_html_svg_tags: bool,
+    normalize_dtype_label_html: bool,
     remove_nbconvert_assets: bool,
     nbconvert_template: str | None,
     nbconvert_template_dir: Path | None,
@@ -201,6 +391,13 @@ def _process_single_file(
             strip_html_callouts=strip_html_callouts,
             strip_html_div_tags=strip_html_div_tags,
             strip_html_escaped_backslashes=strip_html_escaped_backslashes,
+            strip_html_style_blocks=strip_html_style_blocks,
+            convert_html_tables_to_markdown=convert_html_tables_to_markdown,
+            strip_colab_dataframe_widgets=strip_colab_dataframe_widgets,
+            strip_html_script_tags=strip_html_script_tags,
+            strip_html_button_tags=strip_html_button_tags,
+            strip_html_svg_tags=strip_html_svg_tags,
+            normalize_dtype_label_html=normalize_dtype_label_html,
         )
 
         output_file.write_text(content, encoding="utf-8")
@@ -246,6 +443,10 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
 
     cfg = load_assignment_file(assignment_config_path)
     processing = cfg.processing
+    hook_runtime = HookRuntime.from_config(
+        cfg,
+        assignment_config_path=assignment_config_path,
+    )
 
     paths = resolve_assignment_paths(cfg, assignment_config_path.parent)
     ensure_assignment_dirs(paths)
@@ -273,6 +474,17 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             )
             return
 
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "before_preprocess",
+            {
+                "assignment_config": str(assignment_config_path),
+                "raw_dir": str(raw_dir),
+                "processed_dir": str(processed_dir),
+                "configured_formats": configured_formats,
+            },
+        )
+
         first_file = supported_files[0]
         detected_input_format = _detect_input_format(first_file)
         configured_formats = [detected_input_format]
@@ -288,6 +500,13 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
     strip_html_callouts = processing.strip_html_callouts
     strip_html_div_tags = processing.strip_html_div_tags
     strip_html_escaped_backslashes = processing.strip_html_escaped_backslashes
+    strip_html_style_blocks = processing.strip_html_style_blocks
+    convert_html_tables_to_markdown = processing.convert_html_tables_to_markdown
+    strip_colab_dataframe_widgets = processing.strip_colab_dataframe_widgets
+    strip_html_script_tags = processing.strip_html_script_tags
+    strip_html_button_tags = processing.strip_html_button_tags
+    strip_html_svg_tags = processing.strip_html_svg_tags
+    normalize_dtype_label_html = processing.normalize_dtype_label_html
     remove_nbconvert_assets = processing.remove_nbconvert_assets
     nbconvert_template = processing.nbconvert_template
 
@@ -320,6 +539,9 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
         )
         return
 
+    processed_count = 0
+    failed_count = 0
+
     for raw_file in raw_files:
         if raw_file.is_file():
             # Determine output filename
@@ -336,6 +558,20 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             # Detect format for this specific file
             file_format = raw_file_map.get(raw_file) or _detect_input_format(raw_file)
 
+            if hook_runtime is not None:
+                before_payload = hook_runtime.run(
+                    "before_preprocess_file",
+                    {
+                        "assignment_config": str(assignment_config_path),
+                        "input_file": str(raw_file),
+                        "output_file": str(output_file),
+                        "input_format": file_format,
+                    },
+                )
+                raw_file = Path(before_payload.get("input_file", str(raw_file)))
+                output_file = Path(before_payload.get("output_file", str(output_file)))
+                file_format = str(before_payload.get("input_format", file_format))
+
             try:
                 _process_single_file(
                     raw_file,
@@ -345,13 +581,57 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
                     strip_html_callouts,
                     strip_html_div_tags,
                     strip_html_escaped_backslashes,
+                    strip_html_style_blocks,
+                    convert_html_tables_to_markdown,
+                    strip_colab_dataframe_widgets,
+                    strip_html_script_tags,
+                    strip_html_button_tags,
+                    strip_html_svg_tags,
+                    normalize_dtype_label_html,
                     remove_nbconvert_assets,
                     nbconvert_template,
                     template_dir_path,
                 )
                 print(f"[processed] {raw_file.name} -> {output_file.name}")
+                processed_count += 1
+                if hook_runtime is not None:
+                    hook_runtime.run(
+                        "after_preprocess_file",
+                        {
+                            "assignment_config": str(assignment_config_path),
+                            "input_file": str(raw_file),
+                            "output_file": str(output_file),
+                            "input_format": file_format,
+                            "success": True,
+                        },
+                    )
             except Exception as exc:
                 print(f"[error] Failed to process {raw_file.name}: {exc}")
+                failed_count += 1
+                if hook_runtime is not None:
+                    hook_runtime.run(
+                        "after_preprocess_file",
+                        {
+                            "assignment_config": str(assignment_config_path),
+                            "input_file": str(raw_file),
+                            "output_file": str(output_file),
+                            "input_format": file_format,
+                            "success": False,
+                            "error": str(exc),
+                        },
+                    )
+
+    if hook_runtime is not None:
+        hook_runtime.run(
+            "after_preprocess",
+            {
+                "assignment_config": str(assignment_config_path),
+                "raw_dir": str(raw_dir),
+                "processed_dir": str(processed_dir),
+                "processed_count": processed_count,
+                "failed_count": failed_count,
+            },
+        )
 
 
 def main() -> None:
