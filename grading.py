@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,6 +13,7 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from cli_options import ConfigFileCliOptions, parse_cli_args
 from hooks_runtime import HookRuntime
 from openai import OpenAI
 from provider import get_providers
@@ -36,6 +36,13 @@ class AssignmentConfig:
 
 class GradingCheckpoint(BaseModel):
     done: list[str] = Field(default_factory=list)
+
+
+class GradingCliOptions(ConfigFileCliOptions):
+    force: bool = Field(
+        default=False,
+        description="Ignore grading checkpoint and regrade all submissions.",
+    )
 
 
 def _load_assignment_config(config_path: Path) -> AssignmentConfig:
@@ -425,19 +432,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run assignment grading pipeline.")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Path to assignment config TOML.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Ignore grading checkpoint and regrade all submissions.",
-    )
-    args = parser.parse_args()
+    args = parse_cli_args(GradingCliOptions)
 
     grade_assignment(args.config, force=args.force)
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 from html import escape
 from pathlib import Path
@@ -11,8 +10,13 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from cli_options import ConfigFileCliOptions, parse_cli_args
 from hooks_runtime import HookRuntime
 from rubric import get_rubric_definition, slugify_criterion_name
+
+
+class ScoringCliOptions(ConfigFileCliOptions):
+    pass
 
 
 def calculate_criterion_score(  # noqa: PLR0911, PLR0912
@@ -384,14 +388,7 @@ _calculate_criterion_score = calculate_criterion_score
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run scoring pipeline.")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Path to assignment config TOML.",
-    )
-    args = parser.parse_args()
+    args = parse_cli_args(ScoringCliOptions)
 
     score_assignment(args.config)
 

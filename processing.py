@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import re
 import shutil
 import subprocess
@@ -15,10 +14,15 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from cli_options import ConfigFileCliOptions, parse_cli_args
 from hooks_runtime import HookRuntime
 
 InputFormat = Literal["ipynb", "html", "markdown"]
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown")
+
+
+class ProcessingCliOptions(ConfigFileCliOptions):
+    pass
 
 
 def _detect_input_format(file_path: Path) -> InputFormat:
@@ -83,7 +87,7 @@ class _TableHTMLParser(HTMLParser):
         self.rows: list[list[str]] = []
         self.row_is_header: list[bool] = []
 
-    def handle_starttag(self, tag: str, _attrs: list) -> None:
+    def handle_starttag(self, tag: str, attrs: list) -> None:  # noqa: ARG002
         lower = tag.lower()
         if lower == "table":
             self.in_table = True
@@ -438,10 +442,6 @@ def _normalize_input_formats(
 
 def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa: PLR0912, PLR0915, PLR0914
     """Preprocess all raw files for an assignment into processed markdown."""
-    if not assignment_config_path.exists():
-        msg = f"Assignment config not found: {assignment_config_path}"
-        raise FileNotFoundError(msg)
-
     cfg = load_assignment_file(assignment_config_path)
     processing = cfg.processing
     hook_runtime = HookRuntime.from_config(
@@ -533,6 +533,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa:
     # Process each file
     raw_file_map: dict[Path, InputFormat] = {}
     for fmt in configured_formats:
+        assert fmt in SUPPORTED_INPUT_FORMATS
         for p in _glob_for_format(raw_dir, fmt):
             raw_file_map[p] = fmt
 
@@ -588,10 +589,14 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa:
                 input_file = raw_file
 
             try:
+                assert file_format in SUPPORTED_INPUT_FORMATS, (
+                    f"Unsupported input format: {file_format}. "
+                    f"Must be one of: {SUPPORTED_INPUT_FORMATS}"
+                )
                 _process_single_file(
                     input_file,
                     output_file,
-                    file_format,
+                    file_format,  # ty:ignore[invalid-argument-type]
                     remove_base64,
                     strip_html_callouts,
                     strip_html_div_tags,
@@ -660,14 +665,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run preprocessing pipeline.")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Path to assignment config TOML.",
-    )
-    args = parser.parse_args()
+    args = parse_cli_args(ProcessingCliOptions)
 
     preprocess_assignment(args.config)
 

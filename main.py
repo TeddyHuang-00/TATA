@@ -1,13 +1,35 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+from typing import Literal
 
 from analysis import analyze_assignment
+from cli_options import CliOptions, parse_cli_args, validate_existing_file
 from grading import grade_assignment
 from processing import preprocess_assignment
+from pydantic import Field, model_validator
 from schema_tools import generate_all_schemas
 from scoring import score_assignment
+
+PipelineStage = Literal["preprocess", "grade", "score", "analyze", "all", "schema"]
+
+
+class MainCliOptions(CliOptions):
+    stage: PipelineStage = Field(default="all", description="Pipeline stage to run.")
+    config: Path | None = Field(default=None, description="Path to assignment config TOML.")
+    force: bool = Field(
+        default=False,
+        description="For grade stage, ignore checkpoint and regrade all submissions.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_config_requirement(self) -> MainCliOptions:
+        if self.stage != "schema" and self.config is None:
+            msg = "--config is required for running stages other than 'schema'."
+            raise ValueError(msg)
+        if self.stage != "schema" and self.config is not None:
+            self.config = validate_existing_file(self.config)
+        return self
 
 
 def _format_job_summary(summary: dict) -> str:
@@ -22,25 +44,7 @@ def _format_job_summary(summary: dict) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="TATA unified grading entrypoint.")
-    parser.add_argument(
-        "--stage",
-        choices=["preprocess", "grade", "score", "analyze", "all", "schema"],
-        default="all",
-        help="Pipeline stage to run.",
-    )
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=False,
-        help="Path to assignment config TOML.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="For grade stage, ignore checkpoint and regrade all submissions.",
-    )
-    args = parser.parse_args()
+    args = parse_cli_args(MainCliOptions)
 
     if args.stage == "schema":
         print("Generating schemas...")
@@ -49,9 +53,7 @@ def main() -> None:
             print(f"[schema] {schema_file}")
         return
 
-    if args.config is None:
-        parser.error("--config is required for preprocess/grade/score/analyze/all stages")
-
+    assert args.config is not None  # validated by model_validator
     summaries = []
 
     if args.stage in {"preprocess", "all"}:

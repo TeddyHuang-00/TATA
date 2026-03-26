@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import statistics
 from dataclasses import dataclass, field
@@ -13,6 +12,7 @@ from assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from cli_options import ConfigFileCliOptions, parse_cli_args
 from hooks_runtime import HookRuntime
 from rubric import RubricDefinition, get_rubric_definition, slugify_criterion_name
 from scoring import calculate_criterion_score
@@ -24,6 +24,10 @@ THRESHOLD_80 = 80.0
 THRESHOLD_90 = 90.0
 BucketLabel = Literal["0-59", "60-69", "70-79", "80-89", "90-100"]
 BUCKET_ORDER: tuple[BucketLabel, ...] = ("0-59", "60-69", "70-79", "80-89", "90-100")
+
+
+class AnalysisCliOptions(ConfigFileCliOptions):
+    pass
 
 
 @dataclass
@@ -285,14 +289,7 @@ def analyze_assignment(assignment_config_path: Path) -> dict | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run meta analysis on graded outputs.")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        required=True,
-        help="Path to assignment config TOML.",
-    )
-    args = parser.parse_args()
+    args = parse_cli_args(AnalysisCliOptions)
 
     analyze_assignment(args.config)
 
