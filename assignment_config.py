@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 InputFormat = Literal["ipynb", "html", "markdown"]
 ScoreReportDetail = Literal["full", "slim"]
@@ -73,7 +73,40 @@ class ProcessingSection(BaseModel):
 
 class HooksSection(BaseModel):
     dir: str = Field(default="hooks")
-    mounts: dict[HookMountPoint, str] = Field(default_factory=dict)
+    mounts: dict[HookMountPoint, str | list[str]] = Field(default_factory=dict)
+
+    @field_validator("mounts")
+    @classmethod
+    def _validate_mounts(
+        cls,
+        mounts: dict[HookMountPoint, str | list[str]],
+    ) -> dict[HookMountPoint, str | list[str]]:
+        for mount_point, script_cfg in mounts.items():
+            if isinstance(script_cfg, str):
+                if not script_cfg.strip():
+                    msg = f"Hook entry at '{mount_point}' cannot be empty."
+                    raise ValueError(msg)
+                continue
+
+            if isinstance(script_cfg, list):
+                if not script_cfg:
+                    msg = (
+                        f"Hook list at '{mount_point}' cannot be empty. "
+                        "Use omission to disable hooks for a lifecycle."
+                    )
+                    raise ValueError(msg)
+                if any(not isinstance(v, str) or not v.strip() for v in script_cfg):
+                    msg = f"Hook list at '{mount_point}' must contain non-empty script paths."
+                    raise ValueError(msg)
+                continue
+
+            msg = (
+                f"Hook entry at '{mount_point}' must be a string or list of strings, "
+                f"got {type(script_cfg).__name__}."
+            )
+            raise ValueError(msg)
+
+        return mounts
 
 
 class GradingSection(BaseModel):

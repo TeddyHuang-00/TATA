@@ -157,7 +157,9 @@ def _table_html_to_markdown(table_html: str) -> str:
 
 
 def _convert_html_tables_to_markdown(content: str) -> str:
-    table_pattern = re.compile(r"<table\b[^>]*>.*?</table>", flags=re.IGNORECASE | re.DOTALL)
+    table_pattern = re.compile(
+        r"<table\b[^>]*>.*?</table>", flags=re.IGNORECASE | re.DOTALL
+    )
 
     def replace_table(match: re.Match[str]) -> str:
         table_html = match.group(0)
@@ -474,6 +476,14 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             )
             return
 
+        first_file = supported_files[0]
+        detected_input_format = _detect_input_format(first_file)
+        configured_formats = [detected_input_format]
+        print(
+            f"Auto-detected input format: {detected_input_format} "
+            f"(from {first_file.name})"
+        )
+
     if hook_runtime is not None:
         hook_runtime.run(
             "before_preprocess",
@@ -483,14 +493,6 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
                 "processed_dir": str(processed_dir),
                 "configured_formats": configured_formats,
             },
-        )
-
-        first_file = supported_files[0]
-        detected_input_format = _detect_input_format(first_file)
-        configured_formats = [detected_input_format]
-        print(
-            f"Auto-detected input format: {detected_input_format} "
-            f"(from {first_file.name})"
         )
 
     # Processing options

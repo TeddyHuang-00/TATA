@@ -41,7 +41,9 @@ def _inc_rating_count(counter: dict[str, int], rating: str) -> None:
     counter[rating] = counter.get(rating, 0) + 1
 
 
-def _init_criterion_stats(rubric_def: RubricDefinition) -> dict[str, CriterionAccumulator]:
+def _init_criterion_stats(
+    rubric_def: RubricDefinition,
+) -> dict[str, CriterionAccumulator]:
     stats: dict[str, CriterionAccumulator] = {}
     for criterion in rubric_def.criterion:
         stats[criterion.name] = CriterionAccumulator(pts=float(criterion.pts))
@@ -60,7 +62,9 @@ def _build_overall_stats(
         "score_max": max(submission_scores),
         "score_avg": statistics.mean(submission_scores),
         "score_median": statistics.median(submission_scores),
-        "score_stdev": statistics.stdev(submission_scores) if len(submission_scores) > 1 else 0.0,
+        "score_stdev": statistics.stdev(submission_scores)
+        if len(submission_scores) > 1
+        else 0.0,
         "pct_min": min(submission_pcts),
         "pct_max": max(submission_pcts),
         "pct_avg": statistics.mean(submission_pcts),
@@ -80,19 +84,21 @@ def _build_criterion_summary(
         avg_score = (stat.score_sum / count) if count > 0 else 0.0
         avg_pct = (avg_score / pts * 100.0) if pts > 0 else 0.0
 
-        summary.append(
-            {
-                "criterion": criterion.name,
-                "points": pts,
-                "count": count,
-                "avg_score": avg_score,
-                "avg_pct": avg_pct,
-                "full_credit_rate": (stat.full_credit_count / count * 100.0) if count > 0 else 0.0,
-                "zero_credit_rate": (stat.zero_credit_count / count * 100.0) if count > 0 else 0.0,
-                "missing_count": stat.missing_count,
-                "rating_counts": dict(sorted(stat.rating_counts.items())),
-            }
-        )
+        summary.append({
+            "criterion": criterion.name,
+            "points": pts,
+            "count": count,
+            "avg_score": avg_score,
+            "avg_pct": avg_pct,
+            "full_credit_rate": (stat.full_credit_count / count * 100.0)
+            if count > 0
+            else 0.0,
+            "zero_credit_rate": (stat.zero_credit_count / count * 100.0)
+            if count > 0
+            else 0.0,
+            "missing_count": stat.missing_count,
+            "rating_counts": dict(sorted(stat.rating_counts.items())),
+        })
 
     summary.sort(key=lambda item: float(item["avg_pct"]))
     return summary
@@ -215,18 +221,16 @@ def _build_markdown_report(result: dict[str, Any]) -> str:
     md_lines.extend(["", "## Per-Criterion Statistics"])
 
     for criterion in criterion_summary:
-        md_lines.extend(
-            [
-                f"### {criterion['criterion']} ({criterion['points']:.1f} pts)",
-                f"- Avg score: {criterion['avg_score']:.2f}",
-                f"- Avg percentage: {criterion['avg_pct']:.2f}%",
-                f"- Full-credit rate: {criterion['full_credit_rate']:.2f}%",
-                f"- Zero-credit rate: {criterion['zero_credit_rate']:.2f}%",
-                f"- Missing count: {criterion['missing_count']}",
-                f"- Rating counts: {criterion['rating_counts']}",
-                "",
-            ]
-        )
+        md_lines.extend([
+            f"### {criterion['criterion']} ({criterion['points']:.1f} pts)",
+            f"- Avg score: {criterion['avg_score']:.2f}",
+            f"- Avg percentage: {criterion['avg_pct']:.2f}%",
+            f"- Full-credit rate: {criterion['full_credit_rate']:.2f}%",
+            f"- Zero-credit rate: {criterion['zero_credit_rate']:.2f}%",
+            f"- Missing count: {criterion['missing_count']}",
+            f"- Rating counts: {criterion['rating_counts']}",
+            "",
+        ])
 
     return "\n".join(md_lines)
 

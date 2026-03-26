@@ -115,13 +115,11 @@ def _generate_criterion_feedback_plain(
     score: float,
 ) -> str:
     """Generate plain-text feedback for a single criterion."""
-    return "\n".join(
-        [
-            f"- {criterion_name} ({score:.1f}/{criterion_pts} pts)",
-            f"  - Rating: {rating.upper()}",
-            f"  - Feedback: {feedback}",
-        ]
-    )
+    return "\n".join([
+        f"- {criterion_name} ({score:.1f}/{criterion_pts} pts)",
+        f"  - Rating: {rating.upper()}",
+        f"  - Feedback: {feedback}",
+    ])
 
 
 def _generate_criterion_feedback_html(
@@ -133,7 +131,7 @@ def _generate_criterion_feedback_html(
 ) -> str:
     """Generate HTML feedback for a single criterion."""
     return (
-        f"<section class=\"criterion\">"
+        f'<section class="criterion">'
         f"<h3>{escape(criterion_name)} ({score:.1f}/{criterion_pts} pts)</h3>"
         f"<p><strong>Rating:</strong> {escape(rating.upper())}</p>"
         f"<p><strong>Feedback:</strong> {escape(feedback)}</p>"
@@ -248,9 +246,9 @@ def score_submission(
     elif output_style == "html":
         summary_lines = [
             "<!doctype html>",
-            "<html lang=\"en\">",
+            '<html lang="en">',
             "<head>",
-            "<meta charset=\"utf-8\">",
+            '<meta charset="utf-8">',
             "<title>Grading Summary</title>",
             "<style>body{font-family:Arial,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;line-height:1.5}h1,h2,h3{margin:0.6rem 0}section.criterion{border:1px solid #ddd;border-radius:8px;padding:0.8rem 1rem;margin:0.8rem 0}footer{margin-top:1.5rem;font-weight:700}</style>",
             "</head>",
@@ -261,7 +259,9 @@ def score_submission(
             summary_lines.append("<p>All criteria received full marks.</p>")
         else:
             summary_lines.extend(criterion_feedbacks)
-        summary_lines.append(f"<footer>Total Score: {total_score:.1f}/{max_score:.1f}</footer>")
+        summary_lines.append(
+            f"<footer>Total Score: {total_score:.1f}/{max_score:.1f}</footer>"
+        )
         summary_lines.append("</body>")
         summary_lines.append("</html>")
     else:

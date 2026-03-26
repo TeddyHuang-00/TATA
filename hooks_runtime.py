@@ -15,7 +15,7 @@ from assignment_config import AssignmentFileConfig
 class HookRuntime:
     project_root: Path
     hooks_dir: Path
-    mounts: dict[str, Path]
+    mounts: dict[str, list[Path]]
 
     @classmethod
     def from_config(
@@ -30,23 +30,45 @@ class HookRuntime:
         project_root = assignment_config_path.parents[2].resolve()
         hooks_dir = (project_root / cfg.hooks.dir).resolve()
 
-        mounts: dict[str, Path] = {}
-        for mount_point, script_rel in cfg.hooks.mounts.items():
-            script_path = (hooks_dir / script_rel).resolve()
-            if not script_path.exists():
-                msg = (
-                    f"Hook script not found for mount point '{mount_point}': {script_path}\n"
-                    f"Expected under hooks dir: {hooks_dir}"
-                )
-                raise FileNotFoundError(msg)
-            mounts[str(mount_point)] = script_path
+        mounts: dict[str, list[Path]] = {}
+        for mount_point, script_cfg in cfg.hooks.mounts.items():
+            script_rels = [script_cfg] if isinstance(script_cfg, str) else script_cfg
+            script_paths: list[Path] = []
+            for script_rel in script_rels:
+                script_path = (hooks_dir / script_rel).resolve()
+                if not script_path.exists():
+                    msg = (
+                        f"Hook script not found for mount point '{mount_point}': {script_path}\n"
+                        f"Expected under hooks dir: {hooks_dir}"
+                    )
+                    raise FileNotFoundError(msg)
+                script_paths.append(script_path)
+            mounts[str(mount_point)] = script_paths
 
         return cls(project_root=project_root, hooks_dir=hooks_dir, mounts=mounts)
 
     def run(self, mount_point: str, payload: dict[str, Any]) -> dict[str, Any]:
-        script_path = self.mounts.get(mount_point)
-        if script_path is None:
+        script_paths = self.mounts.get(mount_point)
+        if script_paths is None:
             return payload
+
+        current_payload = payload
+        for script_path in script_paths:
+            current_payload = self._run_single_hook(
+                mount_point=mount_point,
+                script_path=script_path,
+                payload=current_payload,
+            )
+
+        return current_payload
+
+    def _run_single_hook(
+        self,
+        *,
+        mount_point: str,
+        script_path: Path,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
 
         env = os.environ.copy()
         env["TATA_HOOK_MOUNT_POINT"] = mount_point
