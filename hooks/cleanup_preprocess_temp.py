@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 
 
 def main() -> None:

@@ -4,7 +4,6 @@ import json
 import re
 import sys
 
-
 MAX_STUDENT_CHARS = 120_000
 MAX_REFERENCE_CHARS = 40_000
 
