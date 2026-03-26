@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import re
 import shutil
 import subprocess
@@ -82,7 +83,7 @@ class _TableHTMLParser(HTMLParser):
         self.rows: list[list[str]] = []
         self.row_is_header: list[bool] = []
 
-    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+    def handle_starttag(self, tag: str, _attrs: list) -> None:
         lower = tag.lower()
         if lower == "table":
             self.in_table = True
@@ -90,7 +91,7 @@ class _TableHTMLParser(HTMLParser):
             self.in_row = True
             self.current_row = []
             self.current_row_is_header = False
-        elif self.in_row and lower in ("th", "td"):
+        elif self.in_row and lower in {"th", "td"}:
             self.in_cell = True
             self.current_cell_parts = []
             if lower == "th":
@@ -108,7 +109,7 @@ class _TableHTMLParser(HTMLParser):
                 self.row_is_header.append(self.current_row_is_header)
             self.in_row = False
             self.current_row = []
-        elif self.in_cell and lower in ("th", "td"):
+        elif self.in_cell and lower in {"th", "td"}:
             value = unescape("".join(self.current_cell_parts))
             value = re.sub(r"\s+", " ", value).strip()
             self.current_row.append(value)
@@ -148,8 +149,10 @@ def _table_html_to_markdown(table_html: str) -> str:
         "| " + " | ".join("---" for _ in header) + " |",
     ]
 
-    for row in data_rows:
-        md_lines.append("| " + " | ".join(_markdown_escape_cell(v) for v in row) + " |")
+    md_lines.extend(
+        "| " + " | ".join(_markdown_escape_cell(v) for v in row) + " |"
+        for row in data_rows
+    )
 
     return "\n".join(md_lines)
 
@@ -187,14 +190,12 @@ def _strip_colab_dataframe_widgets(content: str) -> str:
     )
 
     # Remove occasional leftover SVG fragments from dataframe widgets.
-    processed = re.sub(
+    return re.sub(
         r"<svg\b[^>]*>.*?</svg>",
         "",
         processed,
         flags=re.IGNORECASE | re.DOTALL,
     )
-
-    return processed
 
 
 def _normalize_dtype_label_html(content: str) -> str:
@@ -276,7 +277,7 @@ def _convert_markdown(input_path: Path, output_path: Path) -> None:
     shutil.copy2(input_path, output_path)
 
 
-def _postprocess_markdown(
+def _postprocess_markdown(  # noqa: PLR0913
     content: str,
     *,
     source_format: InputFormat,
@@ -297,7 +298,7 @@ def _postprocess_markdown(
     if remove_base64:
         processed = _remove_base64_images(processed)
 
-    if source_format in ("html", "ipynb"):
+    if source_format in {"html", "ipynb"}:
         if strip_html_style_blocks:
             processed = re.sub(
                 r"<style\b[^>]*>.*?</style>",
@@ -345,7 +346,7 @@ def _postprocess_markdown(
     return processed
 
 
-def _process_single_file(
+def _process_single_file(  # noqa: PLR0913, PLR0917
     input_file: Path,
     output_file: Path,
     input_format: InputFormat,
@@ -435,7 +436,7 @@ def _normalize_input_formats(
     return [input_format_config]
 
 
-def preprocess_assignment(assignment_config_path: Path) -> dict | None:
+def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa: PLR0912, PLR0915, PLR0914
     """Preprocess all raw files for an assignment into processed markdown."""
     if not assignment_config_path.exists():
         msg = f"Assignment config not found: {assignment_config_path}"
@@ -580,13 +581,15 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:
                         "input_format": file_format,
                     },
                 )
-                raw_file = Path(before_payload.get("input_file", str(raw_file)))
+                input_file = Path(before_payload.get("input_file", str(raw_file)))
                 output_file = Path(before_payload.get("output_file", str(output_file)))
                 file_format = str(before_payload.get("input_format", file_format))
+            else:
+                input_file = raw_file
 
             try:
                 _process_single_file(
-                    raw_file,
+                    input_file,
                     output_file,
                     file_format,
                     remove_base64,
@@ -657,8 +660,6 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Run preprocessing pipeline.")
     parser.add_argument(
         "--config",

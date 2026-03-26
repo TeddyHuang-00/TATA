@@ -14,10 +14,9 @@ def _truncate_markdown(text: str, max_chars: int) -> str:
 
     # Keep TODO-focused and heading lines first, then append a tail window.
     lines = text.splitlines()
-    focused: list[str] = []
-    for ln in lines:
-        if re.search(r"\bTODO\b|^#{1,6}\s", ln, flags=re.IGNORECASE):
-            focused.append(ln)
+    focused = [
+        ln for ln in lines if re.search(r"\bTODO\b|^#{1,6}\s", ln, flags=re.IGNORECASE)
+    ]
 
     focused_blob = "\n".join(focused)
     tail_blob = text[-(max_chars // 2) :]

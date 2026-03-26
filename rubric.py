@@ -202,11 +202,10 @@ def generate_grading_model(rubric_def: RubricDefinition) -> type[BaseModel]:
             Field(..., description=f"Result for criterion: {criterion.name}"),
         )
 
-    response_model = create_model(
+    return create_model(
         "GradingResponse",
         **response_fields,
     )
-    return response_model
 
 
 if __name__ == "__main__":

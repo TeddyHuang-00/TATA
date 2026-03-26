@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -76,9 +77,10 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
 
 
 def _read_system_prompt(system_prompt_files: list[Path]) -> str:
-    sections: list[str] = []
-    for prompt_file in system_prompt_files:
-        sections.append(prompt_file.read_text(encoding="utf-8").strip())
+    sections = [
+        prompt_file.read_text(encoding="utf-8").strip()
+        for prompt_file in system_prompt_files
+    ]
     return "\n\n".join(section for section in sections if section)
 
 
@@ -105,7 +107,7 @@ def _collect_submissions(processed_dir: Path, reference_file: Path) -> list[Path
     return [p for p in submission_files if p.stem != reference_stem]
 
 
-def _build_client(provider_name: str):
+def _build_client(provider_name: str) -> tuple[Any, str]:
     providers = get_providers()
     provider = providers[provider_name]
 
@@ -162,8 +164,8 @@ def _read_reference_text(reference_file: Path) -> str:
     raise ValueError(msg)
 
 
-def _grade_one_submission(
-    client,
+def _grade_one_submission(  # noqa: PLR0913, PLR0917
+    client: Any,  # noqa: ANN401
     model_name: str,
     response_model: type[BaseModel],
     system_prompt: str,
@@ -187,10 +189,10 @@ def _grade_one_submission(
     )
 
 
-def _run_single_grading_task(
+def _run_single_grading_task(  # noqa: PLR0913
     submission: Path,
     *,
-    client: Any,
+    client: Any,  # noqa: ANN401
     model_name: str,
     response_model: type[BaseModel],
     system_prompt: str,
@@ -262,7 +264,7 @@ def _run_single_grading_task(
         return submission.name, "", error_message
 
 
-def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:
+def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:  # noqa: PLR0912, PLR0915, PLR0914
     cfg = _load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
@@ -423,8 +425,6 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Run assignment grading pipeline.")
     parser.add_argument(
         "--config",

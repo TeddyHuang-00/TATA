@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from analysis import analyze_assignment
@@ -21,8 +22,6 @@ def _format_job_summary(summary: dict) -> str:
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="TATA unified grading entrypoint.")
     parser.add_argument(
         "--stage",
@@ -55,21 +54,21 @@ def main() -> None:
 
     summaries = []
 
-    if args.stage in ("preprocess", "all"):
+    if args.stage in {"preprocess", "all"}:
         print("Running preprocessing...")
         summary = preprocess_assignment(args.config)
         if summary is not None:
             summaries.append(summary)
             print(_format_job_summary(summary))
 
-    if args.stage in ("grade", "all"):
+    if args.stage in {"grade", "all"}:
         print("Running grading...")
         summary = grade_assignment(args.config, force=args.force)
         if summary is not None:
             summaries.append(summary)
             print(_format_job_summary(summary))
 
-    if args.stage in ("score", "all"):
+    if args.stage in {"score", "all"}:
         print("Running scoring...")
         summary = score_assignment(args.config)
         if summary is not None:

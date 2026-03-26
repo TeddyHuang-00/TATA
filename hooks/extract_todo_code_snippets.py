@@ -9,6 +9,9 @@ from typing import Any
 
 _FENCE = "```"
 _TODO_PATTERN = re.compile(r"^\s*#{1,2}\s*TODO\s*\d", flags=re.IGNORECASE)
+_MD_SIGNAL_THRESHOLD = 3
+_INSTRUCTION_MARKER_THRESHOLD = 2
+_MD_DOMINANCE_RATIO = 2
 _HEADER_NOTE = (
     "> NOTE: This extracted file only includes key TODO implementations from the "
     "student submission. Please grade gracefully and account for omitted boilerplate "
@@ -36,7 +39,7 @@ def _extract_notebook_language(notebook: dict[str, Any]) -> str:
     return "python"
 
 
-def _normalize_source(source: Any) -> str:
+def _normalize_source(source: list[str] | str) -> str:
     if isinstance(source, list):
         return "".join(str(part) for part in source)
     if isinstance(source, str):
@@ -78,7 +81,10 @@ def _is_markdown_like_noise(source: str) -> bool:
         if any(re.search(pat, ln) for pat in code_patterns):
             code_signal_count += 1
 
-    if md_signal_count >= 3 and md_signal_count > code_signal_count * 2:
+    if (
+        md_signal_count >= _MD_SIGNAL_THRESHOLD
+        and md_signal_count > code_signal_count * _MD_DOMINANCE_RATIO
+    ):
         return True
 
     lower = text.lower()
@@ -90,10 +96,10 @@ def _is_markdown_like_noise(source: str) -> bool:
         "convert the above",
         "let's review",
     ]
-    if sum(marker in lower for marker in instruction_markers) >= 2:
-        return True
-
-    return False
+    return (
+        sum(marker in lower for marker in instruction_markers)
+        >= _INSTRUCTION_MARKER_THRESHOLD
+    )
 
 
 def _strip_todo_check_calls(source: str) -> str:
@@ -111,7 +117,7 @@ def _strip_todo_check_calls(source: str) -> str:
                 i += 1
             continue
 
-        if line.strip() == "":
+        if not line.strip():
             kept.append("")
         else:
             kept.append(line)

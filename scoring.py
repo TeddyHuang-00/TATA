@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from html import escape
 from pathlib import Path
@@ -11,10 +12,10 @@ from assignment_config import (
     resolve_assignment_paths,
 )
 from hooks_runtime import HookRuntime
-from rubric import get_rubric_definition
+from rubric import get_rubric_definition, slugify_criterion_name
 
 
-def calculate_criterion_score(
+def calculate_criterion_score(  # noqa: PLR0911, PLR0912
     criterion_pts: int | float,
     rating: str,
     grading_scheme: str | None,
@@ -62,7 +63,7 @@ def calculate_criterion_score(
         return custom_scale[-1]
 
     # Standard grading schemes
-    if grading_scheme in ("standard", None):
+    if grading_scheme in {"standard", None}:
         if rating.lower() == "correct":
             return float(criterion_pts)
         if rating.lower() == "partial":
@@ -154,7 +155,7 @@ def _summary_subdir_for_style(output_style: str) -> str:
     return "md"
 
 
-def score_submission(
+def score_submission(  # noqa: PLR0912
     rubric_def_path: Path,
     grading_response: dict[str, Any],
     report_detail: str = "full",
@@ -176,8 +177,6 @@ def score_submission(
 
     for criterion in rubric_def.criterion:
         # Get the slugified field name
-        from rubric import slugify_criterion_name
-
         field_name = slugify_criterion_name(criterion.name)
 
         if field_name not in grading_response:
@@ -274,7 +273,7 @@ def score_submission(
     return total_score, "\n".join(summary_lines)
 
 
-def score_assignment(assignment_config_path: Path) -> dict | None:
+def score_assignment(assignment_config_path: Path) -> dict | None:  # noqa: PLR0914
     """Score all graded submissions for an assignment."""
     cfg = load_assignment_file(assignment_config_path)
     grading = cfg.grading
@@ -385,8 +384,6 @@ _calculate_criterion_score = calculate_criterion_score
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Run scoring pipeline.")
     parser.add_argument(
         "--config",
