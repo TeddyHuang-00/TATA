@@ -4,6 +4,7 @@ from pathlib import Path
 
 from grading import grade_assignment
 from processing import preprocess_assignment
+from scoring import score_assignment
 
 
 def main() -> None:
@@ -12,7 +13,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="TATA unified grading entrypoint.")
     parser.add_argument(
         "--stage",
-        choices=["preprocess", "grade", "all"],
+        choices=["preprocess", "grade", "score", "all"],
         default="all",
         help="Pipeline stage to run.",
     )
@@ -31,6 +32,10 @@ def main() -> None:
     if args.stage in ("grade", "all"):
         print("Running grading...")
         grade_assignment(args.config)
+
+    if args.stage in ("score", "all"):
+        print("Running scoring...")
+        score_assignment(args.config)
 
 
 if __name__ == "__main__":

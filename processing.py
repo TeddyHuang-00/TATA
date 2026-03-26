@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -17,10 +18,17 @@ InputFormat = Literal["ipynb", "html", "markdown"]
 class ProcessingConfig:
     raw_dir: Path
     processed_dir: Path
-    input_format: InputFormat
+    input_format: InputFormat | None
     indent_level: int = 4
     remove_base64_images: bool = True
     clean_filenames: bool = True
+    strip_canvas_suffix: bool = True
+    strip_html_callouts: bool = True
+    strip_html_div_tags: bool = True
+    strip_html_escaped_backslashes: bool = True
+    remove_nbconvert_assets: bool = True
+    nbconvert_template: str | None = None
+    nbconvert_template_dir: Path | None = None
 
 
 def _detect_input_format(file_path: Path) -> InputFormat:
@@ -53,6 +61,18 @@ def _clean_filename(filename: str) -> str:
     return f"{clean_stem}{suffix}"
 
 
+def _strip_canvas_suffix(filename: str) -> str:
+    """Strip known Canvas-export suffixes from the stem while keeping extension."""
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+
+    cleaned = re.sub(r"_[0-9]+_text$", "", stem)
+    cleaned = re.sub(r"_[0-9]+_[0-9]+_.*$", "", cleaned)
+    if not cleaned:
+        cleaned = "file"
+    return f"{cleaned}{suffix}"
+
+
 def _remove_base64_images(content: str) -> str:
     """Remove base64 encoded images from markdown content."""
     # Pattern matches ![alt](data:image/...base64,...)
@@ -60,19 +80,39 @@ def _remove_base64_images(content: str) -> str:
     return re.sub(pattern, "", content, flags=re.MULTILINE)
 
 
-def _convert_ipynb_to_markdown(input_path: Path, output_path: Path) -> None:
+def _convert_ipynb_to_markdown(
+    input_path: Path,
+    output_path: Path,
+    *,
+    template_name: str | None = None,
+    template_dir: Path | None = None,
+) -> None:
     """Convert Jupyter notebook to markdown using nbconvert."""
     cmd = [
-        "python", "-m", "nbconvert",
-        "--to", "markdown",
-        "--output", output_path.name,
-        "--output-dir", str(output_path.parent),
-        str(input_path),
+        sys.executable,
+        "-m",
+        "jupyter",
+        "nbconvert",
+        "--to",
+        "markdown",
+        "--output",
+        output_path.name,
+        "--output-dir",
+        str(output_path.parent),
     ]
 
+    if template_name:
+        cmd.extend(["--template", template_name])
+
+    if template_dir:
+        cmd.append(f"--TemplateExporter.extra_template_basedirs={template_dir}")
+
+    cmd.append(
+        str(input_path),
+    )
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        # nbconvert outputs to stdout sometimes, but we use --output-dir
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
     except subprocess.CalledProcessError as e:
         msg = f"Failed to convert notebook {input_path}: {e.stderr}"
         raise RuntimeError(msg) from e
@@ -87,7 +127,16 @@ def _convert_ipynb_to_markdown(input_path: Path, output_path: Path) -> None:
 
 def _convert_html_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert HTML to markdown using pandoc."""
-    cmd = ["pandoc", "-f", "html", "-t", "markdown", str(input_path), "-o", str(output_path)]
+    cmd = [
+        "pandoc",
+        "-f",
+        "html",
+        "-t",
+        "markdown",
+        str(input_path),
+        "-o",
+        str(output_path),
+    ]
 
     try:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -101,16 +150,52 @@ def _convert_markdown(input_path: Path, output_path: Path) -> None:
     shutil.copy2(input_path, output_path)
 
 
+def _postprocess_markdown(
+    content: str,
+    *,
+    source_format: InputFormat,
+    remove_base64: bool,
+    strip_html_callouts: bool,
+    strip_html_div_tags: bool,
+    strip_html_escaped_backslashes: bool,
+) -> str:
+    processed = content
+
+    if remove_base64:
+        processed = _remove_base64_images(processed)
+
+    if source_format == "html":
+        if strip_html_callouts:
+            processed = re.sub(r"(?m)^:::.+$\n?", "", processed)
+        if strip_html_div_tags:
+            processed = re.sub(r"</?div[^>]*>", "", processed)
+        if strip_html_escaped_backslashes:
+            processed = processed.replace("\\\\", " ")
+
+    return processed
+
+
 def _process_single_file(
     input_file: Path,
     output_file: Path,
     input_format: InputFormat,
     remove_base64: bool,
+    strip_html_callouts: bool,
+    strip_html_div_tags: bool,
+    strip_html_escaped_backslashes: bool,
+    remove_nbconvert_assets: bool,
+    nbconvert_template: str | None,
+    nbconvert_template_dir: Path | None,
 ) -> None:
     """Process a single input file to markdown output."""
     # Convert based on format
     if input_format == "ipynb":
-        _convert_ipynb_to_markdown(input_file, output_file)
+        _convert_ipynb_to_markdown(
+            input_file,
+            output_file,
+            template_name=nbconvert_template,
+            template_dir=nbconvert_template_dir,
+        )
     elif input_format == "html":
         _convert_html_to_markdown(input_file, output_file)
     elif input_format == "markdown":
@@ -122,11 +207,30 @@ def _process_single_file(
     # Post-processing
     if output_file.exists():
         content = output_file.read_text(encoding="utf-8")
-
-        if remove_base64:
-            content = _remove_base64_images(content)
+        content = _postprocess_markdown(
+            content,
+            source_format=input_format,
+            remove_base64=remove_base64,
+            strip_html_callouts=strip_html_callouts,
+            strip_html_div_tags=strip_html_div_tags,
+            strip_html_escaped_backslashes=strip_html_escaped_backslashes,
+        )
 
         output_file.write_text(content, encoding="utf-8")
+
+    if input_format == "ipynb" and remove_nbconvert_assets:
+        assets_dir = output_file.parent / f"{output_file.stem}_files"
+        if assets_dir.exists() and assets_dir.is_dir():
+            shutil.rmtree(assets_dir)
+
+
+def _glob_for_format(raw_dir: Path, input_format: InputFormat) -> list[Path]:
+    pattern_map = {
+        "ipynb": "*.ipynb",
+        "html": "*.html",
+        "markdown": "*.md",
+    }
+    return sorted(raw_dir.glob(pattern_map[input_format]))
 
 
 def preprocess_assignment(assignment_config_path: Path) -> None:
@@ -142,8 +246,12 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
     processing = cfg.get("processing", {})
 
     # Determine paths
-    raw_dir = (assignment_config_path.parent / assignment.get("raw_dir", "raw")).resolve()
-    processed_dir = (assignment_config_path.parent / assignment.get("processed_dir", "processed")).resolve()
+    raw_dir = (
+        assignment_config_path.parent / assignment.get("raw_dir", "raw")
+    ).resolve()
+    processed_dir = (
+        assignment_config_path.parent / assignment.get("processed_dir", "processed")
+    ).resolve()
 
     if not raw_dir.exists():
         msg = f"Raw directory not found: {raw_dir}"
@@ -151,29 +259,67 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
 
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get input format (auto-detect from first file or config override)
+    # Get input format (auto-detect from first supported file or config override)
     input_format = processing.get("input_format")
+    if input_format is not None and input_format not in {"ipynb", "html", "markdown"}:
+        msg = f"Unsupported input_format in config: {input_format}"
+        raise ValueError(msg)
+
     if input_format is None:
-        # Auto-detect from first file
-        raw_files = list(raw_dir.glob("*"))
-        if not raw_files:
-            print(f"No files found in raw directory: {raw_dir}")
+        supported_files = [
+            p
+            for p in sorted(raw_dir.glob("*"))
+            if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".md"}
+        ]
+        if not supported_files:
+            print(f"No supported files found in raw directory: {raw_dir}")
             return
 
-        first_file = raw_files[0]
+        first_file = supported_files[0]
         input_format = _detect_input_format(first_file)
         print(f"Auto-detected input format: {input_format} (from {first_file.name})")
 
     # Processing options
     remove_base64 = processing.get("remove_base64_images", True)
     clean_filenames = processing.get("clean_filenames", True)
+    strip_canvas_suffix = processing.get("strip_canvas_suffix", True)
+    strip_html_callouts = processing.get("strip_html_callouts", True)
+    strip_html_div_tags = processing.get("strip_html_div_tags", True)
+    strip_html_escaped_backslashes = processing.get(
+        "strip_html_escaped_backslashes", True
+    )
+    remove_nbconvert_assets = processing.get("remove_nbconvert_assets", True)
+    nbconvert_template = processing.get("nbconvert_template")
+
+    default_template_dir = assignment_config_path.parents[2] / "templates"
+    nbconvert_template_dir = processing.get("nbconvert_template_dir")
+    if nbconvert_template_dir is not None:
+        template_dir_path = (
+            assignment_config_path.parent / nbconvert_template_dir
+        ).resolve()
+    elif default_template_dir.exists() and (default_template_dir / "mdoutput").exists():
+        template_dir_path = default_template_dir.resolve()
+        if nbconvert_template is None:
+            nbconvert_template = "mdoutput"
+    else:
+        template_dir_path = None
 
     # Process each file
-    raw_files = sorted(raw_dir.glob("*"))
+    if input_format is not None:
+        raw_files = _glob_for_format(raw_dir, input_format)
+    else:
+        raw_files = [p for p in sorted(raw_dir.glob("*")) if p.is_file()]
+
+    if not raw_files:
+        print(f"No files found for input format '{input_format}' in: {raw_dir}")
+        return
+
     for raw_file in raw_files:
         if raw_file.is_file():
             # Determine output filename
             output_name = raw_file.name
+            if strip_canvas_suffix:
+                output_name = _strip_canvas_suffix(output_name)
             if clean_filenames:
                 output_name = _clean_filename(output_name)
 
@@ -182,10 +328,25 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             output_file = processed_dir / f"{output_stem}.md"
 
             # Detect format for this specific file
-            file_format = _detect_input_format(raw_file)
+            file_format = (
+                input_format
+                if input_format is not None
+                else _detect_input_format(raw_file)
+            )
 
             try:
-                _process_single_file(raw_file, output_file, file_format, remove_base64)
+                _process_single_file(
+                    raw_file,
+                    output_file,
+                    file_format,
+                    remove_base64,
+                    strip_html_callouts,
+                    strip_html_div_tags,
+                    strip_html_escaped_backslashes,
+                    remove_nbconvert_assets,
+                    nbconvert_template,
+                    template_dir_path,
+                )
                 print(f"[processed] {raw_file.name} -> {output_file.name}")
             except Exception as exc:
                 print(f"[error] Failed to process {raw_file.name}: {exc}")
