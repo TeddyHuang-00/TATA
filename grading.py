@@ -29,7 +29,7 @@ class AssignmentConfig:
     logs_dir: Path
     reference_file: Path
     rubric_file: Path
-    system_prompt_file: Path
+    system_prompt_files: list[Path]
     provider_name: str
     max_parallel_tasks: int = 10
 
@@ -51,7 +51,13 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
     reference_file = paths.reference_file
 
     rubric_file = (config_path.parents[2] / grading.rubric).resolve()
-    system_prompt_file = (config_path.parents[2] / grading.system_prompt).resolve()
+    if isinstance(grading.system_prompt, str):
+        system_prompt_files = [(config_path.parents[2] / grading.system_prompt).resolve()]
+    else:
+        system_prompt_files = [
+            (config_path.parents[2] / prompt_path).resolve()
+            for prompt_path in grading.system_prompt
+        ]
     provider_name = str(grading.provider)
     max_parallel_tasks = grading.max_parallel_tasks
 
@@ -62,10 +68,17 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
         logs_dir=logs_dir,
         reference_file=reference_file,
         rubric_file=rubric_file,
-        system_prompt_file=system_prompt_file,
+        system_prompt_files=system_prompt_files,
         provider_name=provider_name,
         max_parallel_tasks=max_parallel_tasks,
     )
+
+
+def _read_system_prompt(system_prompt_files: list[Path]) -> str:
+    sections: list[str] = []
+    for prompt_file in system_prompt_files:
+        sections.append(prompt_file.read_text(encoding="utf-8").strip())
+    return "\n\n".join(section for section in sections if section)
 
 
 def _load_checkpoint(checkpoint_file: Path) -> GradingCheckpoint:
@@ -271,10 +284,13 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> None:
         )
         raise FileNotFoundError(msg)
 
-    if not cfg.system_prompt_file.exists():
+    missing_prompt_files = [p for p in cfg.system_prompt_files if not p.exists()]
+    if missing_prompt_files:
         msg = (
-            f"System prompt file not found: {cfg.system_prompt_file}\n"
-            "Set [grading.system_prompt] to an existing markdown file, e.g. prompt/system.md."
+            "System prompt file(s) not found:\n"
+            + "\n".join(f"- {p}" for p in missing_prompt_files)
+            + "\nSet [grading.system_prompt] to an existing markdown file path or list of paths, "
+            "e.g. 'prompt/system.md' or ['prompt/system.md', 'prompt/lab.md']."
         )
         raise FileNotFoundError(msg)
 
@@ -289,7 +305,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> None:
     rubric_def = get_rubric_definition(cfg.rubric_file)
     response_model = generate_grading_model(rubric_def)
 
-    system_prompt = cfg.system_prompt_file.read_text(encoding="utf-8")
+    system_prompt = _read_system_prompt(cfg.system_prompt_files)
     reference_text = _read_reference_text(cfg.reference_file)
 
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)

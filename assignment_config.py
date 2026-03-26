@@ -111,9 +111,26 @@ class HooksSection(BaseModel):
 
 class GradingSection(BaseModel):
     rubric: str = Field(..., min_length=1)
-    system_prompt: str = Field(..., min_length=1)
+    system_prompt: str | list[str] = Field(...)
     provider: str = Field(..., min_length=1)
     max_parallel_tasks: int = Field(default=10, ge=1, le=10)
+
+    @field_validator("system_prompt")
+    @classmethod
+    def _validate_system_prompt(cls, value: str | list[str]) -> str | list[str]:
+        if isinstance(value, str):
+            if not value.strip():
+                msg = "grading.system_prompt cannot be empty."
+                raise ValueError(msg)
+            return value
+
+        if not value:
+            msg = "grading.system_prompt list cannot be empty."
+            raise ValueError(msg)
+        if any(not isinstance(v, str) or not v.strip() for v in value):
+            msg = "grading.system_prompt list must contain non-empty prompt file paths."
+            raise ValueError(msg)
+        return value
 
 
 class ScoringSection(BaseModel):
@@ -200,7 +217,7 @@ def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
             "Example:\n"
             "[grading]\n"
             'rubric = "rubrics/example_rubric.toml"\n'
-            'system_prompt = "prompt/system.md"\n'
+            'system_prompt = ["prompt/system.md", "prompt/lab.md"]\n'
             'provider = "deepseek_chat_tool"'
         )
 
