@@ -50,7 +50,7 @@ def main() -> None:
         return
 
     if args.config is None:
-        parser.error("--config is required for preprocess/grade/score/all stages")
+        parser.error("--config is required for preprocess/grade/score/analyze/all stages")
 
     summaries = []
 
@@ -75,7 +75,7 @@ def main() -> None:
             summaries.append(summary)
             print(_format_job_summary(summary))
 
-    if args.stage == "analyze":
+    if args.stage in {"analyze", "all"}:
         print("Running meta analysis...")
         summary = analyze_assignment(args.config)
         if summary is not None:
