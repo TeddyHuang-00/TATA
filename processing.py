@@ -7,10 +7,15 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from assignment_config import ensure_assignment_dirs, load_assignment_file, resolve_assignment_paths
+from assignment_config import (
+    ensure_assignment_dirs,
+    load_assignment_file,
+    resolve_assignment_paths,
+)
 
 
 InputFormat = Literal["ipynb", "html", "markdown"]
+SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown")
 
 
 def _detect_input_format(file_path: Path) -> InputFormat:
@@ -215,6 +220,24 @@ def _glob_for_format(raw_dir: Path, input_format: InputFormat) -> list[Path]:
     return sorted(raw_dir.glob(pattern_map[input_format]))
 
 
+def _normalize_input_formats(
+    input_format_config: InputFormat | list[InputFormat] | None,
+) -> list[InputFormat] | None:
+    if input_format_config is None:
+        return None
+
+    if isinstance(input_format_config, list):
+        deduped: list[InputFormat] = []
+        seen: set[str] = set()
+        for fmt in input_format_config:
+            if fmt not in seen:
+                deduped.append(fmt)
+                seen.add(fmt)
+        return deduped
+
+    return [input_format_config]
+
+
 def preprocess_assignment(assignment_config_path: Path) -> None:
     """Preprocess all raw files for an assignment into processed markdown."""
     if not assignment_config_path.exists():
@@ -232,13 +255,10 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
 
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get input format (auto-detect from first supported file or config override)
-    input_format = processing.input_format
-    if input_format is not None and input_format not in {"ipynb", "html", "markdown"}:
-        msg = f"Unsupported input_format in config: {input_format}"
-        raise ValueError(msg)
+    # Get input format(s) (auto-detect from first supported file or config override)
+    configured_formats = _normalize_input_formats(processing.input_format)
 
-    if input_format is None:
+    if configured_formats is None:
         supported_files = [
             p
             for p in sorted(raw_dir.glob("*"))
@@ -254,8 +274,12 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             return
 
         first_file = supported_files[0]
-        input_format = _detect_input_format(first_file)
-        print(f"Auto-detected input format: {input_format} (from {first_file.name})")
+        detected_input_format = _detect_input_format(first_file)
+        configured_formats = [detected_input_format]
+        print(
+            f"Auto-detected input format: {detected_input_format} "
+            f"(from {first_file.name})"
+        )
 
     # Processing options
     remove_base64 = processing.remove_base64_images
@@ -281,14 +305,17 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
         template_dir_path = None
 
     # Process each file
-    if input_format is not None:
-        raw_files = _glob_for_format(raw_dir, input_format)
-    else:
-        raw_files = [p for p in sorted(raw_dir.glob("*")) if p.is_file()]
+    raw_file_map: dict[Path, InputFormat] = {}
+    for fmt in configured_formats:
+        for p in _glob_for_format(raw_dir, fmt):
+            raw_file_map[p] = fmt
+
+    raw_files = sorted(raw_file_map.keys())
 
     if not raw_files:
         print(
-            f"No files found for input format '{input_format}' in: {raw_dir}\n"
+            "No files found for configured input format(s) "
+            f"{configured_formats} in: {raw_dir}\n"
             "Check [processing.input_format] in config or place matching files in raw/."
         )
         return
@@ -307,11 +334,7 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             output_file = processed_dir / f"{output_stem}.md"
 
             # Detect format for this specific file
-            file_format = (
-                input_format
-                if input_format is not None
-                else _detect_input_format(raw_file)
-            )
+            file_format = raw_file_map.get(raw_file) or _detect_input_format(raw_file)
 
             try:
                 _process_single_file(

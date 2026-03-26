@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from assignment_config import ensure_assignment_dirs, load_assignment_file, resolve_assignment_paths
+from assignment_config import (
+    ensure_assignment_dirs,
+    load_assignment_file,
+    resolve_assignment_paths,
+)
 from rubric import get_rubric_definition
 
 

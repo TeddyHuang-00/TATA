@@ -9,7 +9,11 @@ import instructor
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from assignment_config import ensure_assignment_dirs, load_assignment_file, resolve_assignment_paths
+from assignment_config import (
+    ensure_assignment_dirs,
+    load_assignment_file,
+    resolve_assignment_paths,
+)
 from provider import get_providers
 from rubric import generate_grading_model, get_rubric_definition
 

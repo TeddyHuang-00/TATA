@@ -83,3 +83,23 @@ If you want to regrade from scratch, remove:
 - old files in `graded/`
 
 Then run grade again.
+
+## 9. Can preprocessing accept multiple submission formats?
+
+Yes. `processing.input_format` supports both a single value and a list.
+
+Single format:
+
+```toml
+[processing]
+input_format = "ipynb"
+```
+
+Multiple formats:
+
+```toml
+[processing]
+input_format = ["ipynb", "html", "markdown"]
+```
+
+If omitted, preprocessing auto-detects from the first supported file in `raw/`.

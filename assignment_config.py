@@ -36,7 +36,7 @@ class AssignmentSection(BaseModel):
 
 
 class ProcessingSection(BaseModel):
-    input_format: InputFormat | None = Field(default=None)
+    input_format: InputFormat | list[InputFormat] | None = Field(default=None)
     remove_base64_images: bool = Field(default=True)
     clean_filenames: bool = Field(default=True)
     strip_canvas_suffix: bool = Field(default=True)
@@ -70,7 +70,9 @@ class AssignmentPaths:
     reference_file: Path
 
 
-def resolve_assignment_paths(cfg: AssignmentFileConfig, base_dir: Path) -> AssignmentPaths:
+def resolve_assignment_paths(
+    cfg: AssignmentFileConfig, base_dir: Path
+) -> AssignmentPaths:
     return AssignmentPaths(
         raw_dir=cfg.assignment.resolve_raw_dir(base_dir),
         processed_dir=cfg.assignment.resolve_processed_dir(base_dir),
@@ -81,7 +83,12 @@ def resolve_assignment_paths(cfg: AssignmentFileConfig, base_dir: Path) -> Assig
 
 
 def ensure_assignment_dirs(paths: AssignmentPaths) -> None:
-    for directory in (paths.raw_dir, paths.processed_dir, paths.graded_dir, paths.logs_dir):
+    for directory in (
+        paths.raw_dir,
+        paths.processed_dir,
+        paths.graded_dir,
+        paths.logs_dir,
+    ):
         directory.mkdir(parents=True, exist_ok=True)
 
 
