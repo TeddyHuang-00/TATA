@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from html import escape
 import json
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ def calculate_criterion_score(
     """Calculate score for a single criterion based on rating and grading scheme."""
     if grading_scheme == "custom":
         if custom_scale is None:
-            msg = f"Custom grading scheme requires custom_scale, but none provided"
+            msg = "Custom grading scheme requires custom_scale, but none provided"
             raise ValueError(msg)
 
         # Map rating to index in custom scale
@@ -52,45 +52,41 @@ def calculate_criterion_score(
                 rating_index = rating_options.index(rating.lower())
                 if rating_index < len(custom_scale):
                     return custom_scale[rating_index]
-                else:
-                    return custom_scale[-1]  # Use last value if out of range
+                return custom_scale[-1]  # Use last value if out of range
             except ValueError:
                 return custom_scale[-1]  # Default to last value
 
         rating_index = rating_map[grading_scheme][rating.lower()]
         if rating_index < len(custom_scale):
             return custom_scale[rating_index]
-        else:
-            return custom_scale[-1]
+        return custom_scale[-1]
 
     # Standard grading schemes
     if grading_scheme in ("standard", None):
         if rating.lower() == "correct":
             return float(criterion_pts)
-        elif rating.lower() == "partial":
+        if rating.lower() == "partial":
             return float(criterion_pts) * 0.5
-        elif rating.lower() == "somewhat correct":
+        if rating.lower() == "somewhat correct":
             return float(criterion_pts) * 0.75
-        elif rating.lower() == "neutral":
+        if rating.lower() == "neutral":
             return float(criterion_pts) * 0.25
-        else:  # incorrect, somewhat incorrect, completely incorrect
-            return 0.0
+        # incorrect, somewhat incorrect, completely incorrect
+        return 0.0
 
-    elif grading_scheme == "strict":
+    if grading_scheme == "strict":
         if rating.lower() == "correct":
             return float(criterion_pts)
-        else:
-            return 0.0
+        return 0.0
 
-    elif grading_scheme == "round up":
+    if grading_scheme == "round up":
         standard_score = calculate_criterion_score(
             criterion_pts, rating, "standard", custom_scale
         )
         return float(round(standard_score))
 
-    else:
-        msg = f"Unknown grading scheme: {grading_scheme}"
-        raise ValueError(msg)
+    msg = f"Unknown grading scheme: {grading_scheme}"
+    raise ValueError(msg)
 
 
 def _generate_criterion_feedback(
@@ -278,7 +274,7 @@ def score_submission(
     return total_score, "\n".join(summary_lines)
 
 
-def score_assignment(assignment_config_path: Path) -> None:
+def score_assignment(assignment_config_path: Path) -> dict | None:
     """Score all graded submissions for an assignment."""
     cfg = load_assignment_file(assignment_config_path)
     grading = cfg.grading
@@ -311,7 +307,13 @@ def score_assignment(assignment_config_path: Path) -> None:
             f"No graded files found in: {graded_dir}\n"
             "Run grade stage first so graded/*.json is generated."
         )
-        return
+        return {
+            "stage": "score",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
 
     if hook_runtime is not None:
         hook_runtime.run(
@@ -366,6 +368,16 @@ def score_assignment(assignment_config_path: Path) -> None:
                 "error_count": error_count,
             },
         )
+
+    total = scored_count + error_count
+    success_rate = (scored_count / total * 100) if total > 0 else 0
+    return {
+        "stage": "score",
+        "success": scored_count,
+        "errors": error_count,
+        "total": total,
+        "success_rate": success_rate,
+    }
 
 
 # Backward compatibility for older imports.

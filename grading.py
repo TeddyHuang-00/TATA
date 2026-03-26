@@ -1,24 +1,23 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-import subprocess
-import sys
 from typing import Any
 
 import instructor
-from openai import OpenAI
-from pydantic import BaseModel, Field
-
 from assignment_config import (
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
 )
-from provider import get_providers
-from rubric import generate_grading_model, get_rubric_definition
 from hooks_runtime import HookRuntime
+from openai import OpenAI
+from provider import get_providers
+from pydantic import BaseModel, Field
+from rubric import generate_grading_model, get_rubric_definition
 
 
 @dataclass
@@ -52,7 +51,9 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
 
     rubric_file = (config_path.parents[2] / grading.rubric).resolve()
     if isinstance(grading.system_prompt, str):
-        system_prompt_files = [(config_path.parents[2] / grading.system_prompt).resolve()]
+        system_prompt_files = [
+            (config_path.parents[2] / grading.system_prompt).resolve()
+        ]
     else:
         system_prompt_files = [
             (config_path.parents[2] / prompt_path).resolve()
@@ -245,7 +246,7 @@ def _run_single_grading_task(
             result_json = str(after_payload.get("result_json", result_json))
 
         return submission.name, result_json, None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_message = f"{type(exc).__name__}: {exc}"
         if hook_runtime is not None:
             hook_runtime.run(
@@ -261,7 +262,7 @@ def _run_single_grading_task(
         return submission.name, "", error_message
 
 
-def grade_assignment(config_path: Path, *, force: bool = False) -> None:
+def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:
     cfg = _load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
@@ -314,7 +315,13 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> None:
             f"No submissions found in: {cfg.processed_dir}\n"
             "Run preprocess first and ensure processed/*.md exists (excluding reference.md)."
         )
-        return
+        return {
+            "stage": "grade",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
 
     if force:
         pending_submissions = submissions
@@ -323,7 +330,13 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> None:
         pending_submissions = [s for s in submissions if s.name not in checkpoint.done]
         if not pending_submissions:
             print("All submissions already graded (checkpoint hit).")
-            return
+            return {
+                "stage": "grade",
+                "success": 0,
+                "errors": 0,
+                "total": 0,
+                "success_rate": 0,
+            }
 
     client, model_name = _build_client(cfg.provider_name)
     worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))
@@ -368,7 +381,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> None:
 
             try:
                 submission_name, result_json, error_message = future.result()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 submission_name = submission.name
                 result_json = ""
                 error_message = f"FutureError: {type(exc).__name__}: {exc}"
@@ -397,6 +410,16 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> None:
                 "errors_log": str(error_log_file),
             },
         )
+
+    total = done_count + error_count
+    success_rate = (done_count / total * 100) if total > 0 else 0
+    return {
+        "stage": "grade",
+        "success": done_count,
+        "errors": error_count,
+        "total": total,
+        "success_rate": success_rate,
+    }
 
 
 def main() -> None:

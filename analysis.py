@@ -235,7 +235,7 @@ def _build_markdown_report(result: dict[str, Any]) -> str:
     return "\n".join(md_lines)
 
 
-def analyze_assignment(assignment_config_path: Path) -> None:
+def analyze_assignment(assignment_config_path: Path) -> dict | None:
     cfg = load_assignment_file(assignment_config_path)
     hook_runtime = HookRuntime.from_config(
         cfg,
@@ -252,7 +252,7 @@ def analyze_assignment(assignment_config_path: Path) -> None:
 
     rubric_def, graded_files, paths = _load_rubric_and_files(assignment_config_path)
     if not graded_files or rubric_def is None:
-        return
+        return None
 
     result = _analyze_graded_files(rubric_def, graded_files)
 
@@ -274,6 +274,14 @@ def analyze_assignment(assignment_config_path: Path) -> None:
                 "md_output": str(md_output),
             },
         )
+
+    return {
+        "stage": "analyze",
+        "success": 1,
+        "errors": 0,
+        "total": 1,
+        "success_rate": 100.0,
+    }
 
 
 def main() -> None:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from html import unescape
-from html.parser import HTMLParser
 import re
 import shutil
 import subprocess
 import sys
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal
 
@@ -16,7 +16,6 @@ from assignment_config import (
 )
 from hooks_runtime import HookRuntime
 
-
 InputFormat = Literal["ipynb", "html", "markdown"]
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown")
 
@@ -26,13 +25,12 @@ def _detect_input_format(file_path: Path) -> InputFormat:
     suffix = file_path.suffix.lower()
     if suffix == ".ipynb":
         return "ipynb"
-    elif suffix == ".html":
+    if suffix == ".html":
         return "html"
-    elif suffix == ".md":
+    if suffix == ".md":
         return "markdown"
-    else:
-        msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .md"
-        raise ValueError(msg)
+    msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .md"
+    raise ValueError(msg)
 
 
 def _clean_filename(filename: str) -> str:
@@ -124,7 +122,7 @@ class _TableHTMLParser(HTMLParser):
 
 def _markdown_escape_cell(value: str) -> str:
     escaped = value.replace("|", "\\|")
-    return escaped if escaped else " "
+    return escaped or " "
 
 
 def _table_html_to_markdown(table_html: str) -> str:
@@ -437,7 +435,7 @@ def _normalize_input_formats(
     return [input_format_config]
 
 
-def preprocess_assignment(assignment_config_path: Path) -> None:
+def preprocess_assignment(assignment_config_path: Path) -> dict | None:
     """Preprocess all raw files for an assignment into processed markdown."""
     if not assignment_config_path.exists():
         msg = f"Assignment config not found: {assignment_config_path}"
@@ -474,7 +472,13 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
                 "Add student files to raw/ (supported: .ipynb, .html, .md), "
                 "then run preprocess again."
             )
-            return
+            return {
+                "stage": "preprocess",
+                "success": 0,
+                "errors": 0,
+                "total": 0,
+                "success_rate": 0,
+            }
 
         first_file = supported_files[0]
         detected_input_format = _detect_input_format(first_file)
@@ -539,7 +543,13 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
             f"{configured_formats} in: {raw_dir}\n"
             "Check [processing.input_format] in config or place matching files in raw/."
         )
-        return
+        return {
+            "stage": "preprocess",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
 
     processed_count = 0
     failed_count = 0
@@ -634,6 +644,16 @@ def preprocess_assignment(assignment_config_path: Path) -> None:
                 "failed_count": failed_count,
             },
         )
+
+    total = processed_count + failed_count
+    success_rate = (processed_count / total * 100) if total > 0 else 0
+    return {
+        "stage": "preprocess",
+        "success": processed_count,
+        "errors": failed_count,
+        "total": total,
+        "success_rate": success_rate,
+    }
 
 
 def main() -> None:
