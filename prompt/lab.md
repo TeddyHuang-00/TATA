@@ -12,6 +12,7 @@ Apply these guidelines to programming assignments and notebook-based labs.
 - **Accept Equivalent Approaches**: If a solution satisfies the rubric intent using a different algorithm, language feature, or paradigm than the reference implementation, evaluate it on its merits.
 - **Minimize Boilerplate Penalties**: Don't penalize missing imports, comment blocks, or scaffolding code unless they directly affect functionality or are explicitly required by the rubric.
 - **Handle Edge Cases Gracefully**: If a submission handles core logic correctly but misses some edge cases, acknowledge the solid foundation before pointing out incomplete coverage.
+- **Allow for Creative Solutions**: The reference implementation is just one way to solve the problem. If a student's code demonstrates a valid alternative approach that meets the learning objectives, recognize it.
 
 ### Notebooks and Outputs
 
