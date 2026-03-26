@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import instructor
 from openai import OpenAI
@@ -23,6 +25,7 @@ class AssignmentConfig:
     rubric_file: Path
     system_prompt_file: Path
     provider_name: str
+    max_parallel_tasks: int = 10
 
 
 class GradingCheckpoint(BaseModel):
@@ -50,6 +53,11 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
     rubric_file = (config_path.parents[2] / grading["rubric"]).resolve()
     system_prompt_file = (config_path.parents[2] / grading["system_prompt"]).resolve()
     provider_name = str(grading["provider"])
+    max_parallel_tasks = int(grading.get("max_parallel_tasks", 10))
+    if max_parallel_tasks < 1:
+        max_parallel_tasks = 1
+    if max_parallel_tasks > 10:
+        max_parallel_tasks = 10
 
     return AssignmentConfig(
         assignment_name=name,
@@ -60,6 +68,7 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
         rubric_file=rubric_file,
         system_prompt_file=system_prompt_file,
         provider_name=provider_name,
+        max_parallel_tasks=max_parallel_tasks,
     )
 
 
@@ -123,6 +132,35 @@ def _grade_one_submission(
     )
 
 
+def _run_single_grading_task(
+    submission: Path,
+    *,
+    client: Any,
+    model_name: str,
+    response_model: type[BaseModel],
+    system_prompt: str,
+    reference_text: str,
+) -> tuple[str, str, str | None]:
+    """Run grading for one submission.
+
+    Returns:
+        (submission_name, result_json, error_message)
+    """
+    try:
+        student_text = submission.read_text(encoding="utf-8")
+        result = _grade_one_submission(
+            client=client,
+            model_name=model_name,
+            response_model=response_model,
+            system_prompt=system_prompt,
+            reference_text=reference_text,
+            student_text=student_text,
+        )
+        return submission.name, result.model_dump_json(indent=2), None
+    except Exception as exc:  # noqa: BLE001
+        return submission.name, "", f"{type(exc).__name__}: {exc}"
+
+
 def grade_assignment(config_path: Path) -> None:
     cfg = _load_assignment_config(config_path)
 
@@ -145,38 +183,51 @@ def grade_assignment(config_path: Path) -> None:
         print(f"No submissions found in: {cfg.processed_dir}")
         return
 
+    pending_submissions = [s for s in submissions if s.name not in checkpoint.done]
+    if not pending_submissions:
+        print("All submissions already graded (checkpoint hit).")
+        return
+
     client, model_name = _build_client(cfg.provider_name)
+    worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))
+    print(
+        f"Grading {len(pending_submissions)} submissions with {worker_count} parallel task(s)..."
+    )
 
-    for submission in submissions:
-        if submission.name in checkpoint.done:
-            continue
-
-        output_file = cfg.graded_dir / f"{submission.stem}.json"
-
-        try:
-            student_text = submission.read_text(encoding="utf-8")
-            result = _grade_one_submission(
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_to_submission = {
+            executor.submit(
+                _run_single_grading_task,
+                submission,
                 client=client,
                 model_name=model_name,
                 response_model=response_model,
                 system_prompt=system_prompt,
                 reference_text=reference_text,
-                student_text=student_text,
-            )
+            ): submission
+            for submission in pending_submissions
+        }
 
-            output_file.write_text(
-                result.model_dump_json(indent=2),
-                encoding="utf-8",
-            )
+        for future in as_completed(future_to_submission):
+            submission = future_to_submission[future]
+            output_file = cfg.graded_dir / f"{submission.stem}.json"
 
-            checkpoint.done.append(submission.name)
-            _save_checkpoint(checkpoint_file, checkpoint)
-            print(f"[done] {submission.name}")
+            try:
+                submission_name, result_json, error_message = future.result()
+            except Exception as exc:  # noqa: BLE001
+                submission_name = submission.name
+                result_json = ""
+                error_message = f"FutureError: {type(exc).__name__}: {exc}"
 
-        except Exception as exc:  # noqa: BLE001
-            with error_log_file.open("a", encoding="utf-8") as f:
-                f.write(f"{submission.name}: {type(exc).__name__}: {exc}\n")
-            print(f"[error] {submission.name}: {exc}")
+            if error_message is None:
+                output_file.write_text(result_json, encoding="utf-8")
+                checkpoint.done.append(submission_name)
+                _save_checkpoint(checkpoint_file, checkpoint)
+                print(f"[done] {submission_name}")
+            else:
+                with error_log_file.open("a", encoding="utf-8") as f:
+                    f.write(f"{submission_name}: {error_message}\n")
+                print(f"[error] {submission_name}: {error_message}")
 
 
 def main() -> None:
