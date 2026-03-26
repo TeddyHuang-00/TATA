@@ -97,13 +97,14 @@ def _generate_criterion_feedback(
     criterion_name: str,
     criterion_pts: int | float,
     rating: str,
-    feedback: str,
+    feedback: str | None,
     score: float,
 ) -> str:
     """Generate markdown feedback for a single criterion."""
+    feedback_text = feedback or "No additional feedback."
     return f"""### {criterion_name} ({score:.1f}/{criterion_pts} pts)
 **Rating**: {rating.upper()}
-**Feedback**: {feedback}
+**Feedback**: {feedback_text}
 """
 
 
@@ -111,14 +112,15 @@ def _generate_criterion_feedback_plain(
     criterion_name: str,
     criterion_pts: int | float,
     rating: str,
-    feedback: str,
+    feedback: str | None,
     score: float,
 ) -> str:
     """Generate plain-text feedback for a single criterion."""
+    feedback_text = feedback or "No additional feedback."
     return "\n".join([
         f"- {criterion_name} ({score:.1f}/{criterion_pts} pts)",
         f"  - Rating: {rating.upper()}",
-        f"  - Feedback: {feedback}",
+        f"  - Feedback: {feedback_text}",
     ])
 
 
@@ -126,15 +128,16 @@ def _generate_criterion_feedback_html(
     criterion_name: str,
     criterion_pts: int | float,
     rating: str,
-    feedback: str,
+    feedback: str | None,
     score: float,
 ) -> str:
     """Generate HTML feedback for a single criterion."""
+    feedback_text = feedback or "No additional feedback."
     return (
         f'<section class="criterion">'
         f"<h3>{escape(criterion_name)} ({score:.1f}/{criterion_pts} pts)</h3>"
         f"<p><strong>Rating:</strong> {escape(rating.upper())}</p>"
-        f"<p><strong>Feedback:</strong> {escape(feedback)}</p>"
+        f"<p><strong>Feedback:</strong> {escape(feedback_text)}</p>"
         f"</section>"
     )
 

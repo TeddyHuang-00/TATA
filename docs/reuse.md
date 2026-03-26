@@ -6,7 +6,7 @@ Use this project as a starter by keeping only generic assets:
 
 - [assignments/example/config.toml](../assignments/example/config.toml)
 - [rubrics/example_rubric.toml](../rubrics/example_rubric.toml)
-- [prompt/lab.md](../prompt/lab.md)
+- [prompt/system.md](../prompt/system.md)
 - schemas under [config](../config)
 
 Create one folder per assignment under assignments/.

@@ -7,7 +7,7 @@ At minimum, your config must include:
 ```toml
 [grading]
 rubric = "rubrics/example_rubric.toml"
-system_prompt = "prompt/lab.md"
+system_prompt = "prompt/system.md"
 provider = "deepseek_chat_tool"
 ```
 

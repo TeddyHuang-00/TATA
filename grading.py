@@ -163,12 +163,11 @@ def _grade_one_submission(
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": (
-                    "Reference Answer:\n"
-                    f"{reference_text}\n\n"
-                    "Student Answer:\n"
-                    f"{student_text}"
-                ),
+                "content": f"Reference Answer:\n{reference_text}",
+            },
+            {
+                "role": "user",
+                "content": f"Student Answer:\n{student_text}",
             },
         ],
     )
@@ -249,7 +248,7 @@ def _run_single_grading_task(
         return submission.name, "", error_message
 
 
-def grade_assignment(config_path: Path) -> None:
+def grade_assignment(config_path: Path, *, force: bool = False) -> None:
     cfg = _load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
@@ -275,7 +274,7 @@ def grade_assignment(config_path: Path) -> None:
     if not cfg.system_prompt_file.exists():
         msg = (
             f"System prompt file not found: {cfg.system_prompt_file}\n"
-            "Set [grading.system_prompt] to an existing markdown file, e.g. prompt/lab.md."
+            "Set [grading.system_prompt] to an existing markdown file, e.g. prompt/system.md."
         )
         raise FileNotFoundError(msg)
 
@@ -301,10 +300,14 @@ def grade_assignment(config_path: Path) -> None:
         )
         return
 
-    pending_submissions = [s for s in submissions if s.name not in checkpoint.done]
-    if not pending_submissions:
-        print("All submissions already graded (checkpoint hit).")
-        return
+    if force:
+        pending_submissions = submissions
+        print("Force mode enabled: ignoring checkpoint and regrading all submissions.")
+    else:
+        pending_submissions = [s for s in submissions if s.name not in checkpoint.done]
+        if not pending_submissions:
+            print("All submissions already graded (checkpoint hit).")
+            return
 
     client, model_name = _build_client(cfg.provider_name)
     worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))
@@ -356,7 +359,8 @@ def grade_assignment(config_path: Path) -> None:
 
             if error_message is None:
                 output_file.write_text(result_json, encoding="utf-8")
-                checkpoint.done.append(submission_name)
+                if submission_name not in checkpoint.done:
+                    checkpoint.done.append(submission_name)
                 _save_checkpoint(checkpoint_file, checkpoint)
                 print(f"[done] {submission_name}")
                 done_count += 1
@@ -389,9 +393,14 @@ def main() -> None:
         required=True,
         help="Path to assignment config TOML.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Ignore grading checkpoint and regrade all submissions.",
+    )
     args = parser.parse_args()
 
-    grade_assignment(args.config)
+    grade_assignment(args.config, force=args.force)
 
 
 if __name__ == "__main__":

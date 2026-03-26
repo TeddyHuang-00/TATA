@@ -51,4 +51,4 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
 - Example assignment config: [assignments/example/config.toml](assignments/example/config.toml)
 - Example rubric: [rubrics/example_rubric.toml](rubrics/example_rubric.toml)
-- Generic lab prompt: [prompt/lab.md](prompt/lab.md)
+- Generic system prompt: [prompt/system.md](prompt/system.md)

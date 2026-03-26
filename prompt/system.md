@@ -41,6 +41,14 @@
   - **Good**: "It looks like there might be a mix-up between correlation and causation in this section. This is a very common and important distinction to make! Let's clarify it..."
   - **Bad**: "Your reasoning here is wrong."
 
+## Output Convention
+
+- `feedback` may be `null` when the student's answer is correct and there is no major flaw to call out.
+- If there is any meaningful improvement opportunity, provide concise actionable feedback instead of `null`.
+- Never mention or imply comparison against "the reference answer" in student-facing feedback.
+- Frame comments using only student-visible context: assignment instructions, rubric criteria, and the student's submission.
+- Prefer phrasing like "Based on the rubric/instructions..." instead of TA-only context such as "compared with the reference answer...".
+
 ## Quality Assurance Checklist
 
 Before submitting feedback, ask yourself:

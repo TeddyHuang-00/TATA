@@ -80,7 +80,7 @@ Symptom:
 Fix:
 
 - Set `grading.system_prompt` to an existing markdown file
-- Example: `prompt/lab.md`
+- Example: `prompt/system.md`
 
 ## 8. No graded files found in graded/
 

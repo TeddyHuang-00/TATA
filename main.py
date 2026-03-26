@@ -25,6 +25,11 @@ def main() -> None:
         required=False,
         help="Path to assignment config TOML.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="For grade stage, ignore checkpoint and regrade all submissions.",
+    )
     args = parser.parse_args()
 
     if args.stage == "schema":
@@ -43,7 +48,7 @@ def main() -> None:
 
     if args.stage in ("grade", "all"):
         print("Running grading...")
-        grade_assignment(args.config)
+        grade_assignment(args.config, force=args.force)
 
     if args.stage in ("score", "all"):
         print("Running scoring...")

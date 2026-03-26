@@ -166,9 +166,12 @@ class CriterionResult(BaseModel):
         ...,
         description="The chain of thought that led to the rating.",
     )
-    feedback: str = Field(
+    feedback: str | None = Field(
         ...,
-        description="Actionable feedback for this criterion.",
+        description=(
+            "Actionable feedback for this criterion. "
+            "Can be null when the answer is correct and no major flaw is found."
+        ),
     )
 
 
