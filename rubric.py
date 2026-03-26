@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, create_model, model_validator
 
 
 class Binary(StrEnum):
@@ -108,7 +108,7 @@ class Criterion(BaseModel):
                 msg = f"Custom grading scale must be provided when grading is set to CUSTOM for criterion '{self.name}'."
                 raise ValueError(msg)
 
-            expected_length = len(Rating(self.rating).value.split(","))
+            expected_length = len(RATING_ENUM_MAP[self.rating])
             if len(self.custom_scale) != expected_length:
                 msg = f"Length of custom grading scale must match the number of ratings in the rating scale for criterion '{self.name}'. Expected {expected_length} but got {len(self.custom_scale)}."
                 raise ValueError(msg)
@@ -138,6 +138,72 @@ def get_rubric_definition(file: Path) -> RubricDefinition:
     config = tomllib.loads(file.read_text(encoding="utf-8"))
 
     return RubricDefinition.model_validate(config)
+
+
+RATING_ENUM_MAP: dict[Rating, type[StrEnum]] = {
+    Rating.BINARY: Binary,
+    Rating.TERNARY: Ternary,
+    Rating.LIKERT: Likert,
+}
+
+
+def slugify_criterion_name(name: str) -> str:
+    """Convert a criterion name to a valid snake_case field name."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name.strip().lower())
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    if not slug:
+        msg = f"Criterion name '{name}' becomes empty after slugify."
+        raise ValueError(msg)
+    if slug[0].isdigit():
+        slug = f"c_{slug}"
+    return slug
+
+
+class CriterionResult(BaseModel):
+    """One criterion grading result returned by the model."""
+
+    chain_of_thought: str = Field(
+        ...,
+        description="The chain of thought that led to the rating.",
+    )
+    feedback: str = Field(
+        ...,
+        description="Actionable feedback for this criterion.",
+    )
+
+
+def generate_grading_model(rubric_def: RubricDefinition) -> type[BaseModel]:
+    """Generate a dynamic Pydantic model used as grading response schema."""
+    if not rubric_def.criterion:
+        msg = "Rubric definition has no criterion."
+        raise ValueError(msg)
+
+    response_fields: dict[str, tuple[type[BaseModel], Field]] = {}
+    used_names: set[str] = set()
+
+    for criterion in rubric_def.criterion:
+        field_name = slugify_criterion_name(criterion.name)
+        if field_name in used_names:
+            msg = f"Duplicated criterion field name after slugify: {field_name}"
+            raise ValueError(msg)
+        used_names.add(field_name)
+
+        rating_enum = RATING_ENUM_MAP[criterion.rating]
+        result_model = create_model(
+            f"CriterionResult_{field_name}",
+            __base__=CriterionResult,
+            rating=(rating_enum, Field(..., description=criterion.desc)),
+        )
+        response_fields[field_name] = (
+            result_model,
+            Field(..., description=f"Result for criterion: {criterion.name}"),
+        )
+
+    response_model = create_model(
+        "GradingResponse",
+        **response_fields,
+    )
+    return response_model
 
 
 if __name__ == "__main__":

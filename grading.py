@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import json
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+
+import instructor
+from openai import OpenAI
+from pydantic import BaseModel, Field
+
+from provider import get_providers
+from rubric import generate_grading_model, get_rubric_definition
+
+
+@dataclass
+class AssignmentConfig:
+    assignment_name: str
+    processed_dir: Path
+    graded_dir: Path
+    logs_dir: Path
+    reference_file: Path
+    rubric_file: Path
+    system_prompt_file: Path
+    provider_name: str
+
+
+class GradingCheckpoint(BaseModel):
+    done: list[str] = Field(default_factory=list)
+
+
+def _load_assignment_config(config_path: Path) -> AssignmentConfig:
+    if not config_path.exists():
+        msg = f"Assignment config not found: {config_path}"
+        raise FileNotFoundError(msg)
+
+    cfg = tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    assignment = cfg.get("assignment", {})
+    grading = cfg.get("grading", {})
+
+    name = str(assignment.get("name", "assignment"))
+    processed_dir = (
+        config_path.parent / assignment.get("processed_dir", "processed")
+    ).resolve()
+    graded_dir = (config_path.parent / assignment.get("graded_dir", "graded")).resolve()
+    logs_dir = (config_path.parent / assignment.get("logs_dir", "logs")).resolve()
+    reference_file = (config_path.parent / assignment["reference_file"]).resolve()
+
+    rubric_file = (config_path.parents[2] / grading["rubric"]).resolve()
+    system_prompt_file = (config_path.parents[2] / grading["system_prompt"]).resolve()
+    provider_name = str(grading["provider"])
+
+    return AssignmentConfig(
+        assignment_name=name,
+        processed_dir=processed_dir,
+        graded_dir=graded_dir,
+        logs_dir=logs_dir,
+        reference_file=reference_file,
+        rubric_file=rubric_file,
+        system_prompt_file=system_prompt_file,
+        provider_name=provider_name,
+    )
+
+
+def _load_checkpoint(checkpoint_file: Path) -> GradingCheckpoint:
+    if not checkpoint_file.exists():
+        return GradingCheckpoint()
+    return GradingCheckpoint.model_validate_json(
+        checkpoint_file.read_text(encoding="utf-8")
+    )
+
+
+def _save_checkpoint(checkpoint_file: Path, checkpoint: GradingCheckpoint) -> None:
+    checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_file.write_text(checkpoint.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _collect_submissions(processed_dir: Path, reference_file: Path) -> list[Path]:
+    if not processed_dir.exists():
+        msg = f"Processed directory not found: {processed_dir}"
+        raise FileNotFoundError(msg)
+
+    submission_files = sorted(processed_dir.glob("*.md"))
+    reference_stem = reference_file.stem
+    return [p for p in submission_files if p.stem != reference_stem]
+
+
+def _build_client(provider_name: str):
+    providers = get_providers()
+    provider = providers[provider_name]
+
+    raw_client = OpenAI(
+        base_url=provider.base_url,
+        api_key=provider.api_key,
+    )
+    return instructor.from_openai(raw_client, mode=provider.mode), provider.model
+
+
+def _grade_one_submission(
+    client,
+    model_name: str,
+    response_model: type[BaseModel],
+    system_prompt: str,
+    reference_text: str,
+    student_text: str,
+) -> BaseModel:
+    return client.chat.completions.create(
+        model=model_name,
+        response_model=response_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    "Reference Answer:\n"
+                    f"{reference_text}\n\n"
+                    "Student Answer:\n"
+                    f"{student_text}"
+                ),
+            },
+        ],
+    )
+
+
+def grade_assignment(config_path: Path) -> None:
+    cfg = _load_assignment_config(config_path)
+
+    cfg.graded_dir.mkdir(parents=True, exist_ok=True)
+    cfg.logs_dir.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_file = cfg.logs_dir / "grading.checkpoint.json"
+    error_log_file = cfg.logs_dir / "grading.errors.log"
+
+    checkpoint = _load_checkpoint(checkpoint_file)
+
+    rubric_def = get_rubric_definition(cfg.rubric_file)
+    response_model = generate_grading_model(rubric_def)
+
+    system_prompt = cfg.system_prompt_file.read_text(encoding="utf-8")
+    reference_text = cfg.reference_file.read_text(encoding="utf-8")
+
+    submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
+    if not submissions:
+        print(f"No submissions found in: {cfg.processed_dir}")
+        return
+
+    client, model_name = _build_client(cfg.provider_name)
+
+    for submission in submissions:
+        if submission.name in checkpoint.done:
+            continue
+
+        output_file = cfg.graded_dir / f"{submission.stem}.json"
+
+        try:
+            student_text = submission.read_text(encoding="utf-8")
+            result = _grade_one_submission(
+                client=client,
+                model_name=model_name,
+                response_model=response_model,
+                system_prompt=system_prompt,
+                reference_text=reference_text,
+                student_text=student_text,
+            )
+
+            output_file.write_text(
+                result.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+
+            checkpoint.done.append(submission.name)
+            _save_checkpoint(checkpoint_file, checkpoint)
+            print(f"[done] {submission.name}")
+
+        except Exception as exc:  # noqa: BLE001
+            with error_log_file.open("a", encoding="utf-8") as f:
+                f.write(f"{submission.name}: {type(exc).__name__}: {exc}\n")
+            print(f"[error] {submission.name}: {exc}")
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run assignment grading pipeline.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Path to assignment config TOML.",
+    )
+    args = parser.parse_args()
+
+    grade_assignment(args.config)
+
+
+if __name__ == "__main__":
+    main()

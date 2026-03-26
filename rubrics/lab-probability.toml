@@ -1,0 +1,94 @@
+# schema: ../config/rubric.schema.json
+# @schema ../config/rubric.schema.json
+#:schema ../config/rubric.schema.json
+
+[[criterion]]
+name = "Horror Movie DataFrame Creation"
+desc = "Create a DataFrame for the Horror Movie domain."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Horror Movie Like Movie Probability"
+desc = "Create a method that finds the probability Jason likes or dislikes a movie."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Horror Movie Joint Probability"
+desc = "Create a method that can calculate the joint probability of two variables, vampire and horror P(vampire and horror)."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Horror Movie Conditional Probability"
+desc = "Create a method that can calculate the conditional probability of two variables verdict and horror, or verdict and vampire."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Horror Movie Joint Probability Conditional"
+desc = "Create a method to calculate a conditional probability with a joint distribution of two events. For example, P(vampire and horror | good)."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Horror Movie Bayes Rule"
+desc = "Create a method to apply Bayes' rule and calculate the conditional probability of an event given the occurrence of other events. For example, P(good | vampire and horror)."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Horror Movie Calculate Probabilities"
+desc = "Use the above methods to calculate various probabilities in the Horror Movie domain. Count the number of correct and incorrect probabilities calculated."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Going For A Walk Bayes Net DataFrame"
+desc = "Represent the Going for a Walk Bayesian network as a DataFrame."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Going For A Walk Dictionary Connection"
+desc = "Create a dictionary to represent the connections between nodes in the Bayesian network."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Going For A Walk Retrieve Probability"
+desc = "Create a method to retrieve any probability from the Bayesian network."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Going For A Walk Conditional Probability"
+desc = "Create a method that calculates the conditional probability of P(r | p, s)."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Going For A Walk Display Probabilities"
+desc = "Display all the probabilities needed for calculating P(r | p, s), such as P(r), P(p | w), and related terms."
+pts = 8
+rating = "ternary"
+grading = "standard"
+
+[[criterion]]
+name = "Extra Naive Bayes Calculation"
+desc = "Calculate the probabilities based on Naive Bayes. Count the number of correct and incorrect probabilities calculated."
+pts = 4
+rating = "ternary"
+grading = "standard"
