@@ -58,12 +58,21 @@ Path-related fields under `[assignment]` are optional and default to:
 - logs
 - reference.md
 
+Plagiarism settings are optional under `[plagiarism]` and default to:
+
+- output_dir -> `plagiarism`
+- template_file -> `template.ipynb`
+- submissions_subdir -> `submissions`
+- template_subdir -> `template`
+- report_file -> `report.html`
+
 ## 6. Prepare assignment files
 
 For an assignment folder (for example `assignments/my-assignment`):
 
 - put student submissions into `raw/`
 - put the reference answer into `reference.md` at assignment root
+- put plagiarism boilerplate template into `template.ipynb` at assignment root (recommended)
 - reference supports `.md`, `.ipynb`, or `.html`
 - ensure your rubric and prompt files exist
 
@@ -81,6 +90,12 @@ Grade only:
 uv run main.py --stage grade --config assignments/my-assignment/config.toml
 ```
 
+Plagiarism only:
+
+```bash
+uv run main.py --stage plagiarism --config assignments/my-assignment/config.toml
+```
+
 Score only:
 
 ```bash
@@ -93,19 +108,29 @@ Analyze grading quality (meta analysis):
 uv run main.py --stage analyze --config assignments/my-assignment/config.toml
 ```
 
+Audit reference notebook TODO/instruction mismatches:
+
+```bash
+uv run python misc/reference_mismatch_audit.py \
+	--notebook assignments/my-assignment/reference.ipynb
+```
+
 Run all stages:
 
 ```bash
 uv run main.py --stage all --config assignments/my-assignment/config.toml
 ```
 
+`all` executes stages in this order: plagiarism -> preprocess -> grade -> score -> analyze.
+
 ## 8. Outputs
 
 - Processed markdown: `processed/`
 - Structured grading JSON: `graded/*.json`
-- Score summaries: `graded/*.md`
+- Score summaries: `scored/` (format-specific subfolders)
 - Logs and checkpoint: `logs/`
 - Meta analysis reports: `logs/meta_analysis.json`, `logs/meta_analysis.md`
+- Plagiarism outputs: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
 
 ## 9. Need help?
 

@@ -56,9 +56,11 @@ max_parallel_tasks = 10
 
 Use this order:
 
-1. preprocess
-2. grade
-3. score
+1. plagiarism (optional but recommended)
+2. preprocess
+3. grade
+4. score
+5. analyze (optional)
 
 Or run all at once:
 
@@ -70,8 +72,9 @@ uv run main.py --stage all --config assignments/my-assignment/config.toml
 
 - Processed markdown: `processed/`
 - Grading JSON: `graded/*.json`
-- Score summaries: `graded/*.md`
+- Score summaries: `scored/` (format-specific subfolders)
 - Logs and checkpoint: `logs/`
+- Plagiarism report and extracted files: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
 
 ## 8. Why do I get "All submissions already graded (checkpoint hit)"?
 
@@ -115,3 +118,56 @@ No. Grade stage accepts reference files in:
 Set `[assignment].reference_file` to any of those formats. Non-markdown references are converted automatically during grading.
 
 Recommended location is assignment root (for example `assignments/my-assignment/reference.ipynb`) so it is separate from student submissions.
+
+## 11. How does plagiarism detection reduce boilerplate false positives?
+
+Plagiarism stage uses `copydetect` with a template boilerplate source.
+
+By default it expects `template.ipynb` in assignment root and extracts code into:
+
+- `plagiarism/template/template.py`
+
+Student code is extracted into:
+
+- `plagiarism/submissions/*.py`
+
+Then a report is generated at:
+
+- `plagiarism/report.html`
+
+All paths can be customized via `[plagiarism]` config.
+
+## 12. Does a high plagiarism score always mean a student cheated?
+
+No. A high similarity score is a signal for manual review, not automatic proof of misconduct.
+
+Common non-cheating causes include:
+
+- Assignment prompts that are very constrained/straightforward
+- Small solution space where many students produce near-identical code
+- Shared starter structure or repetitive required steps
+
+Recommended workflow:
+
+1. Treat plagiarism results as triage candidates.
+2. Compare highlighted regions for substantive logic overlap, not just scaffolding.
+3. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
+4. Escalate only when evidence is consistent with policy.
+
+## 13. Is there a helper to audit TODO instruction/code mismatches in reference notebooks?
+
+Yes. Use:
+
+```bash
+uv run python misc/reference_mismatch_audit.py \
+	--notebook assignments/my-assignment/reference.ipynb
+```
+
+You can also output JSON:
+
+```bash
+uv run python misc/reference_mismatch_audit.py \
+	--notebook assignments/my-assignment/reference.ipynb \
+	--format json \
+	--output misc/audit_report.json
+```

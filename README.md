@@ -2,7 +2,7 @@
 
 TATA stands for TATA-Assisted Teaching Assistant.
 
-TATA is a configuration-driven grading pipeline for human TAs. It preprocesses submissions, runs LLM-based grading against a rubric, and generates score summaries.
+TATA is a configuration-driven grading pipeline for human TAs. It preprocesses submissions, runs plagiarism detection, performs LLM-based grading against a rubric, and generates score summaries.
 
 ## Core Features
 
@@ -10,7 +10,9 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - Optional default paths for assignment folders
 - Dynamic rubric-based grading schema generation
 - Parallel grading with bounded concurrency
-- Stage-based CLI: preprocess, grade, score, analyze, all, schema
+- Stage-based CLI: preprocess, plagiarism, grade, score, analyze, all, schema
+- Per-assignment plagiarism detection with template boilerplate filtering (copydetect)
+- Reference notebook mismatch audit helper script for TODO instruction/code alignment
 
 ## Quick Start
 
@@ -34,11 +36,26 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv run main.py --stage all --config assignments/my-assignment/config.toml
    ```
 
-5. Run post-scoring meta analysis (optional):
+   `all` runs in this order: plagiarism -> preprocess -> grade -> score -> analyze.
+
+5. Run plagiarism detection only (optional):
+
+   ```bash
+   uv run main.py --stage plagiarism --config assignments/my-assignment/config.toml
+   ```
+
+6. Run post-scoring meta analysis (optional):
 
    ```bash
    uv run main.py --stage analyze --config assignments/my-assignment/config.toml
    ```
+
+7. Audit reference notebook TODO/instruction mismatches (optional):
+
+    ```bash
+    uv run python misc/reference_mismatch_audit.py \
+       --notebook assignments/my-assignment/reference.ipynb
+    ```
 
 ## Documentation
 
@@ -52,3 +69,4 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - Example assignment config: [assignments/example/config.toml](assignments/example/config.toml)
 - Example rubric: [rubrics/example_rubric.toml](rubrics/example_rubric.toml)
 - Generic system prompt: [prompt/system.md](prompt/system.md)
+- Reference mismatch audit script: [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)

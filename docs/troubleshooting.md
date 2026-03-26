@@ -128,3 +128,53 @@ Fix:
 1. Remove `logs/grading.checkpoint.json`
 2. Remove stale files in `graded/`
 3. Run grade again
+
+## 12. Template file not found for plagiarism stage
+
+Symptom:
+
+- Plagiarism stage fails with missing template file error.
+
+Fix:
+
+1. Create `template.ipynb` in assignment root
+2. Or set `[plagiarism].template_file` to the correct path in config
+
+## 13. Plagiarism stage finds no submissions
+
+Symptom:
+
+- Stage reports no submission files found in `raw/`.
+
+Fix:
+
+1. Ensure student `.ipynb` files are under `raw/`
+2. If you also want `.py` files, set `[plagiarism].include_python_files = true`
+3. Re-run `--stage plagiarism`
+
+## 14. Plagiarism report generated but scores seem too noisy
+
+Symptom:
+
+- Report has many false positives from shared scaffolding.
+
+Fix:
+
+1. Make sure `template.ipynb` contains assignment boilerplate/common starter code
+2. Confirm it is correctly configured as `[plagiarism].template_file`
+3. Tune `[plagiarism].display_threshold` as needed
+
+## 15. Reference TODO/instruction mismatch review is inconsistent
+
+Symptom:
+
+- You are unsure whether reference TODO implementations strictly match instructions.
+
+Fix:
+
+Run the rule-based audit helper and manually review flagged TODOs:
+
+```bash
+uv run python misc/reference_mismatch_audit.py \
+   --notebook assignments/my-assignment/reference.ipynb
+```
