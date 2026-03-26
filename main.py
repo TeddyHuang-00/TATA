@@ -6,12 +6,21 @@ from typing import Literal
 from analysis import analyze_assignment
 from cli_options import CliOptions, parse_cli_args, validate_existing_file
 from grading import grade_assignment
+from plagiarism import detect_plagiarism
 from processing import preprocess_assignment
 from pydantic import Field, model_validator
 from schema_tools import generate_all_schemas
 from scoring import score_assignment
 
-PipelineStage = Literal["preprocess", "grade", "score", "analyze", "all", "schema"]
+PipelineStage = Literal[
+    "preprocess",
+    "plagiarism",
+    "grade",
+    "score",
+    "analyze",
+    "all",
+    "schema",
+]
 
 
 class MainCliOptions(CliOptions):
@@ -43,7 +52,7 @@ def _format_job_summary(summary: dict) -> str:
     return f"[{stage}] {success} success, {errors} error(s), {rate:.1f}% success rate"
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0912
     args = parse_cli_args(MainCliOptions)
 
     if args.stage == "schema":
@@ -55,6 +64,13 @@ def main() -> None:
 
     assert args.config is not None  # validated by model_validator
     summaries = []
+
+    if args.stage in {"plagiarism", "all"}:
+        print("Running plagiarism detection...")
+        summary = detect_plagiarism(args.config)
+        if summary is not None:
+            summaries.append(summary)
+            print(_format_job_summary(summary))
 
     if args.stage in {"preprocess", "all"}:
         print("Running preprocessing...")

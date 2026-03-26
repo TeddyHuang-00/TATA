@@ -24,6 +24,8 @@ HookMountPoint = Literal[
     "after_score",
     "before_analyze",
     "after_analyze",
+    "before_plagiarism",
+    "after_plagiarism",
 ]
 
 
@@ -138,12 +140,42 @@ class ScoringSection(BaseModel):
     output_style: ScoreOutputStyle = Field(default="markdown")
 
 
+class PlagiarismSection(BaseModel):
+    output_dir: str = Field(default="plagiarism")
+    template_file: str = Field(default="template.ipynb")
+    submissions_subdir: str = Field(default="submissions")
+    template_subdir: str = Field(default="template")
+    report_file: str = Field(default="report.html")
+    display_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    extensions: list[str] = Field(default_factory=lambda: [".py"])
+    include_python_files: bool = Field(default=True)
+
+    @field_validator("extensions")
+    @classmethod
+    def _validate_extensions(cls, value: list[str]) -> list[str]:
+        if not value:
+            msg = "plagiarism.extensions cannot be empty."
+            raise ValueError(msg)
+
+        normalized: list[str] = []
+        for ext in value:
+            item = ext.strip()
+            if not item:
+                msg = "plagiarism.extensions must contain non-empty items."
+                raise ValueError(msg)
+            if not item.startswith("."):
+                item = f".{item}"
+            normalized.append(item.lower())
+        return normalized
+
+
 class AssignmentFileConfig(BaseModel):
     assignment: AssignmentSection = Field(default_factory=AssignmentSection)
     processing: ProcessingSection = Field(default_factory=ProcessingSection)
     hooks: HooksSection = Field(default_factory=HooksSection)
     grading: GradingSection
     scoring: ScoringSection = Field(default_factory=ScoringSection)
+    plagiarism: PlagiarismSection = Field(default_factory=PlagiarismSection)
 
 
 @dataclass(frozen=True)
