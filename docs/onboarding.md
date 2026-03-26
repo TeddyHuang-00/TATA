@@ -56,14 +56,15 @@ Path-related fields under `[assignment]` are optional and default to:
 - processed
 - graded
 - logs
-- processed/reference.md
+- reference.md
 
 ## 6. Prepare assignment files
 
 For an assignment folder (for example `assignments/my-assignment`):
 
 - put student submissions into `raw/`
-- put the reference answer into `processed/reference.md`
+- put the reference answer into `reference.md` at assignment root
+- reference supports `.md`, `.ipynb`, or `.html`
 - ensure your rubric and prompt files exist
 
 ## 7. Run pipeline stages

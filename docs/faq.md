@@ -23,7 +23,7 @@ If omitted, defaults are:
 - processed_dir -> `processed`
 - graded_dir -> `graded`
 - logs_dir -> `logs`
-- reference_file -> `processed/reference.md`
+- reference_file -> `reference.md`
 
 ## 3. Do I need to create folders manually?
 
@@ -103,3 +103,15 @@ input_format = ["ipynb", "html", "markdown"]
 ```
 
 If omitted, preprocessing auto-detects from the first supported file in `raw/`.
+
+## 10. Does reference answer have to be markdown?
+
+No. Grade stage accepts reference files in:
+
+- `.md`
+- `.ipynb`
+- `.html`
+
+Set `[assignment].reference_file` to any of those formats. Non-markdown references are converted automatically during grading.
+
+Recommended location is assignment root (for example `assignments/my-assignment/reference.ipynb`) so it is separate from student submissions.

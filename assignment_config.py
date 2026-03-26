@@ -32,7 +32,7 @@ class AssignmentSection(BaseModel):
         return (base_dir / (self.logs_dir or "logs")).resolve()
 
     def resolve_reference_file(self, base_dir: Path) -> Path:
-        return (base_dir / (self.reference_file or "processed/reference.md")).resolve()
+        return (base_dir / (self.reference_file or "reference.md")).resolve()
 
 
 class ProcessingSection(BaseModel):

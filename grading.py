@@ -3,6 +3,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import instructor
@@ -99,6 +101,52 @@ def _build_client(provider_name: str):
     return instructor.from_openai(raw_client, mode=provider.mode), provider.model
 
 
+def _read_reference_text(reference_file: Path) -> str:
+    suffix = reference_file.suffix.lower()
+
+    if suffix == ".md":
+        return reference_file.read_text(encoding="utf-8")
+
+    if suffix == ".ipynb":
+        cmd = [
+            sys.executable,
+            "-m",
+            "jupyter",
+            "nbconvert",
+            "--to",
+            "markdown",
+            "--stdout",
+            str(reference_file),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return result.stdout
+        except subprocess.CalledProcessError as exc:
+            msg = (
+                f"Failed to convert reference notebook to markdown: {reference_file}\n"
+                f"Details: {exc.stderr}"
+            )
+            raise RuntimeError(msg) from exc
+
+    if suffix == ".html":
+        cmd = ["pandoc", "-f", "html", "-t", "markdown", str(reference_file)]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return result.stdout
+        except subprocess.CalledProcessError as exc:
+            msg = (
+                f"Failed to convert reference HTML to markdown: {reference_file}\n"
+                f"Details: {exc.stderr}"
+            )
+            raise RuntimeError(msg) from exc
+
+    msg = (
+        f"Unsupported reference file format: {reference_file.suffix}\n"
+        "Supported reference formats are .md, .ipynb, and .html."
+    )
+    raise ValueError(msg)
+
+
 def _grade_one_submission(
     client,
     model_name: str,
@@ -182,7 +230,8 @@ def grade_assignment(config_path: Path) -> None:
     if not cfg.reference_file.exists():
         msg = (
             f"Reference file not found: {cfg.reference_file}\n"
-            "Create processed/reference.md or set [assignment.reference_file] in config."
+            "Create reference.md in assignment root (or reference.ipynb/reference.html), "
+            "or set [assignment.reference_file] in config."
         )
         raise FileNotFoundError(msg)
 
@@ -190,7 +239,7 @@ def grade_assignment(config_path: Path) -> None:
     response_model = generate_grading_model(rubric_def)
 
     system_prompt = cfg.system_prompt_file.read_text(encoding="utf-8")
-    reference_text = cfg.reference_file.read_text(encoding="utf-8")
+    reference_text = _read_reference_text(cfg.reference_file)
 
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
     if not submissions:

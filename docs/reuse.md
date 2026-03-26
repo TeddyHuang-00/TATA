@@ -17,7 +17,7 @@ Create one folder per assignment under assignments/.
 2. Copy [assignments/example/config.toml](../assignments/example/config.toml)
 3. Point rubric and prompt to your files
 4. Put student inputs into `raw/`
-5. Put reference into `processed/reference.md`
+5. Put reference into `reference.md` (or `reference.ipynb`/`reference.html`) at assignment root
 
 ## 3. Config design notes
 

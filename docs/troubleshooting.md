@@ -57,7 +57,7 @@ Symptom:
 
 Fix:
 
-1. Create `processed/reference.md`
+1. Create `reference.md` in assignment root (or use `reference.ipynb`/`reference.html`)
 2. Or set `assignment.reference_file` explicitly
 
 ## 6. Rubric file not found
