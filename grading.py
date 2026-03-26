@@ -17,7 +17,7 @@ from cli_options import ConfigFileCliOptions, parse_cli_args
 from hooks_runtime import HookRuntime
 from openai import OpenAI
 from provider import get_providers
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from rubric import generate_grading_model, get_rubric_definition
 
 
@@ -41,6 +41,7 @@ class GradingCheckpoint(BaseModel):
 class GradingCliOptions(ConfigFileCliOptions):
     force: bool = Field(
         default=False,
+        validation_alias=AliasChoices("force", "f"),
         description="Ignore grading checkpoint and regrade all submissions.",
     )
 

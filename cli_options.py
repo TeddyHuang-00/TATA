@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,7 +32,10 @@ class CliOptions(BaseSettings):
 
 
 class ConfigFileCliOptions(CliOptions):
-    config: Path = Field(description="Path to assignment config TOML.")
+    config: Path = Field(
+        validation_alias=AliasChoices("config", "c"),
+        description="Path to assignment config TOML.",
+    )
 
     @field_validator("config")
     @classmethod

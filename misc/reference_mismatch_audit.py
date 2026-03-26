@@ -29,12 +29,20 @@ Usage examples:
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from pydantic import AliasChoices, Field, model_validator
+
+try:
+    from cli_options import CliOptions, parse_cli_args
+except ModuleNotFoundError:
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from cli_options import CliOptions, parse_cli_args
 
 TODO_RE = re.compile(r"TODO\s*(\d+)", flags=re.IGNORECASE)
 BACKTICK_RE = re.compile(r"`([^`]+)`")
@@ -75,6 +83,32 @@ class TodoAuditResult:
 
 
 AuditFormat = Literal["text", "json"]
+
+
+class ReferenceMismatchAuditCliOptions(CliOptions):
+    notebook: Path = Field(
+        validation_alias=AliasChoices("notebook", "n"),
+        description="Path to reference notebook (.ipynb).",
+    )
+    format: AuditFormat = Field(
+        default="text",
+        validation_alias=AliasChoices("format", "f"),
+        description="Output report format.",
+    )
+    output: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("output", "o"),
+        description="Optional output file path. If omitted, prints to stdout.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_paths(self) -> ReferenceMismatchAuditCliOptions:
+        notebook_path = self.notebook.resolve()
+        if not notebook_path.exists() or not notebook_path.is_file():
+            msg = f"--notebook not found or not a file: {notebook_path}"
+            raise ValueError(msg)
+        self.notebook = notebook_path
+        return self
 
 
 def _normalize_space(text: str) -> str:
@@ -254,36 +288,9 @@ def _to_json_report(notebook_path: Path, results: list[TodoAuditResult], total_t
     return json.dumps(payload, indent=2)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Audit TODO instruction/implementation mismatches in a reference notebook.")
-    parser.add_argument(
-        "--notebook",
-        type=Path,
-        required=True,
-        help="Path to reference notebook (.ipynb).",
-    )
-    parser.add_argument(
-        "--format",
-        choices=["text", "json"],
-        default="text",
-        help="Output report format.",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Optional output file path. If omitted, prints to stdout.",
-    )
-    return parser.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
-    notebook_path = args.notebook.resolve()
-
-    if not notebook_path.exists() or not notebook_path.is_file():
-        msg = f"Notebook not found: {notebook_path}"
-        raise FileNotFoundError(msg)
+    args = parse_cli_args(ReferenceMismatchAuditCliOptions)
+    notebook_path = args.notebook
 
     results, total_todos = audit_notebook(notebook_path)
 

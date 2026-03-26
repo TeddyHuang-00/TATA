@@ -8,7 +8,7 @@ from cli_options import CliOptions, parse_cli_args, validate_existing_file
 from grading import grade_assignment
 from plagiarism import detect_plagiarism
 from processing import preprocess_assignment
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from schema_tools import generate_all_schemas
 from scoring import score_assignment
 
@@ -24,10 +24,19 @@ PipelineStage = Literal[
 
 
 class MainCliOptions(CliOptions):
-    stage: PipelineStage = Field(default="all", description="Pipeline stage to run.")
-    config: Path | None = Field(default=None, description="Path to assignment config TOML.")
+    stage: PipelineStage = Field(
+        default="all",
+        validation_alias=AliasChoices("stage", "s"),
+        description="Pipeline stage to run.",
+    )
+    config: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("config", "c"),
+        description="Path to assignment config TOML.",
+    )
     force: bool = Field(
         default=False,
+        validation_alias=AliasChoices("force", "f"),
         description="For grade stage, ignore checkpoint and regrade all submissions.",
     )
 
