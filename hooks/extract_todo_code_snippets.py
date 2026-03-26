@@ -73,6 +73,9 @@ def _is_markdown_like_noise(source: str) -> bool:
         r"^(def|class|if|for|while|try|except|with|return|raise|assert)\b",
         r"=",
         r"\(",
+        r"^[A-Za-z_][A-Za-z0-9_\.]*\s*\(",
+        r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$",
+        r"^[A-Za-z_][A-Za-z0-9_]*\s*\[.+\]$",
     ]
 
     for ln in lines:
@@ -133,7 +136,9 @@ def _has_code_signal(source: str) -> bool:
         r"^(import|from)\s+",
         r"^(def|class|if|for|while|try|except|with|return|raise|assert)\b",
         r"=",
-        r"^[A-Za-z_][A-Za-z0-9_]*\s*\(",
+        r"^[A-Za-z_][A-Za-z0-9_\.]*\s*\(",
+        r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$",
+        r"^[A-Za-z_][A-Za-z0-9_]*\s*\[.+\]$",
     ]
     for ln in source.splitlines():
         if any(re.search(pat, ln.strip()) for pat in code_patterns):
