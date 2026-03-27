@@ -37,7 +37,7 @@ from pathlib import Path
 from statistics import NormalDist, mean, median
 from typing import Literal
 
-from pydantic import Field, model_validator, AliasChoices
+from pydantic import AliasChoices, Field, model_validator
 
 try:
     from cli_options import CliOptions, parse_cli_args
@@ -115,6 +115,7 @@ class IndividualAssignmentScore:
     assignment: str
     student: str
     raw_max_similarity_pct: float
+    max_with: list[str]
     gumbel_location: float
     gumbel_scale: float
     one_sided_p_value: float
@@ -479,6 +480,7 @@ def _combine_pairs_stouffer(
 
 def _build_individual_assignment_scores(
     per_assignment_pair_scores: dict[str, dict[tuple[str, str], float]],
+    student_labels: dict[str, str],
 ) -> dict[str, dict[str, IndividualAssignmentScore]]:
     assignment_student_details: dict[str, dict[str, IndividualAssignmentScore]] = {}
 
@@ -503,6 +505,18 @@ def _build_individual_assignment_scores(
 
         assignment_map: dict[str, IndividualAssignmentScore] = {}
         for student, raw_max in student_max_scores.items():
+            tied_counterparts = sorted(
+                {
+                    student_b
+                    for (student_a, student_b), score in pair_scores.items()
+                    if student_a == student and math.isclose(score, raw_max)
+                }
+                | {
+                    student_a
+                    for (student_a, student_b), score in pair_scores.items()
+                    if student_b == student and math.isclose(score, raw_max)
+                }
+            )
             cdf_value = _clamp_probability(_gumbel_cdf(raw_max, location, scale))
             p_value = _clamp_probability(1.0 - cdf_value)
             z_score = STANDARD_NORMAL.inv_cdf(1.0 - p_value)
@@ -510,6 +524,10 @@ def _build_individual_assignment_scores(
                 assignment=assignment,
                 student=student,
                 raw_max_similarity_pct=raw_max,
+                max_with=[
+                    student_labels.get(counterpart, counterpart)
+                    for counterpart in tied_counterparts
+                ],
                 gumbel_location=location,
                 gumbel_scale=scale,
                 one_sided_p_value=p_value,
@@ -600,7 +618,7 @@ def _build_payload(config: BuildConfig) -> AggregatePayload:
         student_labels,
     )
     combined_students = _combine_students_stouffer(
-        _build_individual_assignment_scores(per_assignment_pair_scores),
+        _build_individual_assignment_scores(per_assignment_pair_scores, student_labels),
         student_labels,
     )
 
@@ -712,6 +730,7 @@ def _to_text(payload: AggregatePayload) -> str:
                 ]
                 + [
                     f"   - {score.assignment}: raw_max={score.raw_max_similarity_pct:.2f}%, "
+                    f"max_with={', '.join(score.max_with) if score.max_with else '-'}, "
                     f"gumbel_loc={score.gumbel_location:.4f}, gumbel_scale={score.gumbel_scale:.4f}, "
                     f"z={score.z_score:.4f}, p={score.one_sided_p_value:.6g}"
                     for score in item.assignment_scores
