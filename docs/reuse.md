@@ -66,7 +66,8 @@ After individual assignment plagiarism runs, build a single aggregate view:
 
 ```bash
 uv run python misc/plagiarism_report_aggregate.py \
-	--alpha 0.01 \
+	--pairwise-alpha 0.01 \
+	--individual-alpha 0.01 \
 	--output misc/plagiarism_summary.md
 ```
 

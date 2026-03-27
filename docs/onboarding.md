@@ -120,7 +120,8 @@ Aggregate plagiarism reports across assignments:
 
 ```bash
 uv run python misc/plagiarism_report_aggregate.py \
-	--alpha 0.01 \
+	--pairwise-alpha 0.01 \
+	--individual-alpha 0.01 \
 	--output misc/plagiarism_summary.md
 ```
 
@@ -144,5 +145,9 @@ uv run main.py --stage all --config assignments/my-assignment/config.toml
 
 ## 9. Need help?
 
+- Hooks lifecycle and IO contract: [hooks.md](hooks.md)
 - Frequently asked questions: [faq.md](faq.md)
 - Common issues and fixes: [troubleshooting.md](troubleshooting.md)
+- Assignment config format (manual reference): [config/assignment.md](config/assignment.md)
+- Provider config format (manual reference): [config/provider.md](config/provider.md)
+- Rubric config format (manual reference): [config/rubric.md](config/rubric.md)

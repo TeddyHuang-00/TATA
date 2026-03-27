@@ -182,15 +182,18 @@ Yes. Use the aggregate helper script:
 
 ```bash
 uv run python misc/plagiarism_report_aggregate.py \
-	--alpha 0.01 \
+	--pairwise-alpha 0.01 \
+	--individual-alpha 0.01 \
 	--output misc/plagiarism_summary.md
 ```
 
 Useful options:
 
 - `--format json` for machine-readable output
-- `--alpha 0.005` for a stricter significance cutoff
+- `--pairwise-alpha 0.005` for stricter pair-level significance
+- `--individual-alpha 0.005` for stricter student-level significance
 - `--score-floor 0.001` and `--score-cap 0.999` to control logit clipping bounds
 
 The script uses Pydantic/pydantic-settings for CLI option parsing and validation.
 It reads `plagiarism/all_pairs.json` (full pair coverage).
+It reports significant pairs and significant students as separate sections.

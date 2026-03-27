@@ -52,30 +52,36 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
 7. Audit reference notebook TODO/instruction mismatches (optional):
 
-    ```bash
-    uv run python misc/reference_mismatch_audit.py \
-       --notebook assignments/my-assignment/reference.ipynb
-    ```
+   ```bash
+   uv run python misc/reference_mismatch_audit.py \
+      --notebook assignments/my-assignment/reference.ipynb
+   ```
 
 8. Aggregate plagiarism results across assignments (optional):
 
-    ```bash
-    uv run python misc/plagiarism_report_aggregate.py \
-       --alpha 0.01 \
-       --output misc/plagiarism_summary.md
-    ```
+   ```bash
+   uv run python misc/plagiarism_report_aggregate.py \
+      --pairwise-alpha 0.01 \
+      --individual-alpha 0.01 \
+      --output misc/plagiarism_summary.md
+   ```
 
-   The report uses pairwise deletion + logit transform + per-assignment z-score + Stouffer aggregation.
-   It outputs all statistically significant pairs under `--alpha`.
+   The report uses pairwise deletion + logit transform + per-assignment z-score + Stouffer aggregation,
+   and also includes an individual-level detector using per-assignment max similarity with Gumbel fitting.
+   It outputs statistically significant pairs and students under separate thresholds.
    Data source is `plagiarism/all_pairs.json` (full pair export).
    CLI options are parsed via Pydantic/pydantic-settings.
 
 ## Documentation
 
 - Onboarding: [docs/onboarding.md](docs/onboarding.md)
+- Hooks lifecycle and IO contract: [docs/hooks.md](docs/hooks.md)
 - Reuse and template guidance: [docs/reuse.md](docs/reuse.md)
 - FAQ: [docs/faq.md](docs/faq.md)
 - Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md)
+- Assignment config format (no schema required): [docs/config/assignment.md](docs/config/assignment.md)
+- Provider config format (no schema required): [docs/config/provider.md](docs/config/provider.md)
+- Rubric config format (no schema required): [docs/config/rubric.md](docs/config/rubric.md)
 
 ## Starter Assets
 
