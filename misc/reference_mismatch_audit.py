@@ -226,7 +226,9 @@ def audit_notebook(notebook_path: Path) -> tuple[list[TodoAuditResult], int]:
     return results, len(sections)
 
 
-def _to_text_report(notebook_path: Path, results: list[TodoAuditResult], total_todos: int) -> str:
+def _to_text_report(
+    notebook_path: Path, results: list[TodoAuditResult], total_todos: int
+) -> str:
     flagged = [
         result
         for result in results
@@ -234,17 +236,19 @@ def _to_text_report(notebook_path: Path, results: list[TodoAuditResult], total_t
     ]
 
     lines: list[str] = []
-    lines.extend(
-        [
-            f"Notebook: {notebook_path}",
-            f"TODO sections found: {total_todos}",
-            f"Flagged TODOs: {len(flagged)}",
-            "",
-        ]
-    )
+    lines.extend([
+        f"Notebook: {notebook_path}",
+        f"TODO sections found: {total_todos}",
+        f"Flagged TODOs: {len(flagged)}",
+        "",
+    ])
 
     for result in results:
-        status = "FLAG" if (result.unresolved_placeholders or result.missing_hard_tokens) else "OK"
+        status = (
+            "FLAG"
+            if (result.unresolved_placeholders or result.missing_hard_tokens)
+            else "OK"
+        )
         lines.append(
             f"TODO {result.todo_number} [{status}] | "
             f"instruction_cell={result.instruction_cell} | code_cells={result.code_cells}"
@@ -258,11 +262,15 @@ def _to_text_report(notebook_path: Path, results: list[TodoAuditResult], total_t
     if not flagged:
         lines.append("\nNo hard mismatches detected by rule-based checks.")
 
-    lines.append("\nNote: This is a rule-based audit. Always do a manual pass on flagged TODOs.")
+    lines.append(
+        "\nNote: This is a rule-based audit. Always do a manual pass on flagged TODOs."
+    )
     return "\n".join(lines)
 
 
-def _to_json_report(notebook_path: Path, results: list[TodoAuditResult], total_todos: int) -> str:
+def _to_json_report(
+    notebook_path: Path, results: list[TodoAuditResult], total_todos: int
+) -> str:
     flagged_count = sum(
         1
         for result in results

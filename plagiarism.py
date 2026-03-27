@@ -123,21 +123,21 @@ def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
             seen_pairs.add(pair_key)
 
             test_similarity = float(detector.similarity_matrix[test_idx, ref_idx, 0])
-            reference_similarity = float(detector.similarity_matrix[test_idx, ref_idx, 1])
+            reference_similarity = float(
+                detector.similarity_matrix[test_idx, ref_idx, 1]
+            )
             if test_similarity < 0 and reference_similarity < 0:
                 continue
 
             token_overlap = int(detector.token_overlap_matrix[test_idx, ref_idx])
-            rows.append(
-                {
-                    "test_file": test_file,
-                    "reference_file": ref_file,
-                    "test_similarity_pct": test_similarity * 100,
-                    "reference_similarity_pct": reference_similarity * 100,
-                    "max_similarity_pct": max(test_similarity, reference_similarity) * 100,
-                    "token_overlap": token_overlap,
-                }
-            )
+            rows.append({
+                "test_file": test_file,
+                "reference_file": ref_file,
+                "test_similarity_pct": test_similarity * 100,
+                "reference_similarity_pct": reference_similarity * 100,
+                "max_similarity_pct": max(test_similarity, reference_similarity) * 100,
+                "token_overlap": token_overlap,
+            })
 
     rows.sort(
         key=itemgetter("max_similarity_pct", "token_overlap"),
@@ -228,7 +228,9 @@ def detect_plagiarism(assignment_config_path: Path) -> dict | None:
     detector.generate_html_report()
 
     print(f"[plagiarism] {cfg.report_file}")
-    print(f"[plagiarism] full pair data -> {cfg.full_pairs_file} ({exported_pairs} pairs)")
+    print(
+        f"[plagiarism] full pair data -> {cfg.full_pairs_file} ({exported_pairs} pairs)"
+    )
     print(f"[plagiarism] extracted submissions -> {cfg.submissions_dir}")
     print(f"[plagiarism] extracted template -> {cfg.template_dir}")
 
