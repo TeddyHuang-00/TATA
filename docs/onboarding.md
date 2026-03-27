@@ -65,6 +65,7 @@ Plagiarism settings are optional under `[plagiarism]` and default to:
 - submissions_subdir -> `submissions`
 - template_subdir -> `template`
 - report_file -> `report.html`
+- full_pairs_file -> `all_pairs.json`
 
 ## 6. Prepare assignment files
 
@@ -115,6 +116,14 @@ uv run python misc/reference_mismatch_audit.py \
 	--notebook assignments/my-assignment/reference.ipynb
 ```
 
+Aggregate plagiarism reports across assignments:
+
+```bash
+uv run python misc/plagiarism_report_aggregate.py \
+	--alpha 0.01 \
+	--output misc/plagiarism_summary.md
+```
+
 Run all stages:
 
 ```bash
@@ -131,6 +140,7 @@ uv run main.py --stage all --config assignments/my-assignment/config.toml
 - Logs and checkpoint: `logs/`
 - Meta analysis reports: `logs/meta_analysis.json`, `logs/meta_analysis.md`
 - Plagiarism outputs: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
+- Full pair data for aggregation: `plagiarism/all_pairs.json`
 
 ## 9. Need help?
 

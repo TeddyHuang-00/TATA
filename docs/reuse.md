@@ -59,3 +59,16 @@ uv run python misc/reference_mismatch_audit.py \
 ```
 
 Treat this as a preflight check to reduce rubric ambiguity and downstream grading drift.
+
+## 8. Cross-assignment plagiarism trend check
+
+After individual assignment plagiarism runs, build a single aggregate view:
+
+```bash
+uv run python misc/plagiarism_report_aggregate.py \
+	--alpha 0.01 \
+	--output misc/plagiarism_summary.md
+```
+
+Use this report to prioritize manual review for repeated high-similarity patterns across cohorts.
+It uses per-assignment `plagiarism/all_pairs.json` full pair data by default.

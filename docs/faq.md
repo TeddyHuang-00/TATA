@@ -135,6 +135,10 @@ Then a report is generated at:
 
 - `plagiarism/report.html`
 
+And full pairwise comparison data is exported at:
+
+- `plagiarism/all_pairs.json`
+
 All paths can be customized via `[plagiarism]` config.
 
 ## 12. Does a high plagiarism score always mean a student cheated?
@@ -171,3 +175,22 @@ uv run python misc/reference_mismatch_audit.py \
 	--format json \
 	--output misc/audit_report.json
 ```
+
+## 14. Can I combine plagiarism results across all assignments into one report?
+
+Yes. Use the aggregate helper script:
+
+```bash
+uv run python misc/plagiarism_report_aggregate.py \
+	--alpha 0.01 \
+	--output misc/plagiarism_summary.md
+```
+
+Useful options:
+
+- `--format json` for machine-readable output
+- `--alpha 0.005` for a stricter significance cutoff
+- `--score-floor 0.001` and `--score-cap 0.999` to control logit clipping bounds
+
+The script uses Pydantic/pydantic-settings for CLI option parsing and validation.
+It reads `plagiarism/all_pairs.json` (full pair coverage).

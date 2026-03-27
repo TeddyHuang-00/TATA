@@ -146,6 +146,7 @@ class PlagiarismSection(BaseModel):
     submissions_subdir: str = Field(default="submissions")
     template_subdir: str = Field(default="template")
     report_file: str = Field(default="report.html")
+    full_pairs_file: str = Field(default="all_pairs.json")
     display_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     extensions: list[str] = Field(default_factory=lambda: [".py"])
     include_python_files: bool = Field(default=True)

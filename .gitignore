@@ -6,3 +6,4 @@ assignments/*
 !assignments/example
 
 **/__pycache__
+.vscode

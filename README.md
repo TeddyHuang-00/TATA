@@ -57,6 +57,19 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
        --notebook assignments/my-assignment/reference.ipynb
     ```
 
+8. Aggregate plagiarism results across assignments (optional):
+
+    ```bash
+    uv run python misc/plagiarism_report_aggregate.py \
+       --alpha 0.01 \
+       --output misc/plagiarism_summary.md
+    ```
+
+   The report uses pairwise deletion + logit transform + per-assignment z-score + Stouffer aggregation.
+   It outputs all statistically significant pairs under `--alpha`.
+   Data source is `plagiarism/all_pairs.json` (full pair export).
+   CLI options are parsed via Pydantic/pydantic-settings.
+
 ## Documentation
 
 - Onboarding: [docs/onboarding.md](docs/onboarding.md)
@@ -70,3 +83,4 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - Example rubric: [rubrics/example_rubric.toml](rubrics/example_rubric.toml)
 - Generic system prompt: [prompt/system.md](prompt/system.md)
 - Reference mismatch audit script: [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)
+- Plagiarism aggregate report script: [misc/plagiarism_report_aggregate.py](misc/plagiarism_report_aggregate.py)

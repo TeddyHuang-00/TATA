@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from operator import itemgetter
 from pathlib import Path
 
 import nbformat
@@ -25,6 +27,7 @@ class PlagiarismConfig:
     submissions_dir: Path
     template_dir: Path
     report_file: Path
+    full_pairs_file: Path
     template_file: Path
     extensions: list[str]
     display_threshold: float
@@ -72,6 +75,7 @@ def _load_plagiarism_config(config_path: Path) -> PlagiarismConfig:
     submissions_dir = (output_dir / plagiarism.submissions_subdir).resolve()
     template_dir = (output_dir / plagiarism.template_subdir).resolve()
     report_file = (output_dir / plagiarism.report_file).resolve()
+    full_pairs_file = (output_dir / plagiarism.full_pairs_file).resolve()
     template_file = (config_path.parent / plagiarism.template_file).resolve()
 
     return PlagiarismConfig(
@@ -80,11 +84,75 @@ def _load_plagiarism_config(config_path: Path) -> PlagiarismConfig:
         submissions_dir=submissions_dir,
         template_dir=template_dir,
         report_file=report_file,
+        full_pairs_file=full_pairs_file,
         template_file=template_file,
         extensions=plagiarism.extensions,
         display_threshold=plagiarism.display_threshold,
         include_python_files=plagiarism.include_python_files,
     )
+
+
+def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
+    """Export all compared student pairs from copydetect matrices.
+
+    Returns number of exported undirected pairs.
+    """
+    if len(detector.similarity_matrix) == 0:
+        payload = {
+            "version": 1,
+            "test_file_count": len(detector.test_files),
+            "reference_file_count": len(detector.ref_files),
+            "pair_count": 0,
+            "pairs": [],
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return 0
+
+    seen_pairs: set[tuple[str, str]] = set()
+    rows: list[dict] = []
+
+    for test_idx, test_file in enumerate(detector.test_files):
+        for ref_idx, ref_file in enumerate(detector.ref_files):
+            if test_file == ref_file:
+                continue
+
+            pair_key = tuple(sorted((test_file, ref_file)))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+
+            test_similarity = float(detector.similarity_matrix[test_idx, ref_idx, 0])
+            reference_similarity = float(detector.similarity_matrix[test_idx, ref_idx, 1])
+            if test_similarity < 0 and reference_similarity < 0:
+                continue
+
+            token_overlap = int(detector.token_overlap_matrix[test_idx, ref_idx])
+            rows.append(
+                {
+                    "test_file": test_file,
+                    "reference_file": ref_file,
+                    "test_similarity_pct": test_similarity * 100,
+                    "reference_similarity_pct": reference_similarity * 100,
+                    "max_similarity_pct": max(test_similarity, reference_similarity) * 100,
+                    "token_overlap": token_overlap,
+                }
+            )
+
+    rows.sort(
+        key=itemgetter("max_similarity_pct", "token_overlap"),
+        reverse=True,
+    )
+    payload = {
+        "version": 1,
+        "test_file_count": len(detector.test_files),
+        "reference_file_count": len(detector.ref_files),
+        "pair_count": len(rows),
+        "pairs": rows,
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return len(rows)
 
 
 def detect_plagiarism(assignment_config_path: Path) -> dict | None:
@@ -156,9 +224,11 @@ def detect_plagiarism(assignment_config_path: Path) -> dict | None:
         out_file=str(cfg.report_file),
     )
     detector.run()
+    exported_pairs = _write_full_pair_data(detector, cfg.full_pairs_file)
     detector.generate_html_report()
 
     print(f"[plagiarism] {cfg.report_file}")
+    print(f"[plagiarism] full pair data -> {cfg.full_pairs_file} ({exported_pairs} pairs)")
     print(f"[plagiarism] extracted submissions -> {cfg.submissions_dir}")
     print(f"[plagiarism] extracted template -> {cfg.template_dir}")
 
@@ -168,6 +238,7 @@ def detect_plagiarism(assignment_config_path: Path) -> dict | None:
             {
                 "assignment_config": str(assignment_config_path),
                 "report_file": str(cfg.report_file),
+                "full_pairs_file": str(cfg.full_pairs_file),
                 "submissions_dir": str(cfg.submissions_dir),
                 "template_dir": str(cfg.template_dir),
                 "success_count": extracted_success,
