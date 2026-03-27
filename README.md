@@ -6,13 +6,14 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
 ## Core Features
 
-- Config-driven assignment workflow
-- Optional default paths for assignment folders
-- Dynamic rubric-based grading schema generation
-- Parallel grading with bounded concurrency
-- Stage-based CLI: preprocess, plagiarism, grade, score, analyze, all, schema
-- Per-assignment plagiarism detection with template boilerplate filtering (copydetect)
-- Reference notebook mismatch audit helper script for TODO instruction/code alignment
+- **Config-first architecture**: define assignment behavior in TOML, not ad-hoc scripts.
+- **Dynamic schema validation**: assignment/provider/rubric models are validated with generated JSON schemas for safer edits and faster onboarding.
+- **Rubric-driven LLM grading**: grading response schemas are generated from rubric criteria, keeping evaluation structure consistent and auditable.
+- **Parallel grading engine**: bounded concurrency boosts throughput while preserving checkpointed progress and deterministic outputs.
+- **Stage-level control**: run only what you need (`preprocess`, `plagiarism`, `grade`, `score`, `analyze`) or run the full pipeline with `all`.
+- **Plagiarism coverage at two levels**: intra-assignment detection with boilerplate/template filtering plus inter-assignment aggregation with statistical significance analysis.
+- **Extensible hook lifecycle**: inject custom logic before/after key events across preprocess, grade, score, analyze, and plagiarism without modifying core pipeline code.
+- **Reference quality safeguards**: built-in TODO instruction/implementation audit to catch mismatch risks before grading at scale.
 
 ## Quick Start
 
