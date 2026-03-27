@@ -6,16 +6,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from assignment_config import (
+from .assignment_config import (
     AssignmentPaths,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
 )
-from cli_options import ConfigFileCliOptions, parse_cli_args
-from hooks_runtime import HookRuntime
-from rubric import RubricDefinition, get_rubric_definition, slugify_criterion_name
-from scoring import calculate_criterion_score
+from .cli_options import ConfigFileCliOptions, parse_cli_args
+from .hooks_runtime import HookRuntime
+from .rubric import RubricDefinition, get_rubric_definition, slugify_criterion_name
+from .scoring import calculate_criterion_score
 
 EPS = 1e-9
 THRESHOLD_60 = 60.0

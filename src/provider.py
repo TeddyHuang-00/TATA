@@ -9,8 +9,10 @@ import dotenv
 from instructor import Mode
 from pydantic import BaseModel, Field
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 # Load the environment variables from the .env file if it exists
-dotenv.load_dotenv(Path(__file__).parent / ".env")
+dotenv.load_dotenv(PROJECT_ROOT / ".env")
 
 
 class ProviderInfo(BaseModel):
@@ -57,7 +59,7 @@ class ProviderList(BaseModel):
 
 def get_providers() -> ProviderList:
 
-    config_file = Path(__file__).parent / "config" / "provider.toml"
+    config_file = PROJECT_ROOT / "config" / "provider.toml"
     if not config_file.exists():
         msg = f"Provider configuration file not found: {config_file}"
         raise FileNotFoundError(msg)
@@ -69,8 +71,7 @@ def get_providers() -> ProviderList:
 
 if __name__ == "__main__":
     import json
-    from pathlib import Path
 
-    schema_file = Path(__file__).parent / "config" / "provider.schema.json"
+    schema_file = PROJECT_ROOT / "config" / "provider.schema.json"
     with schema_file.open("w") as f:
         json.dump(ProviderList.model_json_schema(), f, indent=4)

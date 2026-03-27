@@ -9,13 +9,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal
 
-from assignment_config import (
+from .assignment_config import (
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
 )
-from cli_options import ConfigFileCliOptions, parse_cli_args
-from hooks_runtime import HookRuntime
+from .cli_options import ConfigFileCliOptions, parse_cli_args
+from .hooks_runtime import HookRuntime
 
 InputFormat = Literal["ipynb", "html", "markdown"]
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown")

@@ -4,7 +4,7 @@ import re
 import tomllib
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, Field, create_model, model_validator
 
@@ -181,7 +181,7 @@ def generate_grading_model(rubric_def: RubricDefinition) -> type[BaseModel]:
         msg = "Rubric definition has no criterion."
         raise ValueError(msg)
 
-    response_fields: dict[str, tuple[type[BaseModel], Field]] = {}
+    response_fields: dict[str, tuple[type[BaseModel], Any]] = {}
     used_names: set[str] = set()
 
     for criterion in rubric_def.criterion:
@@ -212,10 +212,9 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    schema_file = Path(__file__).parent / "config" / "rubric.schema.json"
+    project_root = Path(__file__).resolve().parents[1]
+    schema_file = project_root / "config" / "rubric.schema.json"
     with schema_file.open("w") as f:
         json.dump(RubricDefinition.model_json_schema(), f, indent=4)
 
-    print(
-        get_rubric_definition(Path(__file__).parent / "rubrics" / "example_rubric.toml")
-    )
+    print(get_rubric_definition(project_root / "rubrics" / "example_rubric.toml"))

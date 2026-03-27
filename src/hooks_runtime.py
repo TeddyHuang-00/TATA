@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from assignment_config import AssignmentFileConfig
+from .assignment_config import AssignmentFileConfig
 
 
 @dataclass(frozen=True)

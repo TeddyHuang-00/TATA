@@ -6,14 +6,15 @@ from operator import itemgetter
 from pathlib import Path
 
 import nbformat
-from assignment_config import (
+from copydetect import CopyDetector
+
+from .assignment_config import (
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
 )
-from cli_options import ConfigFileCliOptions, parse_cli_args
-from copydetect import CopyDetector
-from hooks_runtime import HookRuntime
+from .cli_options import ConfigFileCliOptions, parse_cli_args
+from .hooks_runtime import HookRuntime
 
 
 class PlagiarismCliOptions(ConfigFileCliOptions):

@@ -8,17 +8,18 @@ from pathlib import Path
 from typing import Any
 
 import instructor
-from assignment_config import (
+from openai import OpenAI
+from pydantic import AliasChoices, BaseModel, Field
+
+from .assignment_config import (
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
 )
-from cli_options import ConfigFileCliOptions, parse_cli_args
-from hooks_runtime import HookRuntime
-from openai import OpenAI
-from provider import get_providers
-from pydantic import AliasChoices, BaseModel, Field
-from rubric import generate_grading_model, get_rubric_definition
+from .cli_options import ConfigFileCliOptions, parse_cli_args
+from .hooks_runtime import HookRuntime
+from .provider import get_providers
+from .rubric import generate_grading_model, get_rubric_definition
 
 
 @dataclass

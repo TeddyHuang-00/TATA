@@ -40,10 +40,10 @@ from typing import Literal
 from pydantic import AliasChoices, Field, model_validator
 
 try:
-    from cli_options import CliOptions, parse_cli_args
+    from src.cli_options import CliOptions, parse_cli_args
 except ModuleNotFoundError:
     sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from cli_options import CliOptions, parse_cli_args
+    from src.cli_options import CliOptions, parse_cli_args
 
 MIN_PARTS_FOR_ASSIGNMENT_RELATIVE_PATH = 3
 MAX_PERCENTAGE = 100.0

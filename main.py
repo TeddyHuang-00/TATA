@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from analysis import analyze_assignment
-from cli_options import CliOptions, parse_cli_args, validate_existing_file
-from grading import grade_assignment
-from plagiarism import detect_plagiarism
-from processing import preprocess_assignment
 from pydantic import AliasChoices, Field, model_validator
-from schema_tools import generate_all_schemas
-from scoring import score_assignment
+from src.analysis import analyze_assignment
+from src.cli_options import CliOptions, parse_cli_args, validate_existing_file
+from src.grading import grade_assignment
+from src.plagiarism import detect_plagiarism
+from src.processing import preprocess_assignment
+from src.schema_tools import generate_all_schemas
+from src.scoring import score_assignment
 
 PipelineStage = Literal[
     "preprocess",
