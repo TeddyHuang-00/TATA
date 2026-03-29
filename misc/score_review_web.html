@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Score Review Helper</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #f6f7fb;
+        color: #111827;
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .control-group {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #fff;
+        padding: 10px;
+      }
+      .control-title {
+        margin: 0 0 4px 0;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .control-desc {
+        margin: 0 0 8px 0;
+        font-size: 12px;
+        color: #4b5563;
+      }
+      .control-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      button,
+      select {
+        border: 1px solid #d1d5db;
+        background: #fff;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .filter-wrap {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .filter-label {
+        font-size: 12px;
+        color: #374151;
+      }
+      .filter-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .filter-actions button {
+        font-size: 12px;
+        padding: 6px 8px;
+      }
+      .rating-toggle-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        width: 100%;
+      }
+      .rating-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid #d1d5db;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        background: #fff;
+        color: #111827;
+      }
+      .rating-toggle[data-active="false"] {
+        opacity: 0.45;
+      }
+      .rating-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+      }
+      .status {
+        font-size: 12px;
+        color: #374151;
+      }
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .card-head h2 {
+        margin: 0;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .json-collapse {
+        margin-top: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #fff;
+      }
+      .json-collapse > summary {
+        cursor: pointer;
+        font-weight: 600;
+        padding: 10px 12px;
+        user-select: none;
+      }
+      .json-collapse[open] > summary {
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .json-body {
+        padding: 10px;
+      }
+      .criterion {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 8px;
+        background: #fafafa;
+      }
+      .criterion-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .criterion-title {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .criterion-rating {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid transparent;
+      }
+      .comment {
+        white-space: pre-wrap;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        line-height: 1.35;
+        max-height: 70vh;
+        overflow: auto;
+        background: #0f172a;
+        color: #e5e7eb;
+        border-radius: 8px;
+        padding: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="toolbar">
+        <div class="control-group">
+          <h3 class="control-title">Student Navigation</h3>
+          <p class="control-desc">
+            Move between submissions and jump directly to a student.
+          </p>
+          <div class="control-row">
+            <button id="prevBtn">Prev</button>
+            <button id="nextBtn">Next</button>
+            <select id="studentSelect"></select>
+          </div>
+        </div>
+        <div class="control-group">
+          <h3 class="control-title">Display Settings</h3>
+          <p class="control-desc">
+            Toggle which rating levels are shown in the feedback list.
+          </p>
+          <div class="filter-wrap">
+            <span class="filter-label">Filter ratings</span>
+            <div class="filter-actions">
+              <button id="selectAllRatingsBtn" type="button">Select All</button>
+              <button id="unselectAllRatingsBtn" type="button">
+                Unselect All
+              </button>
+            </div>
+            <div id="ratingToggleList" class="rating-toggle-list"></div>
+          </div>
+        </div>
+        <div class="control-group">
+          <h3 class="control-title">Status</h3>
+          <p class="control-desc">
+            Clipboard and interaction feedback appears here.
+          </p>
+          <div class="status" id="status"></div>
+        </div>
+      </div>
+      <section class="card">
+        <div class="card-head">
+          <h2 id="studentTitle">Student</h2>
+          <button id="copyAllBtn">Copy All Comments</button>
+        </div>
+        <div id="criteriaList"></div>
+        <details class="json-collapse">
+          <summary>Raw JSON</summary>
+          <div class="json-body">
+            <pre id="jsonView"></pre>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <script>
+      let students = [];
+      let ratingTypes = [];
+      let selectedRatings = new Set();
+      let currentIndex = 0;
+
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+      const copyAllBtn = document.getElementById("copyAllBtn");
+      const studentSelect = document.getElementById("studentSelect");
+      const selectAllRatingsBtn = document.getElementById(
+        "selectAllRatingsBtn",
+      );
+      const unselectAllRatingsBtn = document.getElementById(
+        "unselectAllRatingsBtn",
+      );
+      const ratingToggleList = document.getElementById("ratingToggleList");
+      const studentTitle = document.getElementById("studentTitle");
+      const criteriaList = document.getElementById("criteriaList");
+      const jsonView = document.getElementById("jsonView");
+      const status = document.getElementById("status");
+
+      const EMPTY_RATING = "(empty)";
+      const RATING_COLORS = {
+        incorrect: { bg: "#fee2e2", border: "#dc2626", text: "#991b1b" },
+        correct: { bg: "#dcfce7", border: "#16a34a", text: "#166534" },
+        partial: { bg: "#fef9c3", border: "#ca8a04", text: "#854d0e" },
+        "completely incorrect": {
+          bg: "#fee2e2",
+          border: "#dc2626",
+          text: "#991b1b",
+        },
+        "somewhat incorrect": {
+          bg: "#fce7f3",
+          border: "#db2777",
+          text: "#9d174d",
+        },
+        neutral: { bg: "#e5e7eb", border: "#6b7280", text: "#374151" },
+        "somewhat correct": {
+          bg: "#dcfce7",
+          border: "#65a30d",
+          text: "#3f6212",
+        },
+        "completely correct": {
+          bg: "#bbf7d0",
+          border: "#16a34a",
+          text: "#14532d",
+        },
+        [EMPTY_RATING]: { bg: "#e5e7eb", border: "#9ca3af", text: "#374151" },
+      };
+      const DEFAULT_UNKNOWN_COLOR = {
+        bg: "#e5e7eb",
+        border: "#9ca3af",
+        text: "#374151",
+      };
+
+      function normalizeRating(rating) {
+        return (rating || "").trim().toLowerCase();
+      }
+
+      function getRatingColors(rating) {
+        const normalized = normalizeRating(rating);
+        return RATING_COLORS[normalized] || DEFAULT_UNKNOWN_COLOR;
+      }
+
+      function normalizeFilterValue(rating) {
+        const trimmed = (rating || "").trim();
+        return trimmed ? trimmed : EMPTY_RATING;
+      }
+
+      function getSelectedRatings() {
+        return selectedRatings;
+      }
+
+      function getVisibleCriteria(student) {
+        const selected = getSelectedRatings();
+        if (!selected.size) {
+          return student.criteria || [];
+        }
+        return (student.criteria || []).filter((item) =>
+          selected.has(normalizeFilterValue(item.rating)),
+        );
+      }
+
+      function setStatus(message) {
+        status.textContent = message;
+        setTimeout(() => {
+          if (status.textContent === message) {
+            status.textContent = "";
+          }
+        }, 1500);
+      }
+
+      async function copyText(text) {
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus("Copied");
+        } catch (err) {
+          setStatus(`Copy failed: ${err.message}`);
+        }
+      }
+
+      function render() {
+        if (!students.length) {
+          studentTitle.textContent = "No JSON files found";
+          criteriaList.innerHTML = "<p>No student data in this folder.</p>";
+          jsonView.textContent = "{}";
+          prevBtn.disabled = true;
+          nextBtn.disabled = true;
+          studentSelect.disabled = true;
+          selectAllRatingsBtn.disabled = true;
+          unselectAllRatingsBtn.disabled = true;
+          copyAllBtn.disabled = true;
+          return;
+        }
+
+        const s = students[currentIndex];
+        const visibleCriteria = getVisibleCriteria(s);
+        studentTitle.textContent = `${s.student} (${currentIndex + 1}/${students.length})`;
+        jsonView.textContent = JSON.stringify(s.json, null, 2);
+        criteriaList.innerHTML = "";
+
+        if (!visibleCriteria.length) {
+          criteriaList.innerHTML =
+            "<p>No comments match the selected rating filter.</p>";
+        } else {
+          visibleCriteria.forEach((item) => {
+            const row = document.createElement("div");
+            row.className = "criterion";
+
+            const head = document.createElement("div");
+            head.className = "criterion-head";
+
+            const left = document.createElement("div");
+            const title = document.createElement("div");
+            title.className = "criterion-title";
+            title.textContent = item.criterion;
+            const rating = document.createElement("div");
+            rating.className = "criterion-rating";
+            const ratingText = item.rating ? item.rating : EMPTY_RATING;
+            rating.textContent = `rating: ${ratingText}`;
+            const colors = getRatingColors(ratingText);
+            rating.style.backgroundColor = colors.bg;
+            rating.style.borderColor = colors.border;
+            rating.style.color = colors.text;
+            left.appendChild(title);
+            left.appendChild(rating);
+
+            const copyBtn = document.createElement("button");
+            copyBtn.textContent = "Copy";
+            copyBtn.addEventListener("click", () => copyText(item.comment));
+
+            head.appendChild(left);
+            head.appendChild(copyBtn);
+
+            const comment = document.createElement("div");
+            comment.className = "comment";
+            comment.textContent = item.comment;
+
+            row.appendChild(head);
+            row.appendChild(comment);
+            criteriaList.appendChild(row);
+          });
+        }
+
+        prevBtn.disabled = currentIndex === 0;
+        nextBtn.disabled = currentIndex === students.length - 1;
+        studentSelect.disabled = false;
+        selectAllRatingsBtn.disabled = false;
+        unselectAllRatingsBtn.disabled = false;
+        copyAllBtn.disabled = false;
+        studentSelect.value = String(currentIndex);
+      }
+
+      function populateSelect() {
+        studentSelect.innerHTML = "";
+        students.forEach((s, index) => {
+          const opt = document.createElement("option");
+          opt.value = String(index);
+          opt.textContent = s.student;
+          studentSelect.appendChild(opt);
+        });
+      }
+
+      function renderRatingToggles() {
+        ratingToggleList.innerHTML = "";
+        ratingTypes.forEach((rating) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "rating-toggle";
+          button.dataset.active = selectedRatings.has(rating)
+            ? "true"
+            : "false";
+
+          const dot = document.createElement("span");
+          dot.className = "rating-dot";
+          const colors = getRatingColors(rating);
+          dot.style.backgroundColor = colors.bg;
+          dot.style.borderColor = colors.border;
+
+          const text = document.createElement("span");
+          text.textContent = rating;
+
+          button.appendChild(dot);
+          button.appendChild(text);
+          button.addEventListener("click", () => {
+            if (selectedRatings.has(rating)) {
+              selectedRatings.delete(rating);
+            } else {
+              selectedRatings.add(rating);
+            }
+            renderRatingToggles();
+            render();
+          });
+          ratingToggleList.appendChild(button);
+        });
+      }
+
+      async function init() {
+        const [studentsResponse, ratingsResponse] = await Promise.all([
+          fetch("/api/students"),
+          fetch("/api/ratings"),
+        ]);
+        students = await studentsResponse.json();
+        ratingTypes = await ratingsResponse.json();
+        selectedRatings = new Set(ratingTypes);
+        populateSelect();
+        renderRatingToggles();
+        render();
+      }
+
+      prevBtn.addEventListener("click", () => {
+        if (currentIndex > 0) {
+          currentIndex -= 1;
+          render();
+        }
+      });
+
+      nextBtn.addEventListener("click", () => {
+        if (currentIndex < students.length - 1) {
+          currentIndex += 1;
+          render();
+        }
+      });
+
+      studentSelect.addEventListener("change", (e) => {
+        currentIndex = Number(e.target.value || 0);
+        render();
+      });
+
+      selectAllRatingsBtn.addEventListener("click", () => {
+        selectedRatings = new Set(ratingTypes);
+        renderRatingToggles();
+        render();
+      });
+
+      unselectAllRatingsBtn.addEventListener("click", () => {
+        selectedRatings = new Set();
+        renderRatingToggles();
+        render();
+      });
+
+      copyAllBtn.addEventListener("click", () => {
+        if (!students.length) {
+          return;
+        }
+        const text = getVisibleCriteria(students[currentIndex])
+          .map((item) => {
+            const ratingPart = ` [${item.rating || EMPTY_RATING}]`;
+            return `${item.criterion}${ratingPart}\n${item.comment}`;
+          })
+          .join("\n\n");
+        copyText(text);
+      });
+
+      init();
+    </script>
+  </body>
+</html>
