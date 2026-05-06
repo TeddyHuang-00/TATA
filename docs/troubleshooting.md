@@ -59,6 +59,7 @@ Fix:
 
 1. Create `reference.md` in assignment root (or use `reference.ipynb`/`reference.html`)
 2. Or set `assignment.reference_file` explicitly
+3. Or omit `reference_file` entirely for rubric-only grading (no reference answer needed)
 
 ## 6. Rubric file not found
 

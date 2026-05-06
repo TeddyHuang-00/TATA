@@ -49,8 +49,10 @@ class AssignmentSection(BaseModel):
     def resolve_logs_dir(self, base_dir: Path) -> Path:
         return (base_dir / (self.logs_dir or "logs")).resolve()
 
-    def resolve_reference_file(self, base_dir: Path) -> Path:
-        return (base_dir / (self.reference_file or "reference.md")).resolve()
+    def resolve_reference_file(self, base_dir: Path) -> Path | None:
+        if self.reference_file is None:
+            return None
+        return (base_dir / self.reference_file).resolve()
 
 
 class ProcessingSection(BaseModel):
@@ -185,7 +187,7 @@ class AssignmentPaths:
     processed_dir: Path
     graded_dir: Path
     logs_dir: Path
-    reference_file: Path
+    reference_file: Path | None
 
 
 def resolve_assignment_paths(

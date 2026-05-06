@@ -2,6 +2,10 @@
 # @schema ../../config/assignment.schema.json
 #:schema ../../config/assignment.schema.json
 
+# [assignment]
+# reference_file = "reference.md"  # OPTIONAL — omit for rubric-only grading
+# Uncomment the section above to customize assignment paths and reference.
+
 [grading]
 rubric = "rubrics/example_rubric.toml"
 system_prompt = "prompt/system.md"

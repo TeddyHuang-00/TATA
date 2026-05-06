@@ -23,6 +23,9 @@ Only `[grading]` is required.
 rubric = "rubrics/example_rubric.toml"
 system_prompt = ["prompt/system.md", "prompt/lab.md"]
 provider = "deepseek_chat_tool"
+
+# [assignment]
+# reference_file = "reference.md"  # optional — omit for rubric-only grading
 ```
 
 ## Full template
@@ -102,7 +105,7 @@ Fields:
 - `processed_dir` (default `processed`): preprocessed markdown outputs consumed by grading.
 - `graded_dir` (default `graded`): grading JSON output location consumed by scoring/analyze.
 - `logs_dir` (default `logs`): stage logs/checkpoint/meta-analysis files.
-- `reference_file` (default `reference.md`): reference answer file used by grade/analyze.
+- `reference_file` (default `reference.md`, optional): reference answer file for comparison grading. Omit to grade against rubric criteria alone.
 
 Accepted value type:
 

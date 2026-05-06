@@ -28,7 +28,7 @@ class AssignmentConfig:
     processed_dir: Path
     graded_dir: Path
     logs_dir: Path
-    reference_file: Path
+    reference_file: Path | None
     rubric_file: Path
     system_prompt_files: list[Path]
     provider_name: str
@@ -106,12 +106,16 @@ def _save_checkpoint(checkpoint_file: Path, checkpoint: GradingCheckpoint) -> No
     checkpoint_file.write_text(checkpoint.model_dump_json(indent=2), encoding="utf-8")
 
 
-def _collect_submissions(processed_dir: Path, reference_file: Path) -> list[Path]:
+def _collect_submissions(
+    processed_dir: Path, reference_file: Path | None
+) -> list[Path]:
     if not processed_dir.exists():
         msg = f"Processed directory not found: {processed_dir}"
         raise FileNotFoundError(msg)
 
     submission_files = sorted(processed_dir.glob("*.md"))
+    if reference_file is None:
+        return submission_files
     reference_stem = reference_file.stem
     return [p for p in submission_files if p.stem != reference_stem]
 
@@ -184,18 +188,23 @@ def _grade_one_submission(  # noqa: PLR0913, PLR0917
     return client.chat.completions.create(
         model=model_name,
         response_model=response_model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": f"Reference Answer:\n{reference_text}",
-            },
-            {
-                "role": "user",
-                "content": f"Student Answer:\n{student_text}",
-            },
-        ],
+        messages=_build_grading_messages(system_prompt, reference_text, student_text),
     )
+
+
+def _build_grading_messages(
+    system_prompt: str,
+    reference_text: str,
+    student_text: str,
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    if reference_text:
+        messages.append({
+            "role": "user",
+            "content": f"Reference Answer:\n{reference_text}",
+        })
+    messages.append({"role": "user", "content": f"Student Answer:\n{student_text}"})
+    return messages
 
 
 def _run_single_grading_task(  # noqa: PLR0913
@@ -306,11 +315,12 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
         )
         raise FileNotFoundError(msg)
 
-    if not cfg.reference_file.exists():
+    if cfg.reference_file is not None and not cfg.reference_file.exists():
         msg = (
             f"Reference file not found: {cfg.reference_file}\n"
             "Create reference.md in assignment root (or reference.ipynb/reference.html), "
-            "or set [assignment.reference_file] in config."
+            "or set [assignment.reference_file] in config, "
+            "or omit [assignment.reference_file] for rubric-only grading."
         )
         raise FileNotFoundError(msg)
 
@@ -318,13 +328,18 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     response_model = generate_grading_model(rubric_def)
 
     system_prompt = _read_system_prompt(cfg.system_prompt_files)
-    reference_text = _read_reference_text(cfg.reference_file)
+    reference_text = (
+        _read_reference_text(cfg.reference_file)
+        if cfg.reference_file is not None
+        else ""
+    )
 
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
     if not submissions:
+        hint = "(excluding reference.md)" if cfg.reference_file is not None else ""
         print(
             f"No submissions found in: {cfg.processed_dir}\n"
-            "Run preprocess first and ensure processed/*.md exists (excluding reference.md)."
+            f"Run preprocess first and ensure processed/*.md exists {hint}."
         )
         return {
             "stage": "grade",
