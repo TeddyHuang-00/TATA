@@ -124,10 +124,14 @@ def _build_client(provider_name: str) -> tuple[Any, str]:
     providers = get_providers()
     provider = providers[provider_name]
 
-    raw_client = OpenAI(
-        base_url=provider.base_url,
-        api_key=provider.api_key,
-    )
+    kwargs: dict[str, Any] = {
+        "base_url": provider.base_url,
+        "api_key": provider.api_key,
+    }
+    if provider.temperature is not None:
+        kwargs["temperature"] = provider.temperature
+
+    raw_client = OpenAI(**kwargs)
     return instructor.from_openai(raw_client, mode=provider.mode), provider.model
 
 

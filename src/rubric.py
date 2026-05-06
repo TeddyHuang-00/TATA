@@ -13,35 +13,68 @@ class Binary(StrEnum):
     """Represents the correctness level on a binary scale."""
 
     CORRECT = "correct"
-    """The answer is identical or adequately close to the reference answer."""
+    """The answer is functionally equivalent to the reference answer.
+
+    This includes solutions that differ only in COSMETIC ways that do NOT change behavior or output:
+    - Different variable names (e.g., 'df' vs 'data')
+    - Equivalent API calls (e.g., np.mean(arr) vs arr.mean())
+    - Different but semantically equivalent code (e.g., list comprehension vs for-loop)
+    - Minor formatting, spacing, or comment differences
+    - Different ordering of independent statements
+
+    Only mark INCORRECT when the change would produce a different result, error, or missing output."""
+
     INCORRECT = "incorrect"
-    """The answer is giving completely wrong answer or does not have answer/code at all."""
+    """The answer would produce a wrong result, uses a fundamentally wrong approach,
+    produces an error, or is missing entirely (e.g., pass, NotImplementedError, empty cell)."""
 
 
 class Ternary(StrEnum):
     """Represents the correctness level on a three-point scale."""
 
     CORRECT = "correct"
-    """The answer is identical or adequately close to the reference answer."""
+    """The answer is functionally equivalent to the reference answer.
+
+    COSMETIC differences (different variable names, equivalent API calls, equivalent constructs,
+    formatting, comment differences) are ACCEPTABLE and should be marked CORRECT."""
+
     PARTIAL = "partial"
-    """The answer is partially correct but misses some important details. Such as wrong order of steps or missing minor steps."""
+    """The answer has some correct elements but has at least one FUNCTIONAL issue:
+    - A minor mistake that would slightly change output (e.g., wrong plot title, off-by-one)
+    - Missing a secondary required step while the core logic is correct
+    - Using a different approach that mostly works but misses edge cases
+
+    Do NOT mark PARTIAL for cosmetic differences alone."""
+
     INCORRECT = "incorrect"
-    """The answer is giving completely wrong answer or does not have answer/code at all."""
+    """The answer would produce a fundamentally wrong result, uses the wrong algorithm,
+    produces an error, or is missing entirely (pass, NotImplementedError, empty)."""
 
 
 class Likert(StrEnum):
     """Represents the correctness level on a five-point Likert scale."""
 
-    COMPLETELY_INCORRECT = "completely incorrect"
-    """The answer is giving completely wrong answer or does not have answer/code at all."""
-    SOMEWHAT_INCORRECT = "somewhat incorrect"
-    """The answer has some correct elements but also contains significant errors or omissions."""
-    NEUTRAL = "neutral"
-    """The answer is neither correct nor incorrect, or it is unclear and cannot be evaluated."""
-    SOMEWHAT_CORRECT = "somewhat correct"
-    """The answer is mostly correct but may have minor errors or omissions."""
     COMPLETELY_CORRECT = "completely correct"
-    """The answer is identical or adequately close to the reference answer."""
+    """Identical to reference OR differs only in cosmetic ways (naming, formatting, equivalent constructs).
+    Output/behavior is exactly the same as reference."""
+
+    SOMEWHAT_CORRECT = "somewhat correct"
+    """Core logic is correct but has one minor functional difference:
+    - Small edge case not handled
+    - Minor numerical precision difference that doesn't change interpretation
+    - One secondary step slightly off while main result is correct"""
+
+    NEUTRAL = "neutral"
+    """Substantial parts are correct and substantial parts are wrong. The answer shows some
+    understanding but also contains significant errors or omissions that affect output."""
+
+    SOMEWHAT_INCORRECT = "somewhat incorrect"
+    """Shows some awareness of the approach but the implementation is mostly wrong.
+    Has significant functional errors but with traces of correct understanding."""
+
+    COMPLETELY_INCORRECT = "completely incorrect"
+    """The answer is fundamentally wrong, uses wrong approach, produces errors,
+    or is missing entirely (pass, NotImplementedError, empty cell)."""
 
 
 class Rating(StrEnum):
@@ -164,7 +197,19 @@ class CriterionResult(BaseModel):
 
     chain_of_thought: str = Field(
         ...,
-        description="The chain of thought that led to the rating.",
+        description=(
+            "Your reasoning MUST follow this template:\n\n"
+            "1. DIFFERENCES: List every difference between reference and student answer.\n"
+            "   For each difference, classify as:\n"
+            "   - FUNCTIONAL: would change output/behavior or cause an error\n"
+            "   - COSMETIC: different naming, formatting, equivalent approach that produces same result\n"
+            "   - MISSING: required element absent from student answer\n\n"
+            "2. RATING: Based on the differences above, the rating is ___ because ___.\n"
+            "   - If only COSMETIC differences → highest correctness level\n"
+            "   - If some FUNCTIONAL or MISSING but core understanding shown → intermediate level\n"
+            "   - If fundamentally wrong or empty → lowest correctness level\n\n"
+            "3. FEEDBACK: Brief actionable feedback (null if only cosmetic differences and no improvement needed)."
+        ),
     )
     feedback: str | None = Field(
         ...,

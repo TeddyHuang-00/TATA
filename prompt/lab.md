@@ -30,3 +30,56 @@ Apply these guidelines to programming assignments and notebook-based labs.
 
 - **Connect to Learning**: Frame suggestions around what the student is learning (e.g., "This approach works well for small inputs; thinking about scalability...")—not style dogma.
 - **Show Examples Where Helpful**: For common mistakes (off-by-one errors, type issues), a brief example of the corrected pattern can be more useful than abstract description.
+
+## Tolerance Guidelines: Cosmetic vs Functional Differences
+
+When comparing student code to the reference, classify every difference into one of three categories:
+
+### COSMETIC (always acceptable — mark highest correctness level)
+
+| Type | Reference | Student (OK) |
+|------|-----------|-------------|
+| Variable naming | `df = pd.read_csv(...)` | `data = pd.read_csv(...)` |
+| Equivalent API | `np.mean(arr)` | `arr.mean()` |
+| Equivalent construct | `[x*2 for x in lst]` | `for x in lst: result.append(x*2)` |
+| Reorder independent statements | `import numpy\nimport pandas` | `import pandas\nimport numpy` |
+| Extra comments | `x = a + b` | `x = a + b  # add values` |
+| Minor formatting | `x=5` | `x = 5` |
+| Different string style | `"output"` | `'output'` |
+| Equivalent method chain | `df.groupby('x').mean().reset_index()` | `df.groupby('x').agg('mean').reset_index()` |
+
+### FUNCTIONAL (potentially affects behavior — review carefully)
+
+| Type | Reference | Student (Review) |
+|------|-----------|-----------------|
+| Wrong operation | `df.mean()` | `df.sum()` |
+| Missing method call | `df.groupby('col').mean()` | `df.groupby('col')` |
+| Wrong argument order | `plt.plot(x, y, color='red')` | `plt.plot(y, x, color='red')` |
+| Different logic | `if x > 0: return sqrt(x)` | `return sqrt(abs(x))` |
+| Incorrect dimension | `arr.reshape(3, 4)` | `arr.reshape(4, 3)` |
+| Wrong parameter value | `kmeans = KMeans(n_clusters=3)` | `kmeans = KMeans(n_clusters=5)` |
+| Missing required parameter | `pd.read_csv('data.csv')` | `pd.read_csv('data.csv', sep='\\t')` (when comma-separated) |
+
+### MISSING (required element absent)
+
+| Scenario | Rating Impact |
+|----------|--------------|
+| TODO cell left as `pass` or placeholder | Lowest correctness level |
+| Required plot not generated | Lowest or intermediate level |
+| Required function not defined | Lowest correctness level |
+| Required analysis step skipped | Intermediate level if rest is correct |
+
+### Decision Flow
+
+```
+For each criterion:
+1. List ALL differences between reference and student
+2. Categorize each as COSMETIC, FUNCTIONAL, or MISSING
+3. Apply rating:
+   - Only COSMETIC → highest correctness level
+   - Some FUNCTIONAL/MISSING but core understanding shown → intermediate
+   - Fundamentally wrong or empty → lowest
+4. In feedback, mention cosmetic differences briefly but don't penalize them
+```
+
+**Rule of thumb:** If you could rename a few variables and the code would be identical to the reference, it's COSMETIC and deserves full credit.

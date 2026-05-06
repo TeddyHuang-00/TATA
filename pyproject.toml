@@ -19,3 +19,8 @@ dependencies = [
     "jupyter>=1.1.1",
     "pydantic>=2.13.3",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

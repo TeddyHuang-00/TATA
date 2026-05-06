@@ -29,6 +29,12 @@ class ProviderInfo(BaseModel):
     mode: Mode = Field(
         ..., description="Mode of instructor parsing to use with the model."
     )
+    temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="LLM sampling temperature. None means provider default. 0.0 recommended for grading to minimize variance.",
+    )
 
 
 class ProviderList(BaseModel):
