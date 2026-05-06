@@ -7,5 +7,6 @@ assignments/*
 
 __pycache__/
 .vscode
+.hermes/
 .hermesignore
 HERMES.md
