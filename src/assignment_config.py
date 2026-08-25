@@ -147,6 +147,16 @@ class ScoringSection(BaseModel):
     output_style: ScoreOutputStyle = Field(default="markdown")
 
 
+class FetchSection(BaseModel):
+    course_id: int = Field(ge=1)
+    assignment_id: int = Field(ge=1)
+    mode: Literal["attach", "text", "auto"] = Field(default="auto")
+    out_dir: str = Field(default="raw")
+
+    def resolve_out_dir(self, base_dir: Path) -> Path:
+        return (base_dir / self.out_dir).resolve()
+
+
 class PlagiarismSection(BaseModel):
     output_dir: str = Field(default="plagiarism")
     template_file: str = Field(default="template.ipynb")
@@ -179,6 +189,7 @@ class PlagiarismSection(BaseModel):
 
 class AssignmentFileConfig(BaseModel):
     assignment: AssignmentSection = Field(default_factory=AssignmentSection)
+    fetch: FetchSection | None = Field(default=None)
     processing: ProcessingSection = Field(default_factory=ProcessingSection)
     hooks: HooksSection = Field(default_factory=HooksSection)
     grading: GradingSection
