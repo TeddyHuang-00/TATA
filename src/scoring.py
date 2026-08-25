@@ -68,6 +68,8 @@ def calculate_criterion_score(  # noqa: PLR0911, PLR0912
 
     # Standard grading schemes
     if grading_scheme in {"standard", None}:
+        if rating.lower() == "completely correct":
+            return float(criterion_pts)
         if rating.lower() == "correct":
             return float(criterion_pts)
         if rating.lower() == "partial":

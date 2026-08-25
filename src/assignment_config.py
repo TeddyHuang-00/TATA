@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-InputFormat = Literal["ipynb", "html", "markdown"]
+InputFormat = Literal["ipynb", "html", "markdown", "docx"]
 ScoreReportDetail = Literal["full", "slim"]
 ScoreOutputStyle = Literal["markdown", "plain", "html"]
 HookMountPoint = Literal[
@@ -73,6 +73,11 @@ class ProcessingSection(BaseModel):
     remove_nbconvert_assets: bool = Field(default=True)
     nbconvert_template: str | None = Field(default=None)
     nbconvert_template_dir: str | None = Field(default=None)
+    render_screenshots: bool = Field(
+        default=False,
+        description="Render docx submissions to page screenshots (PDF->PNG) for multimodal grading. Optional, default off.",
+    )
+    screenshot_pages: int = Field(default=2, ge=1)
 
 
 class HooksSection(BaseModel):

@@ -179,17 +179,16 @@ def detect_plagiarism(assignment_config_path: Path) -> dict | None:
             },
         )
 
-    if not cfg.template_file.exists():
-        msg = (
-            f"Template file not found: {cfg.template_file}\n"
-            "Create template.ipynb in assignment root (or set [plagiarism.template_file] in config)."
-        )
-        raise FileNotFoundError(msg)
-
     extracted_success = 0
     extracted_errors = 0
-
-    _write_extracted_code(cfg.template_file, cfg.template_dir / "template.py")
+    has_template = cfg.template_file.exists()
+    if has_template:
+        _write_extracted_code(cfg.template_file, cfg.template_dir / "template.py")
+    else:
+        print(
+            f"[plagiarism] template not found ({cfg.template_file}); "
+            "running without boilerplate removal"
+        )
 
     submission_files = sorted(cfg.raw_dir.rglob("*.ipynb"))
     if cfg.include_python_files:

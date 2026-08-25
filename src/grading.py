@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -188,11 +189,12 @@ def _grade_one_submission(  # noqa: PLR0913, PLR0917
     system_prompt: str,
     reference_text: str,
     student_text: str,
+    images: list[str] | None = None,
 ) -> BaseModel:
     return client.chat.completions.create(
         model=model_name,
         response_model=response_model,
-        messages=_build_grading_messages(system_prompt, reference_text, student_text),
+        messages=_build_grading_messages(system_prompt, reference_text, student_text, images),
     )
 
 
@@ -200,14 +202,21 @@ def _build_grading_messages(
     system_prompt: str,
     reference_text: str,
     student_text: str,
-) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    images: list[str] | None = None,
+) -> list[dict]:
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
     if reference_text:
         messages.append({
             "role": "user",
             "content": f"Reference Answer:\n{reference_text}",
         })
-    messages.append({"role": "user", "content": f"Student Answer:\n{student_text}"})
+    content: str | list[dict] = f"Student Answer:\n{student_text}"
+    if images:
+        content = [{"type": "text", "text": content}] + [
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
+            for img in images
+        ]
+    messages.append({"role": "user", "content": content})
     return messages
 
 
@@ -221,6 +230,7 @@ def _run_single_grading_task(  # noqa: PLR0913
     reference_text: str,
     hook_runtime: HookRuntime | None,
     assignment_config_path: Path,
+    images: list[str] | None = None,
 ) -> tuple[str, str, str | None]:
     """Run grading for one submission.
 
@@ -253,6 +263,7 @@ def _run_single_grading_task(  # noqa: PLR0913
             system_prompt=system_prompt,
             reference_text=reference_text,
             student_text=student_text,
+            images=images,
         )
         result_json = result.model_dump_json(indent=2)
 
@@ -389,6 +400,20 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     done_count = 0
     error_count = 0
 
+    screenshots_dir = cfg.processed_dir / "screenshots"
+    use_images = (
+        cfg_model.processing.render_screenshots
+        and screenshots_dir.exists()
+    )
+
+    def _images_for(submission: Path) -> list[str]:
+        if not use_images:
+            return []
+        imgs = []
+        for f in sorted(screenshots_dir.glob(f"{submission.stem}_p*.png")):
+            imgs.append(base64.b64encode(f.read_bytes()).decode())
+        return imgs
+
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_submission = {
             executor.submit(
@@ -401,6 +426,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
                 reference_text=reference_text,
                 hook_runtime=hook_runtime,
                 assignment_config_path=config_path,
+                images=_images_for(submission),
             ): submission
             for submission in pending_submissions
         }

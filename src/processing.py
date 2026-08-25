@@ -17,8 +17,8 @@ from .assignment_config import (
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
 
-InputFormat = Literal["ipynb", "html", "markdown"]
-SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown")
+InputFormat = Literal["ipynb", "html", "markdown", "docx"]
+SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown", "docx")
 
 
 class ProcessingCliOptions(ConfigFileCliOptions):
@@ -34,7 +34,9 @@ def _detect_input_format(file_path: Path) -> InputFormat:
         return "html"
     if suffix == ".md":
         return "markdown"
-    msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .md"
+    if suffix == ".docx":
+        return "docx"
+    msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .md, .docx"
     raise ValueError(msg)
 
 
@@ -281,6 +283,87 @@ def _convert_markdown(input_path: Path, output_path: Path) -> None:
     shutil.copy2(input_path, output_path)
 
 
+def _convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
+    """Convert docx to markdown with system anydoc, falling back to markitdown."""
+    if shutil.which("anydoc"):
+        cmd = ["anydoc", str(input_path), "-o", str(output_path)]
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            msg = f"anydoc failed on {input_path}: {e.stderr}"
+            raise RuntimeError(msg) from e
+    if shutil.which("markitdown") or (Path(sys.executable).parent / "markitdown").exists():
+        cmd = [
+            sys.executable,
+            "-m",
+            "markitdown",
+            str(input_path),
+            "-o",
+            str(output_path),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            msg = f"markitdown failed on {input_path}: {e.stderr}"
+            raise RuntimeError(msg) from e
+    msg = "Neither anydoc nor markitdown found. Install anydoc (system) to convert .docx files."
+    raise RuntimeError(msg)
+
+
+def _render_docx_screenshots(
+    input_file: Path,
+    output_stem: str,
+    processed_dir: Path,
+    pages: int,
+) -> None:
+    """Render docx to page PNGs (via soffice+pdftoppm) for multimodal grading."""
+    if not shutil.which("soffice") or not shutil.which("pdftoppm"):
+        print(f"[screenshots] skipped {input_file.name}: soffice/pdftoppm not found")
+        return
+    shots_dir = processed_dir / "screenshots"
+    pdf_dir = shots_dir / "_pdf"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    pdf_dir.mkdir(exist_ok=True)
+    try:
+        subprocess.run(
+            ["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(pdf_dir), str(input_file)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"[screenshots] soffice failed for {input_file.name}: {e.stderr}")
+        return
+    pdf_path = pdf_dir / f"{input_file.stem}.pdf"
+    if not pdf_path.exists():
+        print(f"[screenshots] no PDF produced for {input_file.name}")
+        return
+    subprocess.run(
+        [
+            "pdftoppm",
+            "-png",
+            "-r",
+            "100",
+            "-f",
+            "1",
+            "-l",
+            str(pages),
+            str(pdf_path),
+            str(shots_dir / output_stem),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for f in sorted(shots_dir.glob(f"{output_stem}-*.png")):
+        page = f.name.rsplit("-", 1)[-1].split(".")[0]
+        f.rename(shots_dir / f"{output_stem}_p{page}.png")
+    shutil.rmtree(pdf_dir, ignore_errors=True)
+    print(f"[screenshots] rendered {len(list(shots_dir.glob(f'{output_stem}_p*.png')))} page(s) for {output_stem}")
+
+
 def _postprocess_markdown(  # noqa: PLR0913
     content: str,
     *,
@@ -382,6 +465,8 @@ def _process_single_file(  # noqa: PLR0913, PLR0917
         _convert_html_to_markdown(input_file, output_file)
     elif input_format == "markdown":
         _convert_markdown(input_file, output_file)
+    elif input_format == "docx":
+        _convert_docx_to_markdown(input_file, output_file)
     else:
         msg = f"Unsupported input format: {input_format}"
         raise ValueError(msg)
@@ -418,6 +503,7 @@ def _glob_for_format(raw_dir: Path, input_format: InputFormat) -> list[Path]:
         "ipynb": "*.ipynb",
         "html": "*.html",
         "markdown": "*.md",
+        "docx": "*.docx",
     }
     return sorted(raw_dir.glob(pattern_map[input_format]))
 
@@ -464,7 +550,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa:
         supported_files = [
             p
             for p in sorted(raw_dir.glob("*"))
-            if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".md"}
+            if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".md", ".docx"}
         ]
         if not supported_files:
             print(
@@ -614,6 +700,10 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa:
                 )
                 print(f"[processed] {raw_file.name} -> {output_file.name}")
                 processed_count += 1
+                if processing.render_screenshots and file_format == "docx":
+                    _render_docx_screenshots(
+                        input_file, output_stem, processed_dir, processing.screenshot_pages
+                    )
                 if hook_runtime is not None:
                     hook_runtime.run(
                         "after_preprocess_file",

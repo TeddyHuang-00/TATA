@@ -7,6 +7,6 @@
 # Uncomment the section above to customize assignment paths and reference.
 
 [grading]
-rubric = "rubrics/example_rubric.toml"
+rubric = "rubrics/example.toml"
 system_prompt = "prompt/system.md"
 provider = "deepseek_chat_tool"
