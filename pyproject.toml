@@ -34,7 +34,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-score-view = "src.score_review:main"
+tui = "src.tata_app:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["misc", "src"]
