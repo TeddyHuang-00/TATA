@@ -6,7 +6,15 @@
 # reference_file = "reference.md"  # OPTIONAL — omit for rubric-only grading
 # Uncomment the section above to customize assignment paths and reference.
 
+# [fetch]  # canvas memory for `main.py fetch` (single-assignment fetches).
+# Course-level state (course_id, shared mode) lives in assignments/config.toml
+# (root layer); the root's [[fetch.assignments]] list drives batch fetch and
+# the plagiarism aggregate. Only override here what differs from the root:
+# assignment_id = 2979509
+# mode = "text"     # only when it differs from the root [fetch] mode
+# out_dir = "raw"   # only when it differs from the default
+
 [grading]
-rubric = "rubrics/example.toml"
+rubric = "rubrics/example_rubric.toml"
 system_prompt = "prompt/system.md"
 provider = "deepseek_chat_tool"

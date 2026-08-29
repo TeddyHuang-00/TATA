@@ -10,7 +10,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - **Dynamic schema validation**: assignment/provider/rubric models are validated with generated JSON schemas for safer edits and faster onboarding.
 - **Rubric-driven LLM grading**: grading response schemas are generated from rubric criteria, keeping evaluation structure consistent and auditable.
 - **Parallel grading engine**: bounded concurrency boosts throughput while preserving checkpointed progress and deterministic outputs.
-- **Stage-level control**: run only what you need (`preprocess`, `plagiarism`, `grade`, `score`, `analyze`) or run the full pipeline with `all`.
+- **Stage-level control**: run only what you need (`preprocess`, `plagiarism`, `grade`, `score`, `analyze`, `fetch`, `view`).
 - **Plagiarism coverage at two levels**: intra-assignment detection with boilerplate/template filtering plus inter-assignment aggregation with statistical significance analysis.
 - **Extensible hook lifecycle**: inject custom logic before/after key events across preprocess, grade, score, analyze, and plagiarism without modifying core pipeline code.
 - **Reference quality safeguards**: built-in TODO instruction/implementation audit to catch mismatch risks before grading at scale.
@@ -23,15 +23,15 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv sync
    ```
 
-1. Generate schemas:
+2. Generate schemas:
 
    ```bash
    uv run main.py schema
    ```
 
-1. Create assignment config from [assignments/example/config.toml](assignments/example/config.toml)
+3. Create assignment config from [assignments/example/config.toml](assignments/example/config.toml)
 
-1. Run all stages:
+4. Run all stages:
 
    ```bash
    uv run main.py preprocess -c assignments/my-assignment/config.toml
@@ -43,35 +43,36 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
    Each stage runs in the order: plagiarism -> preprocess -> grade -> score -> analyze.
 
-1. Run plagiarism detection only (optional):
+5. Run plagiarism detection only (optional):
 
    ```bash
    uv run main.py plagiarism -c assignments/my-assignment/config.toml
    ```
 
-1. Run post-scoring meta analysis (optional):
+6. Run post-scoring meta analysis (optional):
 
    ```bash
    uv run main.py analyze -c assignments/my-assignment/config.toml
    ```
 
-1. Audit reference notebook TODO/instruction mismatches (optional):
+7. Audit reference notebook TODO/instruction mismatches (optional):
 
    ```bash
    uv run misc/reference_mismatch_audit.py \
       --notebook assignments/my-assignment/reference.ipynb
    ```
 
-1. Aggregate plagiarism results across assignments (optional):
+8. Aggregate plagiarism results across assignments (optional):
 
    ```bash
    uv run main.py plagiarism -c assignments/config.toml --aggregate -o assignments/plagiarism-report.txt
    ```
 
-   `--config assignments/config.toml` runs plagiarism for every assignment under it
-   (code submissions via copydetect on extracted notebook code, text/report
-   submissions via copydetect on processed markdown blended 95/5 with embedding
-   similarity). `--aggregate` appends the cross-assignment report: pairwise
+   `--config assignments/config.toml` runs plagiarism for every assignment
+   listed in its `[[fetch.assignments]]` (code submissions via copydetect on
+   extracted notebook code, text/report submissions via copydetect on
+   processed markdown blended 95/5 with embedding similarity). `--aggregate`
+   appends the cross-assignment report: pairwise
    deletion + logit transform + per-assignment z-score + Stouffer aggregation,
    plus an individual-level detector using per-assignment max similarity with
    Gumbel fitting. It outputs statistically significant pairs and students under
@@ -82,16 +83,26 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
 Config is layered: the course-level root config `assignments/config.toml` holds
 persistent fetch/plagiarism state shared across assignments (course id, fetch
-mode, plagiarism weights/alphas); each `assignments/<name>/config.toml` holds
-grading/scoring and assignment-specific overrides. Assignment values win per
-key; all paths resolve against the assignment directory. Standalone assignment
-configs (no root config) work exactly as before.
+mode, plagiarism weights/alphas) plus the course's assignment list; each
+`assignments/<name>/config.toml` holds grading/scoring and assignment-specific
+overrides. Assignment values win per key; all paths resolve against the
+assignment directory. Standalone assignment configs (no root config) work
+exactly as before.
+
+The root `[[fetch.assignments]]` list drives batch fetch and the plagiarism
+aggregate: `fetch -c assignments/config.toml` fetches every listed entry in
+one shot (per-entry `mode`/`out` win), and `plagiarism -c assignments/config.toml --aggregate` runs and aggregates exactly the listed
+assignments.
 
 ```toml
 # assignments/config.toml (root layer, gitignored)
 [fetch]
 course_id = 271218
-mode = "attach"
+mode = "attach"   # default for entries without their own
+
+[[fetch.assignments]]
+assignment_id = 2978557
+out = "0-10-first-colab/raw"  # fetch dir; assignment root = its parent
 
 # assignments/0-10-first-colab/config.toml (assignment layer)
 [grading]

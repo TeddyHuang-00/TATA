@@ -11,16 +11,31 @@ under the assignment config: per-key assignment values win. All paths resolve
 against the assignment directory (root config values are scalars only).
 
 - Root layer (`assignments/config.toml`, gitignored): `[fetch]` course-level
-  state (`course_id`, shared `mode`), `[plagiarism]` course-wide knobs
-  (blend weights, aggregate alphas). It has no `[grading]`.
+  state (`course_id`, shared `mode`) plus the course's assignment list
+  (`[[fetch.assignments]]`: `assignment_id`, optional `mode` override, `out`
+  = fetch output dir relative to the root), and `[plagiarism]` course-wide
+  knobs (blend weights, aggregate alphas). It has no `[grading]`.
 - Assignment layer: everything else, plus overrides (`assignment_id`,
   `mode = "text"` when it differs from the root default, `template_file`, ...).
 - Standalone assignment configs without a root config work exactly as before.
 
-`main.py fetch` writes course-level state to the root config and
-assignment-level state to the assignment config automatically. `main.py
-plagiarism -c assignments/config.toml` runs plagiarism for every assignment
-under the root; add `--aggregate` for the cross-assignment report.
+The root list is the course's source of truth: `main.py fetch -c assignments/config.toml` fetches every listed entry in one shot (per-entry
+mode/out win), `fetch --retry` replays it, and `main.py plagiarism -c assignments/config.toml --aggregate` runs and aggregates exactly the listed
+assignments. `main.py fetch` also writes course-level state to the root
+config and assignment-level state to the assignment config automatically.
+
+Example root config:
+
+```toml
+[fetch]
+course_id = 271218
+mode = "attach"   # default for entries without their own
+
+[[fetch.assignments]]
+assignment_id = 2979511
+mode = "text"              # optional; falls back to the root mode
+out = "1-10-my-ai-starting-point/raw"  # fetch dir; assignment root = its parent
+```
 
 ## Where this file sits in the workflow
 
@@ -58,6 +73,15 @@ processed_dir = "processed"
 graded_dir = "graded"
 logs_dir = "logs"
 reference_file = "reference.md"
+
+[fetch]
+# Canvas memory for `main.py fetch`; course-level keys (course_id, shared
+# mode) live in assignments/config.toml. Only override what differs from the
+# root; the root's [[fetch.assignments]] list drives batch fetch and the
+# plagiarism aggregate.
+assignment_id = 2979509
+# mode = "text"     # only when it differs from the root [fetch] mode
+# out_dir = "raw"   # only when it differs from the default
 
 [processing]
 # Optional: one value or a list from: ipynb, html, markdown
