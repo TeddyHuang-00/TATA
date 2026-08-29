@@ -2,6 +2,26 @@
 
 This guide explains how to write `assignments/<assignment-name>/config.toml` without relying on schema validation.
 
+## Layered config
+
+Configs are layered. The course-level root config `assignments/config.toml`
+holds state shared across assignments; each `assignments/<name>/config.toml`
+holds assignment-specific settings. When the root config exists, it is merged
+under the assignment config: per-key assignment values win. All paths resolve
+against the assignment directory (root config values are scalars only).
+
+- Root layer (`assignments/config.toml`, gitignored): `[fetch]` course-level
+  state (`course_id`, shared `mode`), `[plagiarism]` course-wide knobs
+  (blend weights, aggregate alphas). It has no `[grading]`.
+- Assignment layer: everything else, plus overrides (`assignment_id`,
+  `mode = "text"` when it differs from the root default, `template_file`, ...).
+- Standalone assignment configs without a root config work exactly as before.
+
+`main.py fetch` writes course-level state to the root config and
+assignment-level state to the assignment config automatically. `main.py
+plagiarism -c assignments/config.toml` runs plagiarism for every assignment
+under the root; add `--aggregate` for the cross-assignment report.
+
 ## Where this file sits in the workflow
 
 The assignment config is the runtime contract for every stage:
@@ -203,10 +223,17 @@ Fields and defaults:
 - `display_threshold = 0.8` (must be in `[0.0, 1.0]`)
 - `extensions = [".py"]` (cannot be empty)
 - `include_python_files = true`
+- `copydetect_weight = 0.95` / `embedding_weight = 0.05`: text-submission
+  blend (copydetect primary, embedding auxiliary)
+- `embedding_model = "jinaai/jina-embeddings-v5-omni-small-text-matching"`
+- `pairwise_alpha = 0.01` / `individual_alpha = 0.01`: one-sided significance
+  thresholds for the cross-assignment aggregate
+- `score_floor = 0.001` / `score_cap = 0.999`: logit clamps for the aggregate
 
 Notes:
 
-- `full_pairs_file` is used by the cross-assignment aggregate script.
+- `full_pairs_file` is used by the cross-assignment aggregate
+  (`main.py plagiarism --aggregate`).
 - `extensions` are normalized to lower-case, and a missing leading `.` is auto-added.
 
 ## Common mistakes

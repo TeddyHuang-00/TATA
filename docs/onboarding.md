@@ -119,9 +119,7 @@ uv run misc/reference_mismatch_audit.py \
 Aggregate plagiarism reports across assignments:
 
 ```bash
-uv run misc/plagiarism_report_aggregate.py \
-	--pairwise-alpha 0.01 \
-	--individual-alpha 0.01 \
+uv run main.py plagiarism -c assignments/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 

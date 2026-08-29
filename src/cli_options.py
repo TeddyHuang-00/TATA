@@ -79,7 +79,23 @@ class PreprocessCliOptions(ConfigFileOptions):
 
 
 class PlagiarismCliOptions(ConfigFileOptions):
-    """Detect plagiarism across submissions."""
+    """Detect plagiarism across submissions.
+
+    ``--config`` accepts either an assignment config (that assignment only,
+    code + text as applicable) or the course root ``assignments/config.toml``
+    (every assignment under it).
+    """
+
+    aggregate: bool = Field(
+        default=False,
+        description="After per-assignment runs, produce the cross-assignment "
+        "z-score aggregate report over the assignments root.",
+    )
+    output: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("output", "o"),
+        description="Write the aggregate report to this file instead of stdout.",
+    )
 
 
 class GradeCliOptions(ConfigFileOptions):
@@ -115,6 +131,7 @@ class FetchCliOptions(BaseModel):
     )
     config: Path | None = Field(
         default=None,
+        validation_alias=AliasChoices("config", "c"),
         description="Assignment config.toml holding [fetch] memory; "
         "defaults to ./config.toml when run from an assignment dir.",
     )

@@ -65,17 +65,41 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 1. Aggregate plagiarism results across assignments (optional):
 
    ```bash
-   uv run misc/plagiarism_report_aggregate.py \
-      --pairwise-alpha 0.01 \
-      --individual-alpha 0.01 \
-      --output misc/plagiarism_summary.md
+   uv run main.py plagiarism -c assignments/config.toml --aggregate -o assignments/plagiarism-report.txt
    ```
 
-   The report uses pairwise deletion + logit transform + per-assignment z-score + Stouffer aggregation,
-   and also includes an individual-level detector using per-assignment max similarity with Gumbel fitting.
-   It outputs statistically significant pairs and students under separate thresholds.
+   `--config assignments/config.toml` runs plagiarism for every assignment under it
+   (code submissions via copydetect on extracted notebook code, text/report
+   submissions via copydetect on processed markdown blended 95/5 with embedding
+   similarity). `--aggregate` appends the cross-assignment report: pairwise
+   deletion + logit transform + per-assignment z-score + Stouffer aggregation,
+   plus an individual-level detector using per-assignment max similarity with
+   Gumbel fitting. It outputs statistically significant pairs and students under
+   the alphas configured in the root config's `[plagiarism]` section.
    Data source is `plagiarism/all_pairs.json` (full pair export).
-   CLI options are parsed via Pydantic/pydantic-settings.
+
+## Layered Config
+
+Config is layered: the course-level root config `assignments/config.toml` holds
+persistent fetch/plagiarism state shared across assignments (course id, fetch
+mode, plagiarism weights/alphas); each `assignments/<name>/config.toml` holds
+grading/scoring and assignment-specific overrides. Assignment values win per
+key; all paths resolve against the assignment directory. Standalone assignment
+configs (no root config) work exactly as before.
+
+```toml
+# assignments/config.toml (root layer, gitignored)
+[fetch]
+course_id = 271218
+mode = "attach"
+
+# assignments/0-10-first-colab/config.toml (assignment layer)
+[grading]
+rubric = "rubrics/0-10-first-colab.toml"
+...
+[fetch]
+assignment_id = 2978557
+```
 
 ## Documentation
 
@@ -94,4 +118,4 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - Example rubric: [rubrics/example_rubric.toml](rubrics/example_rubric.toml)
 - Generic system prompt: [prompt/system.md](prompt/system.md)
 - Reference mismatch audit script: [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)
-- Plagiarism aggregate report script: [misc/plagiarism_report_aggregate.py](misc/plagiarism_report_aggregate.py)
+- Plagiarism: `uv run main.py plagiarism -c assignments/config.toml --aggregate`

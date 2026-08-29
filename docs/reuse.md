@@ -65,9 +65,7 @@ Treat this as a preflight check to reduce rubric ambiguity and downstream gradin
 After individual assignment plagiarism runs, build a single aggregate view:
 
 ```bash
-uv run misc/plagiarism_report_aggregate.py \
-	--pairwise-alpha 0.01 \
-	--individual-alpha 0.01 \
+uv run main.py plagiarism -c assignments/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 

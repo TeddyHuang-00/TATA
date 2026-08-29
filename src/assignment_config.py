@@ -147,11 +147,31 @@ class ScoringSection(BaseModel):
     output_style: ScoreOutputStyle = Field(default="markdown")
 
 
-class FetchSection(BaseModel):
-    course_id: int = Field(ge=1)
+class FetchAssignmentEntry(BaseModel):
+    """One assignment in the root config's [[fetch.assignments]] list.
+
+    ``out`` is the fetch output dir (raw submissions), relative to the root
+    config; the assignment root (config.toml, roster.csv, plagiarism/) is its
+    parent. ``mode`` falls back to the root [fetch] mode.
+    """
+
     assignment_id: int = Field(ge=1)
+    mode: Literal["attach", "text", "auto"] | None = Field(default=None)
+    out: str = Field(min_length=1)
+
+
+class FetchSection(BaseModel):
+    """Fetch memory, possibly split across layers: the root config holds
+    course-level keys, the assignment config the assignment-level ones; the
+    layered load merges them into a complete section. The root config may
+    additionally carry an explicit assignment list ([[fetch.assignments]])
+    that drives both fetch and the plagiarism aggregate."""
+
+    course_id: int | None = Field(default=None, ge=1)
+    assignment_id: int | None = Field(default=None, ge=1)
     mode: Literal["attach", "text", "auto"] = Field(default="auto")
     out_dir: str = Field(default="raw")
+    assignments: list[FetchAssignmentEntry] = Field(default_factory=list)
 
     def resolve_out_dir(self, base_dir: Path) -> Path:
         return (base_dir / self.out_dir).resolve()
@@ -167,6 +187,17 @@ class PlagiarismSection(BaseModel):
     display_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     extensions: list[str] = Field(default_factory=lambda: [".py"])
     include_python_files: bool = Field(default=True)
+    # Text-submission plagiarism (copydetect primary, embedding auxiliary).
+    copydetect_weight: float = Field(default=0.95, ge=0.0, le=1.0)
+    embedding_weight: float = Field(default=0.05, ge=0.0, le=1.0)
+    embedding_model: str = Field(
+        default="jinaai/jina-embeddings-v5-omni-small-text-matching"
+    )
+    # Cross-assignment aggregate significance thresholds (one-sided).
+    pairwise_alpha: float = Field(default=0.01, gt=0.0, le=1.0)
+    individual_alpha: float = Field(default=0.01, gt=0.0, le=1.0)
+    score_floor: float = Field(default=0.001, gt=0.0, lt=0.5)
+    score_cap: float = Field(default=0.999, gt=0.5, lt=1.0)
 
     @field_validator("extensions")
     @classmethod
@@ -228,13 +259,43 @@ def ensure_assignment_dirs(paths: AssignmentPaths) -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
-def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
-    if not config_path.exists():
-        msg = f"Assignment config not found: {config_path}"
-        raise FileNotFoundError(msg)
+def find_root_config(assignment_config_path: Path) -> Path | None:
+    """Course-level root config: ``config.toml`` in the parent of the
+    assignment directory (e.g. ``assignments/config.toml``)."""
+    root = assignment_config_path.resolve().parent.parent / "config.toml"
+    return root if root.is_file() else None
 
+
+def is_root_config(config_path: Path) -> bool:
+    """True when config_path is a course-level root config: a config.toml in a
+    directory whose children are assignment directories."""
+    resolved = config_path.resolve()
+    if resolved.name != "config.toml":
+        return False
+    return any(
+        entry.is_dir() and (entry / "config.toml").is_file()
+        for entry in resolved.parent.iterdir()
+    )
+
+
+def _merge_configs(root: dict, assignment: dict) -> dict:
+    """Deep-ish merge: assignment values win per key inside each section."""
+    merged = dict(root)
+    for section, values in assignment.items():
+        if (
+            section in merged
+            and isinstance(merged[section], dict)
+            and isinstance(values, dict)
+        ):
+            merged[section] = {**merged[section], **values}
+        else:
+            merged[section] = values
+    return merged
+
+
+def _load_toml(config_path: Path) -> dict:
     try:
-        cfg = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as exc:
         msg = (
             f"Invalid TOML in config file: {config_path}\n"
@@ -242,6 +303,28 @@ def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
             "Tip: start from assignments/example/config.toml and edit only [grading] first."
         )
         raise ValueError(msg) from exc
+
+
+def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
+    """Load an assignment config layered over the course-level root config.
+
+    The root config (``assignments/config.toml``) supplies [fetch] and
+    [plagiarism] course-wide defaults; per-key values in the assignment config
+    win. Paths always resolve against the assignment directory.
+    """
+    if not config_path.exists():
+        msg = f"Assignment config not found: {config_path}"
+        raise FileNotFoundError(msg)
+
+    cfg = _load_toml(config_path)
+    root = find_root_config(config_path)
+    if root is not None:
+        cfg = _merge_configs(_load_toml(root), cfg)
+    # The root's [[fetch.assignments]] list is course-level orchestration,
+    # not per-assignment state; keep it out of merged assignment configs.
+    fetch = cfg.get("fetch")
+    if isinstance(fetch, dict):
+        fetch.pop("assignments", None)
 
     try:
         return AssignmentFileConfig.model_validate(cfg)

@@ -19,10 +19,10 @@ Workflow (recommended):
    - Apply minimal fixes and rerun this script until hard mismatches are zero.
 
 Usage examples:
-  uv run python misc/reference_mismatch_audit.py \
+  uv run misc/reference_mismatch_audit.py \
     --notebook assignments/4-lab-poly-ridge-regres/reference.ipynb
 
-  uv run python misc/reference_mismatch_audit.py \
+  uv run misc/reference_mismatch_audit.py \
     --notebook assignments/1-lab-python-review/reference.ipynb \
     --format json --output misc/audit_report.json
 """

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Aggregate cross-assignment plagiarism using robust longitudinal statistics.
 
-Pairewise Method:
+Ported from misc/plagiarism_report_aggregate.py (deleted 2026-08-28): the
+statistics core is unchanged; the CLI is now ``main.py plagiarism --aggregate``
+with alphas/floor/cap from the root config's [plagiarism] section.
+
+Pairwise Method:
 1) Pairwise deletion for missing assignment pairs.
 2) Logit transform on similarity scores (with lower and upper caps).
 3) Per-assignment z-score normalization.
@@ -13,37 +17,16 @@ Individual Method:
 2) Fit these maximum scores to a Gumbel distribution.
 3) Calculate the exact p-value for each student's maximum score under the fitted distribution CDF.
 4) Convert p-values to Z-scores and follow the same Stouffer aggregation and flagging as the pairwise method.
-
-Usage examples:
-  uv run misc/plagiarism_report_aggregate.py
-
-  uv run misc/plagiarism_report_aggregate.py \
-        --alpha 0.01 \
-    --output misc/plagiarism_summary.md
-
-  uv run misc/plagiarism_report_aggregate.py \
-    --format json \
-    --output misc/plagiarism_summary.json
 """
 
 from __future__ import annotations
 
 import json
 import math
-import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import NormalDist, mean, median
-from typing import Literal
-
-from pydantic import AliasChoices, Field, model_validator
-
-try:
-    from src.cli_options import CliOptions, parse_cli_args
-except ModuleNotFoundError:
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from src.cli_options import CliOptions, parse_cli_args
 
 MIN_PARTS_FOR_ASSIGNMENT_RELATIVE_PATH = 3
 MAX_PERCENTAGE = 100.0
@@ -158,79 +141,9 @@ class BuildConfig:
     individual_alpha: float
     score_floor: float
     score_cap: float
-
-
-class PlagiarismAggregateCliOptions(CliOptions):
-    assignments_root: Path = Field(
-        default=Path("assignments"),
-        validation_alias=AliasChoices("assignments-root", "root"),
-        description="Root directory containing assignment folders.",
-    )
-    pairs_glob: str = Field(
-        default=DEFAULT_PAIRS_GLOB,
-        validation_alias=AliasChoices("pairs-glob", "glob"),
-        description="Glob pattern (relative to assignments_root) for full pair data JSON files.",
-    )
-    pairwise_alpha: float = Field(
-        default=DEFAULT_ALPHA,
-        validation_alias=AliasChoices("pairwise-alpha", "palpha", "pa"),
-        description="One-sided significance threshold for pairwise combined z-score p-values.",
-    )
-    individual_alpha: float = Field(
-        default=DEFAULT_ALPHA,
-        validation_alias=AliasChoices("individual-alpha", "ialpha", "ia"),
-        description="One-sided significance threshold for individual combined z-score p-values.",
-    )
-    score_floor: float = Field(
-        default=DEFAULT_SCORE_FLOOR,
-        validation_alias=AliasChoices("score-floor", "floor"),
-        description="Lower decimal clamp before logit transform.",
-    )
-    score_cap: float = Field(
-        default=DEFAULT_SCORE_CAP,
-        validation_alias=AliasChoices("score-cap", "cap"),
-        description="Upper decimal clamp before logit transform.",
-    )
-    format: Literal["text", "json"] = Field(
-        default="text",
-        validation_alias=AliasChoices("format", "f"),
-        description="Output format.",
-    )
-    output: Path | None = Field(
-        default=None,
-        validation_alias=AliasChoices("output", "o"),
-        description="Optional output file path. If omitted, prints to stdout.",
-    )
-
-    @model_validator(mode="after")
-    def _validate_options(self) -> PlagiarismAggregateCliOptions:
-        root = self.assignments_root.resolve()
-        if not root.exists() or not root.is_dir():
-            msg = f"--assignments-root not found or not a directory: {root}"
-            raise ValueError(msg)
-        self.assignments_root = root
-
-        if not 0 < self.pairwise_alpha <= 1:
-            msg = "--pairwise-alpha must be in (0, 1]"
-            raise ValueError(msg)
-
-        if not 0 < self.individual_alpha <= 1:
-            msg = "--individual-alpha must be in (0, 1]"
-            raise ValueError(msg)
-
-        if not 0 < self.score_floor < SCORE_FLOOR_UPPER_BOUND:
-            msg = "--score-floor must be in (0, 0.5)"
-            raise ValueError(msg)
-
-        if not SCORE_CAP_LOWER_BOUND < self.score_cap < 1:
-            msg = "--score-cap must be in (0.5, 1)"
-            raise ValueError(msg)
-
-        if self.score_floor >= self.score_cap:
-            msg = "--score-floor must be smaller than --score-cap"
-            raise ValueError(msg)
-
-        return self
+    # Explicit pair files (root-config [[fetch.assignments]] list) instead of
+    # globbing the whole assignments root.
+    pair_data_files: list[Path] | None = None
 
 
 def _extract_assignment_name(report_file: Path, assignments_root: Path) -> str:
@@ -578,7 +491,10 @@ def _combine_students_stouffer(
 def _load_assignment_records(
     config: BuildConfig,
 ) -> tuple[list[Path], int, int, dict[str, list[MatchRecord]]]:
-    pair_data_files = sorted(config.assignments_root.glob(config.pairs_glob))
+    if config.pair_data_files is not None:
+        pair_data_files = sorted(config.pair_data_files)
+    else:
+        pair_data_files = sorted(config.assignments_root.glob(config.pairs_glob))
     pair_data_parsed = 0
     parse_errors = 0
     per_assignment_records: dict[str, list[MatchRecord]] = {}
@@ -751,32 +667,3 @@ def _to_text(payload: AggregatePayload) -> str:
 
 def _to_json(payload: AggregatePayload) -> str:
     return json.dumps(asdict(payload), indent=2)
-
-
-def main() -> None:
-    args = parse_cli_args(PlagiarismAggregateCliOptions)
-
-    payload = _build_payload(
-        BuildConfig(
-            assignments_root=args.assignments_root,
-            pairs_glob=args.pairs_glob,
-            pairwise_alpha=args.pairwise_alpha,
-            individual_alpha=args.individual_alpha,
-            score_floor=args.score_floor,
-            score_cap=args.score_cap,
-        )
-    )
-
-    output = _to_json(payload) if args.format == "json" else _to_text(payload)
-
-    if args.output is None:
-        print(output)
-        return
-
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(output + "\n", encoding="utf-8")
-    print(f"Wrote report to: {args.output}")
-
-
-if __name__ == "__main__":
-    main()
