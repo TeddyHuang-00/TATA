@@ -21,12 +21,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from misc.score_review_tui import (
+from src.cli_options import ScoreReviewCliOptions
+from src.score_review import (
     Viewer,
     _convert_preview,
     _preview_content,
 )
-from src.cli_options import ScoreReviewTuiCliOptions
 from textual import events
 from textual.geometry import Size
 from textual.widgets import Markdown, Static
@@ -116,7 +116,7 @@ async def main() -> None:
         kind, content = _convert_preview(raw / "unsupported.xyz")
         assert kind == "text" and "Unsupported" in content, kind
 
-        args = ScoreReviewTuiCliOptions(score_dir=graded)
+        args = ScoreReviewCliOptions(score_dir=graded)
         app = Viewer(args)
         async with app.run_test(size=(120, 40)) as pilot:
             md_view = app.query_one("#preview-markdown", Markdown)

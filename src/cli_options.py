@@ -161,15 +161,20 @@ class FetchCliOptions(BaseModel):
         return self
 
 
-class ScoreReviewTuiCliOptions(BaseModel):
-    """Score review TUI options."""
+class ScoreReviewCliOptions(BaseModel):
+    """Score review viewer options: TUI by default, --web serves it over HTTP."""
 
     score_dir: CliPositionalArg[Path] = Field(
         description="Directory containing per-student JSON grading outputs.",
     )
+    web: bool = Field(
+        default=False,
+        description="Serve the viewer over HTTP (http://localhost:8000) "
+        "via textual-serve instead of running the TUI.",
+    )
 
     @model_validator(mode="after")
-    def _validate(self) -> ScoreReviewTuiCliOptions:
+    def _validate(self) -> ScoreReviewCliOptions:
         d = self.score_dir.resolve()
         if not d.is_dir():
             msg = f"score dir not found or not a directory: {d}"
@@ -191,7 +196,7 @@ class TataCli(CliOptions):
     # "schema_gen" avoids shadowing BaseModel.schema; alias keeps the CLI name.
     schema_gen: CliSubCommand[SchemaCliOptions] = Field(alias="schema")
     fetch: CliSubCommand[FetchCliOptions]
-    view: CliSubCommand[ScoreReviewTuiCliOptions]
+    view: CliSubCommand[ScoreReviewCliOptions]
 
 
 def parse_cli_args[TModel: CliOptions](

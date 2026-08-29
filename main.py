@@ -6,7 +6,6 @@ import tomllib
 from pathlib import Path
 
 from canvasapi import Canvas
-from misc.score_review_tui import Viewer
 from pydantic_settings import CliApp, get_subcommand
 from src.analysis import analyze_assignment
 from src.assignment_config import (
@@ -29,7 +28,7 @@ from src.cli_options import (
     PreprocessCliOptions,
     SchemaCliOptions,
     ScoreCliOptions,
-    ScoreReviewTuiCliOptions,
+    ScoreReviewCliOptions,
     TataCli,
     parse_cli_args,
 )
@@ -37,6 +36,7 @@ from src.grading import grade_assignment
 from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
 from src.schema_tools import generate_all_schemas
+from src.score_review import run as run_score_viewer
 from src.scoring import score_assignment
 
 # Stage subcommands: type -> (label, pipeline function).
@@ -283,7 +283,9 @@ def _run_fetch(args: FetchCliOptions) -> None:
     if args.course is not None or args.assignment is not None:
         course_id: int = args.course
         assignment_id: int = args.assignment
-    elif cfg is not None and cfg.course_id is not None and cfg.assignment_id is not None:
+    elif (
+        cfg is not None and cfg.course_id is not None and cfg.assignment_id is not None
+    ):
         course_id = cfg.course_id
         assignment_id = cfg.assignment_id
     elif cfg is not None and cfg.course_id is not None:
@@ -334,8 +336,8 @@ def main() -> None:
         _run_fetch(sub)
         return
 
-    if isinstance(sub, ScoreReviewTuiCliOptions):
-        Viewer(sub).run()
+    if isinstance(sub, ScoreReviewCliOptions):
+        run_score_viewer(sub)
         return
 
     label, fn = _STAGES[type(sub)]

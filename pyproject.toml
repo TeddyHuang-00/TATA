@@ -28,3 +28,16 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+score-view = "src.score_review:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["misc", "src"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/score_review.tcss" = "src/score_review.tcss"
