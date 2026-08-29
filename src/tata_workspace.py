@@ -40,6 +40,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, RichLog, Static
 
 from src.analysis import analyze_assignment
@@ -56,6 +57,24 @@ if TYPE_CHECKING:
 
 
 # ---------- shared display helpers (also imported by tata_app) ----------
+
+def _is_displayed(widget: Widget) -> bool:
+    """True when the widget and every ancestor has display enabled, and the
+    widget is on the app's active screen.
+
+    ``Widget.display`` only checks the node's own style; TabPane hides
+    inactive panes by setting ``display=False`` on the pane, so a child of
+    a hidden tab still reports ``display=True`` (F2 — focus must not land
+    on a widget inside a hidden tab, and the screen check keeps focus out
+    of a base screen while a modal is up).
+    """
+    node: Widget | None = widget
+    while node is not None:
+        if not node.display:
+            return False
+        node = node.parent
+    return widget.screen is widget.app.screen
+
 
 # State vocabulary (design 99 §2). "Flagged" fires on display-level pairs
 # (max_similarity_pct >= DISPLAY_THRESHOLD_PCT), NOT on aggregate z-score
@@ -763,6 +782,12 @@ class AssignmentScreen(Vertical):
         if config_path is None:
             return
         assert self._info is not None
+        if self.state.active_job is not None:
+            self.app.notify(
+                f"'{self.state.active_job}' is running — finish or cancel it first",
+                severity="warning",
+            )
+            return
         q: queue.Queue = queue.Queue()
         cancel_event = threading.Event()
         self._job = {
@@ -778,6 +803,7 @@ class AssignmentScreen(Vertical):
             "text": f"0/{total}" if total else "running…",
             "dir_name": self._info.dir_name,
         }
+        self.state.active_job = stage
         self._log_line(f"▶ {stage} started ({config_path.name})")
         self._render_busy()
         self.focus()  # keep bindings alive while the buttons are disabled
@@ -785,12 +811,19 @@ class AssignmentScreen(Vertical):
         self.run_worker(worker, thread=True, group="stage", exclusive=True)
 
     def _tick(self) -> None:
-        """Main-thread queue drain + filesystem progress poll (0.1 s)."""
+        """Main-thread queue drain + filesystem progress poll (0.1 s).
+
+        The queue is drained unconditionally — the worker's ``('done', …)``
+        marker must always be consumed so ``state.active_job`` is released,
+        even when the job belongs to another assignment (the user navigated
+        away while it ran; F1). Only UI updates are gated on the dir match.
+        """
         job = self._job
         if job is None:
             return
-        if self._info is None or job.get("dir_name") != self._info.dir_name:
-            return  # job belongs to another assignment — keep this UI clean
+        on_this_dir = (
+            self._info is not None and job.get("dir_name") == self._info.dir_name
+        )
         q = job["queue"]
         while True:
             try:
@@ -798,10 +831,13 @@ class AssignmentScreen(Vertical):
             except queue.Empty:
                 break
             if kind == "log":
-                self._log_line(payload)
+                if on_this_dir:
+                    self._log_line(payload)
             elif kind == "done":
                 self._job_done(payload)
                 return
+        if not on_this_dir:
+            return  # job belongs to another assignment — keep this UI clean
         # Progress polls the same counters the incremental scan uses.
         if job["total"]:
             new_done = self._stage_done(job["stage"])
@@ -828,11 +864,16 @@ class AssignmentScreen(Vertical):
         job = self._job
         if job is None:
             return
+        # F1: the shared active_job slot is released unconditionally — the
+        # job may belong to another assignment (user navigated away while
+        # it ran). UI updates stay gated on the dir match.
+        self.state.active_job = None
         self._job = None
         self._render_busy()
-        if self.display:
+        on_this_dir = self._info is not None and job.get("dir_name") == self._info.dir_name
+        if on_this_dir and _is_displayed(self):
             self.focus_stage()
-        if summary:
+        if on_this_dir and summary:
             if summary.get("cancelled"):
                 self._log_line(
                     "Job cancelled — progress saved (checkpoint/mtime based)"

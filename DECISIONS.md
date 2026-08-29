@@ -55,3 +55,17 @@ and neglected writing back to per-assignment [fetch] blocks from the list, per-a
 to achieve one config file that defines the course for both fetch and plagiarism aggregation,
 accepting that the list is duplicated state alongside the per-assignment [fetch] blocks (the blocks keep single-assignment fetch working) and that a listed entry without a config.toml is skipped by plagiarism,
 because the user explicitly asked for course ID + list of (assignment ID, mode, output path) in the total config usable by both fetch and plagiarism aggregate, and the real fetch run fetched all 6 assignments (318 submissions) with per-entry modes, while the aggregate reported exactly the 6 listed pair files.
+
+## T5 review reuse + T6 split into T6a/T6b/T6c
+
+**Date:** 2026-08-29
+**Status:** Accepted
+**Files:** `src/score_review.py`, `tests/review_screen_check.py`, `tests/preview_check.py` (T5); `src/tata_plagiarism.py`, `src/tata_settings.py` (T6a/T6b, new)
+
+In the context of T5 verifier rejecting the ScoreReviewScreen extraction (1 MAJOR: escape guard popped the CLI review screen with no way back),
+facing a guard that assumed a single-screen CLI stack when the real stack is [default Screen, ScoreReviewScreen],
+we decided for an explicit `pop_on_escape` constructor flag (CLI Viewer default False = esc no-op; platform push True = esc pops back), plus a markup hardening fix (Static markup=False + rich.markup.escape on criteria-list data paths) exposed by real student text containing `[https://...](...)` citation markup,
+and neglected a centralized markup policy for all Static text paths (json-view/preview-markdown are Markdown widgets, unaffected),
+to achieve behavior-equivalent CLI view and a safe platform push,
+accepting that T5 landed with the verifier's M1 fix folded in and committed as a single T5 commit with both the extraction and the esc/markup fixes,
+because the M1 fix required touching the same file and a split would double review cost; T6 is then split into T6a (PlagiarismScreen, new file) and T6b (SettingsScreen, new file) running in parallel with no shared files, followed by T6c (Dashboard key wiring), because a single T6 subagent would have an oversized context and cross-file write conflicts; cross-course plagiarism Tab is explicitly NOT built (user 2026-08-29 correction, docs 04/01 still carry stale cross-course sections).

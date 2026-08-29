@@ -193,7 +193,7 @@ async def _check_cancel(app: TataApp, pilot: Pilot) -> None:
     log = ws.query_one("#richlog", RichLog)
 
     def slow_grade(config_path: Path, *, force: bool = False) -> dict:
-        time.sleep(0.6)
+        time.sleep(2.0)
         return {
             "stage": "grading",
             "success": 1,
@@ -222,7 +222,7 @@ async def _check_button_click(app: TataApp, pilot: Pilot) -> None:
     log = ws.query_one("#richlog", RichLog)
 
     def slow_grade(config_path: Path, *, force: bool = False) -> dict:
-        time.sleep(0.6)
+        time.sleep(2.0)
         return {
             "stage": "grading",
             "success": 1,

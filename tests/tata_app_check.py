@@ -20,7 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.tata_app import TataApp
+from src.tata_plagiarism import PlagiarismScreen
 from src.tata_scan import scan_assignments, scan_courses
+from src.tata_settings import SettingsScreen
 from src.tata_workspace import AssignmentScreen
 from textual.pilot import Pilot
 from textual.widgets import DataTable, Static
@@ -170,6 +172,37 @@ async def _check_empty_state(root: Path) -> None:
         assert "No courses yet" in _text(empty), _text(empty)
 
 
+async def _check_tabs(root: Path) -> None:
+    """T4c: real Plagiarism/Settings screens mounted; tab switching refreshes."""
+    app = TataApp(root_dir=root)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _wait_for(pilot, lambda: app.state.courses != [])
+        # placeholders are gone: the real screens are mounted
+        assert app.query_one(PlagiarismScreen) is not None
+        assert app.query_one(SettingsScreen) is not None
+        table = app.query_one("#dashboard-table", DataTable)
+        # enter the course so settings derives 'course' and plagiarism has data
+        table.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.state.dashboard_level == "course"
+
+        app.switch_tab("tab-plagiarism")
+        await pilot.pause()
+        plag = app.query_one(PlagiarismScreen)
+        assert not plag.query_one("#plag-empty", Static).display
+        assert plag.query_one("#plag-tabs").display
+
+        app.switch_tab("tab-settings")
+        await pilot.pause()
+        settings = app.query_one(SettingsScreen)
+        assert settings.current_context == "course", settings.current_context
+
+        app.switch_tab("tab-dashboard")
+        await pilot.pause()
+        assert table.display
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -196,6 +229,7 @@ async def main() -> None:
 
         _check_scanner(assignments_dir)
         await _check_navigation(root)
+        await _check_tabs(root)
 
     with tempfile.TemporaryDirectory() as tmp:
         await _check_empty_state(Path(tmp))
