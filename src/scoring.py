@@ -19,7 +19,7 @@ class ScoringCliOptions(ConfigFileCliOptions):
     pass
 
 
-def calculate_criterion_score(  # noqa: PLR0911, PLR0912
+def calculate_criterion_score(  # ruff: ignore[too-many-return-statements, too-many-branches]
     criterion_pts: int | float,
     rating: str,
     grading_scheme: str | None,
@@ -161,7 +161,7 @@ def _summary_subdir_for_style(output_style: str) -> str:
     return "md"
 
 
-def score_submission(  # noqa: PLR0912
+def score_submission(  # ruff: ignore[too-many-branches]
     rubric_def_path: Path,
     grading_response: dict[str, Any],
     report_detail: str = "full",
@@ -279,7 +279,7 @@ def score_submission(  # noqa: PLR0912
     return total_score, "\n".join(summary_lines)
 
 
-def score_assignment(assignment_config_path: Path) -> dict | None:  # noqa: PLR0914
+def score_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-locals]
     """Score all graded submissions for an assignment."""
     cfg = load_assignment_file(assignment_config_path)
     grading = cfg.grading

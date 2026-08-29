@@ -89,7 +89,7 @@ class _TableHTMLParser(HTMLParser):
         self.rows: list[list[str]] = []
         self.row_is_header: list[bool] = []
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:  # noqa: ARG002
+    def handle_starttag(self, tag: str, attrs: list) -> None:  # ruff: ignore[unused-method-argument]
         lower = tag.lower()
         if lower == "table":
             self.in_table = True
@@ -293,7 +293,10 @@ def _convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
         except subprocess.CalledProcessError as e:
             msg = f"anydoc failed on {input_path}: {e.stderr}"
             raise RuntimeError(msg) from e
-    if shutil.which("markitdown") or (Path(sys.executable).parent / "markitdown").exists():
+    if (
+        shutil.which("markitdown")
+        or (Path(sys.executable).parent / "markitdown").exists()
+    ):
         cmd = [
             sys.executable,
             "-m",
@@ -328,7 +331,15 @@ def _render_docx_screenshots(
     pdf_dir.mkdir(exist_ok=True)
     try:
         subprocess.run(
-            ["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(pdf_dir), str(input_file)],
+            [
+                "soffice",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(pdf_dir),
+                str(input_file),
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -361,10 +372,12 @@ def _render_docx_screenshots(
         page = f.name.rsplit("-", 1)[-1].split(".")[0]
         f.rename(shots_dir / f"{output_stem}_p{page}.png")
     shutil.rmtree(pdf_dir, ignore_errors=True)
-    print(f"[screenshots] rendered {len(list(shots_dir.glob(f'{output_stem}_p*.png')))} page(s) for {output_stem}")
+    print(
+        f"[screenshots] rendered {len(list(shots_dir.glob(f'{output_stem}_p*.png')))} page(s) for {output_stem}"
+    )
 
 
-def _postprocess_markdown(  # noqa: PLR0913
+def _postprocess_markdown(  # ruff: ignore[too-many-arguments]
     content: str,
     *,
     source_format: InputFormat,
@@ -433,7 +446,7 @@ def _postprocess_markdown(  # noqa: PLR0913
     return processed
 
 
-def _process_single_file(  # noqa: PLR0913, PLR0917
+def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     input_file: Path,
     output_file: Path,
     input_format: InputFormat,
@@ -526,7 +539,7 @@ def _normalize_input_formats(
     return [input_format_config]
 
 
-def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa: PLR0912, PLR0915, PLR0914
+def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
     """Preprocess all raw files for an assignment into processed markdown."""
     cfg = load_assignment_file(assignment_config_path)
     processing = cfg.processing
@@ -702,7 +715,10 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # noqa:
                 processed_count += 1
                 if processing.render_screenshots and file_format == "docx":
                     _render_docx_screenshots(
-                        input_file, output_stem, processed_dir, processing.screenshot_pages
+                        input_file,
+                        output_stem,
+                        processed_dir,
+                        processing.screenshot_pages,
                     )
                 if hook_runtime is not None:
                     hook_runtime.run(

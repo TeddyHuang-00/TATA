@@ -3,11 +3,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Literal
 
 from canvasapi import Canvas
-from misc.score_review_tui import ScoreReviewTuiCliOptions, Viewer
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from misc.score_review_tui import Viewer
+from pydantic_settings import CliApp, get_subcommand
 from src.analysis import analyze_assignment
 from src.assignment_config import FetchSection, load_assignment_file
 from src.canvas_fetch import (
@@ -17,88 +16,32 @@ from src.canvas_fetch import (
     load_env,
     remember_fetch,
 )
-from src.cli_options import CliOptions, parse_cli_args, validate_existing_file
+from src.cli_options import (
+    AnalyzeCliOptions,
+    FetchCliOptions,
+    GradeCliOptions,
+    PlagiarismCliOptions,
+    PreprocessCliOptions,
+    SchemaCliOptions,
+    ScoreCliOptions,
+    ScoreReviewTuiCliOptions,
+    TataCli,
+    parse_cli_args,
+)
 from src.grading import grade_assignment
 from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
 from src.schema_tools import generate_all_schemas
 from src.scoring import score_assignment
 
-PipelineStage = Literal[
-    "preprocess",
-    "plagiarism",
-    "grade",
-    "score",
-    "analyze",
-    "all",
-    "schema",
-]
-
-
-class MainCliOptions(CliOptions):
-    stage: PipelineStage = Field(
-        default="all",
-        validation_alias=AliasChoices("stage", "s"),
-        description="Pipeline stage to run.",
-    )
-    config: Path | None = Field(
-        default=None,
-        validation_alias=AliasChoices("config", "c"),
-        description="Path to assignment config TOML.",
-    )
-    force: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("force", "f"),
-        description="For grade stage, ignore checkpoint and regrade all submissions.",
-    )
-
-    @model_validator(mode="after")
-    def _validate_config_requirement(self) -> MainCliOptions:
-        if self.stage != "schema" and self.config is None:
-            msg = "--config is required for running stages other than 'schema'."
-            raise ValueError(msg)
-        if self.stage != "schema" and self.config is not None:
-            self.config = validate_existing_file(self.config)
-        return self
-
-
-class FetchCliOptions(CliOptions):
-    course: int | None = Field(default=None, description="Canvas course ID.")
-    assignment: int | None = Field(default=None, description="Canvas assignment ID.")
-    out: str | None = Field(default=None, description="Output directory.")
-    mode: Literal["attach", "text", "auto"] = Field(
-        default="auto",
-        description="Submission type (default: auto-detect from Canvas).",
-    )
-    config: Path | None = Field(
-        default=None,
-        description="Assignment config.toml holding [fetch] memory; "
-        "defaults to ./config.toml when run from an assignment dir.",
-    )
-    retry: bool = Field(
-        default=False,
-        description="Re-fetch all assignments recorded in configs "
-        "(filter with --course/--assignment).",
-    )
-
-    @field_validator("config")
-    @classmethod
-    def _validate_config(cls, value: Path | None) -> Path | None:
-        if value is None:
-            return value
-        return validate_existing_file(value)
-
-    @model_validator(mode="after")
-    def _validate_fetch_args(self) -> FetchCliOptions:
-        if self.retry and self.out is not None:
-            msg = "--out is ignored with --retry; output dirs come from the configs."
-            raise ValueError(msg)
-        # The together-check only applies to the non-retry path; in retry mode
-        # --course/--assignment act as independent config filters (original behavior).
-        if not self.retry and (self.course is None) != (self.assignment is None):
-            msg = "--course and --assignment must be given together."
-            raise ValueError(msg)
-        return self
+# Stage subcommands: type -> (label, pipeline function).
+_STAGES = {
+    PreprocessCliOptions: ("preprocessing", preprocess_assignment),
+    PlagiarismCliOptions: ("plagiarism detection", detect_plagiarism),
+    GradeCliOptions: ("grading", grade_assignment),
+    ScoreCliOptions: ("scoring", score_assignment),
+    AnalyzeCliOptions: ("meta analysis", analyze_assignment),
+}
 
 
 def _format_job_summary(summary: dict) -> str:
@@ -115,7 +58,9 @@ def _format_job_summary(summary: dict) -> str:
 # --- fetch subcommand ---
 
 
-def _load_config(config_arg: str | Path | None) -> tuple[Path | None, FetchSection | None]:
+def _load_config(
+    config_arg: str | Path | None,
+) -> tuple[Path | None, FetchSection | None]:
     if config_arg is not None:
         cfg_path = Path(config_arg).resolve()
         return cfg_path, load_assignment_file(cfg_path).fetch
@@ -125,9 +70,17 @@ def _load_config(config_arg: str | Path | None) -> tuple[Path | None, FetchSecti
     return None, None
 
 
-def _resolve_out(out_arg: str | None, cfg: FetchSection | None, cfg_path: Path | None) -> Path:
-    out_str = out_arg if out_arg is not None else (cfg.out_dir if cfg is not None else "raw")
-    return (cfg_path.parent / out_str).resolve() if cfg_path is not None else Path(out_str).resolve()
+def _resolve_out(
+    out_arg: str | None, cfg: FetchSection | None, cfg_path: Path | None
+) -> Path:
+    out_str = (
+        out_arg if out_arg is not None else (cfg.out_dir if cfg is not None else "raw")
+    )
+    return (
+        (cfg_path.parent / out_str).resolve()
+        if cfg_path is not None
+        else Path(out_str).resolve()
+    )
 
 
 def _remember(
@@ -194,7 +147,9 @@ def _pick_interactive(out_default: Path, mode: str) -> None:
     courses = list_courses(canvas)
     if not sys.stdin.isatty():
         _print_options("courses", courses)
-        sys.exit("provide --course/--assignment, or run in a terminal to pick interactively")
+        sys.exit(
+            "provide --course/--assignment, or run in a terminal to pick interactively"
+        )
     course_id = _ask_choice(courses, "course")
     assignments = list_assignments(canvas, course_id)
     assignment_id = _ask_choice(assignments, "assignment")
@@ -246,7 +201,9 @@ def _run_fetch(args: FetchCliOptions) -> None:
         return
 
     out = _resolve_out(args.out, cfg, cfg_path)
-    mode = args.mode if args.mode != "auto" else (cfg.mode if cfg is not None else "auto")
+    mode = (
+        args.mode if args.mode != "auto" else (cfg.mode if cfg is not None else "auto")
+    )
 
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
@@ -254,82 +211,34 @@ def _run_fetch(args: FetchCliOptions) -> None:
     _remember(out, cfg_path, course_id, assignment_id, mode)
 
 
-# --- view subcommand ---
+def main() -> None:
+    cmd = parse_cli_args(TataCli)
+    sub = get_subcommand(cmd, is_required=False)
+    if sub is None:
+        print(CliApp.format_help(TataCli), file=sys.stderr)
+        raise SystemExit(2)
 
-
-def _run_view(argv: list[str]) -> None:
-    args = parse_cli_args(ScoreReviewTuiCliOptions, argv=argv)
-    Viewer(args).run()
-
-
-def main() -> None:  # ruff: ignore[too-many-branches, too-many-statements]
-    argv = sys.argv[1:]
-    if argv and argv[0] in {"fetch", "view"}:
-        sub = argv.pop(0)
-        if sub == "fetch":
-            args = parse_cli_args(FetchCliOptions, argv=argv)
-            _run_fetch(args)
-        else:
-            _run_view(argv)
-        return
-
-    args = parse_cli_args(MainCliOptions)
-
-    if args.stage == "schema":
+    if isinstance(sub, SchemaCliOptions):
         print("Generating schemas...")
         schema_files = generate_all_schemas(Path(__file__).parent)
         for schema_file in schema_files:
             print(f"[schema] {schema_file}")
         return
 
-    assert args.config is not None  # validated by model_validator
-    summaries = []
+    if isinstance(sub, FetchCliOptions):
+        _run_fetch(sub)
+        return
 
-    if args.stage in {"plagiarism", "all"}:
-        print("Running plagiarism detection...")
-        summary = detect_plagiarism(args.config)
-        if summary is not None:
-            summaries.append(summary)
-            print(_format_job_summary(summary))
+    if isinstance(sub, ScoreReviewTuiCliOptions):
+        Viewer(sub).run()
+        return
 
-    if args.stage in {"preprocess", "all"}:
-        print("Running preprocessing...")
-        summary = preprocess_assignment(args.config)
-        if summary is not None:
-            summaries.append(summary)
-            print(_format_job_summary(summary))
-
-    if args.stage in {"grade", "all"}:
-        print("Running grading...")
-        summary = grade_assignment(args.config, force=args.force)
-        if summary is not None:
-            summaries.append(summary)
-            print(_format_job_summary(summary))
-
-    if args.stage in {"score", "all"}:
-        print("Running scoring...")
-        summary = score_assignment(args.config)
-        if summary is not None:
-            summaries.append(summary)
-            print(_format_job_summary(summary))
-
-    if args.stage in {"analyze", "all"}:
-        print("Running meta analysis...")
-        summary = analyze_assignment(args.config)
-        if summary is not None:
-            summaries.append(summary)
-            print(_format_job_summary(summary))
-
-    # Print aggregate summary if multiple stages ran
-    if args.stage == "all" and len(summaries) > 1:
-        total_success = sum(s.get("success", 0) for s in summaries)
-        total_errors = sum(s.get("errors", 0) for s in summaries)
-        total_items = sum(s.get("total", 0) for s in summaries)
-        aggregate_rate = (total_success / total_items * 100) if total_items > 0 else 0
-        print(
-            f"[summary] {total_success} total success, {total_errors} total error(s), "
-            f"{aggregate_rate:.1f}% overall success rate"
-        )
+    label, fn = _STAGES[type(sub)]
+    print(f"Running {label}...")
+    kwargs = {"force": sub.force} if isinstance(sub, GradeCliOptions) else {}
+    summary = fn(sub.config, **kwargs)
+    if summary is not None:
+        print(_format_job_summary(summary))
 
 
 if __name__ == "__main__":

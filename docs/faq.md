@@ -34,7 +34,7 @@ No. The pipeline now auto-creates assignment folders when running stages.
 Run:
 
 ```bash
-uv run main.py --stage schema
+uv run main.py schema
 ```
 
 This generates:
@@ -57,15 +57,19 @@ max_parallel_tasks = 10
 Use this order:
 
 1. plagiarism (optional but recommended)
-2. preprocess
-3. grade
-4. score
-5. analyze (optional)
+1. preprocess
+1. grade
+1. score
+1. analyze (optional)
 
 Or run all at once:
 
 ```bash
-uv run main.py --stage all --config assignments/my-assignment/config.toml
+uv run main.py preprocess -c assignments/my-assignment/config.toml
+uv run main.py plagiarism -c assignments/my-assignment/config.toml
+uv run main.py grade -c assignments/my-assignment/config.toml
+uv run main.py score -c assignments/my-assignment/config.toml
+uv run main.py analyze -c assignments/my-assignment/config.toml
 ```
 
 ## 7. Where are outputs written?
@@ -154,23 +158,23 @@ Common non-cheating causes include:
 Recommended workflow:
 
 1. Treat plagiarism results as triage candidates.
-2. Compare highlighted regions for substantive logic overlap, not just scaffolding.
-3. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
-4. Escalate only when evidence is consistent with policy.
+1. Compare highlighted regions for substantive logic overlap, not just scaffolding.
+1. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
+1. Escalate only when evidence is consistent with policy.
 
 ## 13. Is there a helper to audit TODO instruction/code mismatches in reference notebooks?
 
 Yes. Use:
 
 ```bash
-uv run python misc/reference_mismatch_audit.py \
+uv run misc/reference_mismatch_audit.py \
 	--notebook assignments/my-assignment/reference.ipynb
 ```
 
 You can also output JSON:
 
 ```bash
-uv run python misc/reference_mismatch_audit.py \
+uv run misc/reference_mismatch_audit.py \
 	--notebook assignments/my-assignment/reference.ipynb \
 	--format json \
 	--output misc/audit_report.json
@@ -181,7 +185,7 @@ uv run python misc/reference_mismatch_audit.py \
 Yes. Use the aggregate helper script:
 
 ```bash
-uv run python misc/plagiarism_report_aggregate.py \
+uv run misc/plagiarism_report_aggregate.py \
 	--pairwise-alpha 0.01 \
 	--individual-alpha 0.01 \
 	--output misc/plagiarism_summary.md

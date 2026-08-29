@@ -23,45 +23,49 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv sync
    ```
 
-2. Generate schemas:
+1. Generate schemas:
 
    ```bash
-   uv run main.py --stage schema
+   uv run main.py schema
    ```
 
-3. Create assignment config from [assignments/example/config.toml](assignments/example/config.toml)
+1. Create assignment config from [assignments/example/config.toml](assignments/example/config.toml)
 
-4. Run all stages:
+1. Run all stages:
 
    ```bash
-   uv run main.py --stage all --config assignments/my-assignment/config.toml
+   uv run main.py preprocess -c assignments/my-assignment/config.toml
+   uv run main.py plagiarism -c assignments/my-assignment/config.toml
+   uv run main.py grade -c assignments/my-assignment/config.toml
+   uv run main.py score -c assignments/my-assignment/config.toml
+   uv run main.py analyze -c assignments/my-assignment/config.toml
    ```
 
-   `all` runs in this order: plagiarism -> preprocess -> grade -> score -> analyze.
+   Each stage runs in the order: plagiarism -> preprocess -> grade -> score -> analyze.
 
-5. Run plagiarism detection only (optional):
+1. Run plagiarism detection only (optional):
 
    ```bash
-   uv run main.py --stage plagiarism --config assignments/my-assignment/config.toml
+   uv run main.py plagiarism -c assignments/my-assignment/config.toml
    ```
 
-6. Run post-scoring meta analysis (optional):
+1. Run post-scoring meta analysis (optional):
 
    ```bash
-   uv run main.py --stage analyze --config assignments/my-assignment/config.toml
+   uv run main.py analyze -c assignments/my-assignment/config.toml
    ```
 
-7. Audit reference notebook TODO/instruction mismatches (optional):
+1. Audit reference notebook TODO/instruction mismatches (optional):
 
    ```bash
-   uv run python misc/reference_mismatch_audit.py \
+   uv run misc/reference_mismatch_audit.py \
       --notebook assignments/my-assignment/reference.ipynb
    ```
 
-8. Aggregate plagiarism results across assignments (optional):
+1. Aggregate plagiarism results across assignments (optional):
 
    ```bash
-   uv run python misc/plagiarism_report_aggregate.py \
+   uv run misc/plagiarism_report_aggregate.py \
       --pairwise-alpha 0.01 \
       --individual-alpha 0.01 \
       --output misc/plagiarism_summary.md

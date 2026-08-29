@@ -3,10 +3,23 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import AliasChoices, Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_settings import (
+    BaseSettings,
+    CliPositionalArg,
+    CliSubCommand,
+    SettingsConfigDict,
+    SettingsError,
+)
 
 
 def validate_existing_file(path: Path, *, option_name: str = "--config") -> Path:
@@ -34,6 +47,8 @@ class CliOptions(BaseSettings):
 
 
 class ConfigFileCliOptions(CliOptions):
+    """Legacy single-command options for module entry points (src/*.py)."""
+
     config: Path = Field(
         validation_alias=AliasChoices("config", "c"),
         description="Path to assignment config TOML.",
@@ -43,6 +58,123 @@ class ConfigFileCliOptions(CliOptions):
     @classmethod
     def _validate_config(cls, value: Path) -> Path:
         return validate_existing_file(value)
+
+
+class ConfigFileOptions(BaseModel):
+    """Subcommand options with a required --config/-c path (CLI-only, no env)."""
+
+    config: Path = Field(
+        validation_alias=AliasChoices("config", "c"),
+        description="Path to assignment config TOML.",
+    )
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config(cls, value: Path) -> Path:
+        return validate_existing_file(value)
+
+
+class PreprocessCliOptions(ConfigFileOptions):
+    """Preprocess raw submissions into markdown."""
+
+
+class PlagiarismCliOptions(ConfigFileOptions):
+    """Detect plagiarism across submissions."""
+
+
+class GradeCliOptions(ConfigFileOptions):
+    """Grade submissions with the configured LLM provider."""
+
+    force: bool = Field(
+        default=False,
+        description="Ignore checkpoint and regrade all submissions.",
+    )
+
+
+class ScoreCliOptions(ConfigFileOptions):
+    """Compute scores from grading results."""
+
+
+class AnalyzeCliOptions(ConfigFileOptions):
+    """Run meta analysis on scores."""
+
+
+class SchemaCliOptions(BaseModel):
+    """Generate JSON schemas from the config models."""
+
+
+class FetchCliOptions(BaseModel):
+    """Fetch submissions from Canvas; --retry re-fetches recorded configs."""
+
+    course: CliPositionalArg[int | None] = None
+    assignment: CliPositionalArg[int | None] = None
+    out: str | None = Field(default=None, description="Output directory.")
+    mode: Literal["attach", "text", "auto"] = Field(
+        default="auto",
+        description="Submission type (default: auto-detect from Canvas).",
+    )
+    config: Path | None = Field(
+        default=None,
+        description="Assignment config.toml holding [fetch] memory; "
+        "defaults to ./config.toml when run from an assignment dir.",
+    )
+    retry: bool = Field(
+        default=False,
+        description="Re-fetch all assignments recorded in configs "
+        "(filter with [+/-] course/assignment).",
+    )
+
+    @field_validator("config")
+    @classmethod
+    def _validate_config(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return value
+        return validate_existing_file(value)
+
+    @model_validator(mode="after")
+    def _validate_fetch_args(self) -> FetchCliOptions:
+        if self.retry and self.out is not None:
+            msg = "--out is ignored with --retry; output dirs come from the configs."
+            raise ValueError(msg)
+        # The together-check only applies to the non-retry path; in retry mode
+        # a single positional acts as a course filter (original behavior).
+        if not self.retry and (self.course is None) != (self.assignment is None):
+            msg = "--course and --assignment must be given together."
+            raise ValueError(msg)
+        return self
+
+
+class ScoreReviewTuiCliOptions(BaseModel):
+    """Score review TUI options."""
+
+    score_dir: CliPositionalArg[Path] = Field(
+        description="Directory containing per-student JSON grading outputs.",
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> ScoreReviewTuiCliOptions:
+        d = self.score_dir.resolve()
+        if not d.is_dir():
+            msg = f"score dir not found or not a directory: {d}"
+            raise ValueError(msg)
+        self.score_dir = d
+        return self
+
+
+class TataCli(CliOptions):
+    """TATA CLI root: one subcommand per pipeline operation."""
+
+    model_config = SettingsConfigDict(cli_exit_on_error=False)
+
+    preprocess: CliSubCommand[PreprocessCliOptions]
+    plagiarism: CliSubCommand[PlagiarismCliOptions]
+    grade: CliSubCommand[GradeCliOptions]
+    score: CliSubCommand[ScoreCliOptions]
+    analyze: CliSubCommand[AnalyzeCliOptions]
+    # "schema_gen" avoids shadowing BaseModel.schema; alias keeps the CLI name.
+    schema_gen: CliSubCommand[SchemaCliOptions] = Field(alias="schema")
+    fetch: CliSubCommand[FetchCliOptions]
+    view: CliSubCommand[ScoreReviewTuiCliOptions]
 
 
 def parse_cli_args[TModel: CliOptions](
@@ -71,5 +203,6 @@ def parse_cli_args[TModel: CliOptions](
         print(f"error: {msg}", file=sys.stderr)
         raise SystemExit(2) from exc
     except SettingsError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        msg = str(exc).removeprefix("error parsing CLI: ")
+        print(f"error: {msg}", file=sys.stderr)
         raise SystemExit(2) from exc

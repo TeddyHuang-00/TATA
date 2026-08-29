@@ -54,7 +54,7 @@ Create one folder per assignment under assignments/.
 For notebook-based labs, run TODO/instruction mismatch audit on your reference notebook before grading:
 
 ```bash
-uv run python misc/reference_mismatch_audit.py \
+uv run misc/reference_mismatch_audit.py \
 	--notebook assignments/{name}/reference.ipynb
 ```
 
@@ -65,7 +65,7 @@ Treat this as a preflight check to reduce rubric ambiguity and downstream gradin
 After individual assignment plagiarism runs, build a single aggregate view:
 
 ```bash
-uv run python misc/plagiarism_report_aggregate.py \
+uv run misc/plagiarism_report_aggregate.py \
 	--pairwise-alpha 0.01 \
 	--individual-alpha 0.01 \
 	--output misc/plagiarism_summary.md

@@ -182,8 +182,8 @@ def _read_reference_text(reference_file: Path) -> str:
     raise ValueError(msg)
 
 
-def _grade_one_submission(  # noqa: PLR0913, PLR0917
-    client: Any,  # noqa: ANN401
+def _grade_one_submission(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
+    client: Any,  # ruff: ignore[any-type]
     model_name: str,
     response_model: type[BaseModel],
     system_prompt: str,
@@ -194,7 +194,9 @@ def _grade_one_submission(  # noqa: PLR0913, PLR0917
     return client.chat.completions.create(
         model=model_name,
         response_model=response_model,
-        messages=_build_grading_messages(system_prompt, reference_text, student_text, images),
+        messages=_build_grading_messages(
+            system_prompt, reference_text, student_text, images
+        ),
     )
 
 
@@ -220,10 +222,10 @@ def _build_grading_messages(
     return messages
 
 
-def _run_single_grading_task(  # noqa: PLR0913
+def _run_single_grading_task(  # ruff: ignore[too-many-arguments]
     submission: Path,
     *,
-    client: Any,  # noqa: ANN401
+    client: Any,  # ruff: ignore[any-type]
     model_name: str,
     response_model: type[BaseModel],
     system_prompt: str,
@@ -297,7 +299,7 @@ def _run_single_grading_task(  # noqa: PLR0913
         return submission.name, "", error_message
 
 
-def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:  # noqa: PLR0912, PLR0915, PLR0914
+def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
     cfg = _load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
@@ -401,10 +403,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     error_count = 0
 
     screenshots_dir = cfg.processed_dir / "screenshots"
-    use_images = (
-        cfg_model.processing.render_screenshots
-        and screenshots_dir.exists()
-    )
+    use_images = cfg_model.processing.render_screenshots and screenshots_dir.exists()
 
     def _images_for(submission: Path) -> list[str]:
         if not use_images:

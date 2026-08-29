@@ -15,13 +15,13 @@ Individual Method:
 4) Convert p-values to Z-scores and follow the same Stouffer aggregation and flagging as the pairwise method.
 
 Usage examples:
-  uv run python misc/plagiarism_report_aggregate.py
+  uv run misc/plagiarism_report_aggregate.py
 
-  uv run python misc/plagiarism_report_aggregate.py \
+  uv run misc/plagiarism_report_aggregate.py \
         --alpha 0.01 \
     --output misc/plagiarism_summary.md
 
-  uv run python misc/plagiarism_report_aggregate.py \
+  uv run misc/plagiarism_report_aggregate.py \
     --format json \
     --output misc/plagiarism_summary.json
 """
