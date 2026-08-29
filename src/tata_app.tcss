@@ -1,0 +1,116 @@
+/* ===== TATA Workbench — platform shell (T4a) =====
+   Theme: textual default dark (same as score_review.tcss — it defines no
+   variables either); patterns lifted from design 99 §4. */
+
+Screen {
+    background: $surface;
+}
+
+/* ---- top bar + breadcrumb ---- */
+#topbar {
+    height: auto;
+    padding: 0 1;
+    border-bottom: solid $primary;
+}
+
+#breadcrumb {
+    height: auto;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#breadcrumb .bc-cur {
+    text-style: bold;
+    color: $text;
+}
+
+/* ---- dashboard table ---- */
+#dashboard-table {
+    height: 1fr;
+    margin: 1 0 0 0;
+    border: round $primary;
+    border-title-color: $primary;
+}
+
+#dashboard-table > .datatable--header {
+    text-style: bold;
+    color: $primary;
+}
+
+/* ---- empty / placeholder / status ---- */
+#dash-empty,
+#workspace {
+    width: 1fr;
+    height: 1fr;
+    content-align: center middle;
+    padding: 1 2;
+    color: $text-muted;
+}
+
+#dash-status {
+    height: auto;
+    padding: 0 1;
+    border-top: solid $primary;
+    color: $text-muted;
+}
+
+/* ---- tab shell ---- */
+TabbedContent {
+    height: 1fr;
+}
+
+/* ---- badge vocabulary (design 99 §2; used by S4 later) ---- */
+.pill {
+    padding: 0 1;
+    text-style: bold;
+}
+
+.pill-empty {
+    color: $text-muted;
+}
+
+.pill-partial {
+    color: $warning;
+}
+
+.pill-done {
+    color: $success;
+}
+
+.pill-flag {
+    color: $error;
+}
+
+.pill-error {
+    color: $error;
+    text-style: bold;
+}
+
+.pill-unknown {
+    color: $text-muted;
+}
+
+/* ---- panels (unified look, design 99 §4) ---- */
+.panel {
+    border: round $primary;
+    border-title-color: $primary;
+    background: $surface;
+    padding: 0 1;
+}
+
+/* ---- modal shell (used by later stages) ---- */
+ModalScreen {
+    background: $background 60%;
+}
+
+.confirm-modal {
+    width: 92;
+    max-height: 36;
+    border: heavy $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+.confirm-modal Static {
+    width: 1fr;
+}
