@@ -37,9 +37,8 @@ Screen {
     color: $primary;
 }
 
-/* ---- empty / placeholder / status ---- */
-#dash-empty,
-#workspace {
+/* ---- empty / status ---- */
+#dash-empty {
     width: 1fr;
     height: 1fr;
     content-align: center middle;
@@ -51,6 +50,91 @@ Screen {
     height: auto;
     padding: 0 1;
     border-top: solid $primary;
+    color: $text-muted;
+}
+
+/* ---- assignment workspace (T4b) ---- */
+#workspace {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+}
+
+#ws-topbar {
+    height: auto;
+    padding: 0 1 1 1;
+    border-bottom: solid $primary;
+}
+
+#ws-incr {
+    height: auto;
+    padding: 0 1 1 1;
+    color: $text-muted;
+}
+
+#ws-main {
+    height: auto;
+}
+
+#stage-grid {
+    grid-size: 2 3;
+    grid-gutter: 1 2;
+    width: 1fr;
+    height: auto;
+    margin: 1 1 0 0;
+}
+
+.stage-btn {
+    width: 1fr;
+    height: 3;
+    border: round $panel;
+}
+
+#config-panel {
+    width: 38;
+    height: auto;
+    margin: 1 0 0 0;
+    border: round $primary;
+    border-title-color: $primary;
+    padding: 0 1;
+}
+
+#config-body {
+    height: auto;
+    padding: 1 0;
+}
+
+#ws-progress {
+    height: auto;
+    padding: 0 1;
+    align-vertical: middle;
+}
+
+#ws-progress-text {
+    width: auto;
+}
+
+#ws-progress > ProgressBar {
+    width: 1fr;
+    height: auto;
+}
+
+#ws-cancel {
+    width: auto;
+    margin: 0 0 0 1;
+}
+
+#richlog {
+    height: 1fr;
+    margin: 0 0 1 0;
+    border: round $primary;
+    border-title-color: $text-muted;
+}
+
+#ws-empty {
+    height: 1fr;
+    content-align: center middle;
+    padding: 1 2;
     color: $text-muted;
 }
 

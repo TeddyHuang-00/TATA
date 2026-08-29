@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.tata_app import TataApp
 from src.tata_scan import scan_assignments, scan_courses
+from src.tata_workspace import AssignmentScreen
 from textual.pilot import Pilot
 from textual.widgets import DataTable, Static
 
@@ -60,7 +61,9 @@ def _text(widget: Static) -> str:
     return str(widget.content)
 
 
-async def _wait_for(pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0) -> None:
+async def _wait_for(
+    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         await pilot.pause()
@@ -127,7 +130,7 @@ async def _check_navigation(root: Path) -> None:
         assert "Global" in _text(breadcrumb)
         assert table.row_count == 2
 
-        # drill all the way to the assignment placeholder
+        # drill all the way to the assignment workspace
         await pilot.press("enter")
         await pilot.pause()
         await pilot.press("enter")
@@ -135,9 +138,13 @@ async def _check_navigation(root: Path) -> None:
         assert app.state.dashboard_level == "assignment"
         assert app.state.current_assignment is not None
         assert app.state.current_assignment.dir_name == "a1"
-        workspace = app.query_one("#workspace", Static)
-        assert workspace.display, "placeholder not shown"
-        assert "T4b" in _text(workspace)
+        workspace = app.query_one(AssignmentScreen)
+        assert workspace.display, "workspace not shown"
+        # fixture configs have no [grading] -> workspace empty state, buttons off
+        empty = workspace.query_one("#ws-empty", Static)
+        assert empty.display, "no-config empty state not shown"
+        assert "No valid config.toml" in _text(empty), _text(empty)
+        assert len(workspace.query(".stage-btn")) == 6
         assert "a1" in _text(breadcrumb)
 
         # back up twice to Global
@@ -170,24 +177,20 @@ async def main() -> None:
         _make_course(assignments_dir, COURSE_A, 271218, {"a1": 1001, "a2": 1002})
         _make_course(assignments_dir, COURSE_B, 999001, {"b1": 2001})
         # one flagged pair for a1's flagged_pairs
-        pairs_path = (
-            assignments_dir / COURSE_A / "a1" / "plagiarism" / "all_pairs.json"
-        )
+        pairs_path = assignments_dir / COURSE_A / "a1" / "plagiarism" / "all_pairs.json"
         pairs_path.parent.mkdir(parents=True)
         pairs_path.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "pair_count": 1,
-                    "pairs": [
-                        {
-                            "test_file": "x.py",
-                            "reference_file": "y.py",
-                            "max_similarity_pct": 95.0,
-                        }
-                    ],
-                }
-            ),
+            json.dumps({
+                "version": 1,
+                "pair_count": 1,
+                "pairs": [
+                    {
+                        "test_file": "x.py",
+                        "reference_file": "y.py",
+                        "max_similarity_pct": 95.0,
+                    }
+                ],
+            }),
             encoding="utf-8",
         )
 

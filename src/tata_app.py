@@ -10,7 +10,6 @@ Run: ``uv run python src/tata_app.py``
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar, override
 
@@ -20,6 +19,11 @@ from textual.containers import Vertical
 from textual.widgets import DataTable, Footer, Header, Static, TabbedContent, TabPane
 
 from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
+from src.tata_workspace import (
+    AssignmentScreen,
+    _fmt_last_run,
+    _fmt_state,
+)
 
 
 def _env_status(root_dir: Path) -> dict:
@@ -38,7 +42,11 @@ def _env_status(root_dir: Path) -> dict:
                 key, value = line.split("=", 1)
                 vals[key.strip()] = value.strip()
         if "CANVAS_BASE_URL" in vals and "CANVAS_ACCESS_TOKEN" in vals:
-            return {"has_env": True, "base_url": vals["CANVAS_BASE_URL"], "token_set": True}
+            return {
+                "has_env": True,
+                "base_url": vals["CANVAS_BASE_URL"],
+                "token_set": True,
+            }
     return {"has_env": False, "base_url": None, "token_set": False}
 
 
@@ -54,7 +62,6 @@ class AppState:
     assignments: list[AssignmentInfo] = field(default_factory=list)
     current_assignment: AssignmentInfo | None = None
     dashboard_level: str = "global"  # global | course | assignment
-    jobs: dict = field(default_factory=dict)
     env_state: dict = field(default_factory=dict)
 
     @property
@@ -70,44 +77,6 @@ class AppState:
 
 def _fmt_score(value: float | None) -> str:
     return f"{value:.1f}" if value is not None else "-"
-
-
-def _fmt_last_run(ts: float | None) -> str:
-    if ts is None:
-        return "Never"
-    dt = datetime.fromtimestamp(ts, tz=UTC).astimezone()
-    now = datetime.now(tz=UTC).astimezone()
-    if dt.date() == now.date():
-        return f"Today {dt:%H:%M}"
-    return f"{dt:%Y-%m-%d %H:%M}"
-
-
-# State vocabulary (design 99 §2). "Flagged" is a display-level marker: it
-# fires on flagged_pairs (max_similarity_pct >= DISPLAY_THRESHOLD_PCT), NOT on
-# aggregate z-score flags (S4) — the TUI does not consume the aggregate report.
-_STATE_LABELS = {
-    "not_run": "Not run",
-    "partial": "Partial",
-    "done": "Done",
-    "flagged": "Flagged",
-    "error": "Error",
-    "unknown": "? Unknown",
-}
-
-
-def _fmt_state(a: AssignmentInfo) -> str:
-    """Counts-based pipeline state; all outputs come from ``_STATE_LABELS``."""
-    if a.flagged_pairs:
-        return f"{_STATE_LABELS['flagged']} ({a.flagged_pairs})"
-    if a.counts.raw == 0:
-        return _STATE_LABELS["not_run"]
-    if (
-        a.counts.processed < a.counts.raw
-        or a.counts.graded < a.counts.processed
-        or a.counts.scored == 0
-    ):
-        return _STATE_LABELS["partial"]
-    return _STATE_LABELS["done"]
 
 
 class _FocusableStatic(Static):
@@ -140,7 +109,7 @@ class DashboardScreen(Vertical):
         yield Static(id="breadcrumb", markup=True)
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
-        yield _FocusableStatic(id="workspace", markup=True)
+        yield AssignmentScreen(self.state)
         yield Static(id="dash-status", markup=True)
 
     def on_mount(self) -> None:
@@ -155,13 +124,15 @@ class DashboardScreen(Vertical):
         breadcrumb = self.query_one("#breadcrumb", Static)
         topbar = self.query_one("#topbar", Static)
         empty = self.query_one("#dash-empty", Static)
-        workspace = self.query_one("#workspace", Static)
+        workspace = self.query_one(AssignmentScreen)
         status = self.query_one("#dash-status", Static)
 
         table.clear(columns=True)
         self._rows = []
         canvas = (
-            "Canvas: OK" if state.env_state.get("has_env") else "Canvas: ? (.env missing)"
+            "Canvas: OK"
+            if state.env_state.get("has_env")
+            else "Canvas: ? (.env missing)"
         )
 
         if state.dashboard_level == "global":
@@ -198,15 +169,14 @@ class DashboardScreen(Vertical):
                 empty,
                 "No courses yet. Press `c` to import (configure .env first).",
                 table,
+                workspace,
             )
         elif state.dashboard_level == "course":
             topbar.update(
                 f"[b]TATA[/b] · Dashboard [Course: {state.current_course.dir_name}] "
                 f"   {canvas}   enter=Assignment  esc=Global  r=Rescan  q=Quit"
             )
-            breadcrumb.update(
-                f"Global / [b]{state.current_course.dir_name}[/b]"
-            )
+            breadcrumb.update(f"Global / [b]{state.current_course.dir_name}[/b]")
             table.add_columns(
                 "Assignment",
                 "ID",
@@ -230,11 +200,13 @@ class DashboardScreen(Vertical):
                     key=str(i),
                 )
                 self._rows.append(a)
-            self._show_empty(empty, "No assignments in this course yet.", table)
-        else:  # assignment — T4b placeholder
+            self._show_empty(
+                empty, "No assignments in this course yet.", table, workspace
+            )
+        else:  # assignment — T4b workspace
             topbar.update(
                 f"[b]TATA[/b] · Dashboard [Assignment: {state.current_assignment.dir_name}]"
-                f"   {canvas}   esc=Course view  q=Quit"
+                f"   {canvas}   esc=Back to course  q=Quit"
             )
             breadcrumb.update(
                 f"Global / {state.current_course.dir_name} / "
@@ -243,7 +215,7 @@ class DashboardScreen(Vertical):
             table.display = False
             empty.display = False
             workspace.display = True
-            workspace.update("Assignment workspace (T4b)")
+            workspace.open_assignment()
 
         status.update(
             "enter=Drill down   esc/backspace=Up one level   r=Rescan   q=Quit"
@@ -277,12 +249,13 @@ class DashboardScreen(Vertical):
         if table.display:
             table.focus()
         elif self.state.dashboard_level == "assignment":
-            self.query_one("#workspace").focus()
+            self.query_one(AssignmentScreen).focus_stage()
         else:
             self.query_one("#dash-empty").focus()
 
-    def _show_empty(self, empty: Static, text: str, table: DataTable) -> None:
-        workspace = self.query_one("#workspace", Static)
+    def _show_empty(
+        self, empty: Static, text: str, table: DataTable, workspace: AssignmentScreen
+    ) -> None:
         workspace.display = False
         has_rows = bool(self._rows)
         table.display = has_rows
