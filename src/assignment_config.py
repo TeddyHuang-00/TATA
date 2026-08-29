@@ -260,22 +260,76 @@ def ensure_assignment_dirs(paths: AssignmentPaths) -> None:
 
 
 def find_root_config(assignment_config_path: Path) -> Path | None:
-    """Course-level root config: ``config.toml`` in the parent of the
-    assignment directory (e.g. ``assignments/config.toml``)."""
+    """Course-level config: ``config.toml`` in the parent of the assignment
+    directory (course layout: ``assignments/<course>/config.toml``; legacy
+    two-level layout: ``assignments/config.toml``)."""
     root = assignment_config_path.resolve().parent.parent / "config.toml"
     return root if root.is_file() else None
 
 
-def is_root_config(config_path: Path) -> bool:
-    """True when config_path is a course-level root config: a config.toml in a
-    directory whose children are assignment directories."""
-    resolved = config_path.resolve()
-    if resolved.name != "config.toml":
-        return False
-    return any(
-        entry.is_dir() and (entry / "config.toml").is_file()
-        for entry in resolved.parent.iterdir()
+def find_global_config(course_config_path: Path) -> Path | None:
+    """Global config above a course config (``assignments/config.toml``)."""
+    global_cfg = course_config_path.resolve().parent.parent / "config.toml"
+    if not global_cfg.is_file() or not is_root_config(global_cfg):
+        return None
+    # A true global sits in the layout root (assignments/); a config.toml one
+    # level higher (e.g. the repo root) is the "climb one level too far"
+    # poison — its dir always has child config.toml files, so is_root_config
+    # alone can never reject it (MINOR-4).
+    if global_cfg.parent.name != "assignments":
+        return None
+    return global_cfg
+
+
+def _container_children(config_path: Path) -> list[Path]:
+    """Directories under config_path.parent that hold their own config.toml."""
+    parent = config_path.resolve().parent
+    if not parent.is_dir():
+        return []
+    return sorted(
+        entry
+        for entry in parent.iterdir()
+        if entry.is_dir() and (entry / "config.toml").is_file()
     )
+
+
+def is_root_config(config_path: Path) -> bool:
+    """True for any *container* config: a ``config.toml`` whose directory
+    holds subdirectories that carry their own ``config.toml`` (global, course,
+    or a nested dir). Superset of :func:`is_course_config` and
+    :func:`is_global_config` — those are discriminators whose leaf heuristics
+    can both return False when a nested per-assignment config exists (e.g.
+    ``a/solutions/config.toml``), while "is this a container?" only needs
+    children to exist."""
+    resolved = config_path.resolve()
+    if resolved.name != "config.toml" or not resolved.is_file():
+        return False
+    return bool(_container_children(resolved))
+
+
+def is_course_config(config_path: Path) -> bool:
+    """True when config_path is a course config: its children are leaf
+    assignments (no config level below them). In the legacy two-level layout
+    ``assignments/config.toml`` also matches."""
+    resolved = config_path.resolve()
+    if resolved.name != "config.toml" or not resolved.is_file():
+        return False
+    children = _container_children(resolved)
+    if not children:
+        return False
+    return not any(_container_children(child / "config.toml") for child in children)
+
+
+def is_global_config(config_path: Path) -> bool:
+    """True when config_path is a global config: its children are course
+    configs (each with leaf assignments below them)."""
+    resolved = config_path.resolve()
+    if resolved.name != "config.toml" or not resolved.is_file():
+        return False
+    children = _container_children(resolved)
+    if not children or is_course_config(resolved):
+        return False
+    return any(is_course_config(child / "config.toml") for child in children)
 
 
 def _merge_configs(root: dict, assignment: dict) -> dict:
@@ -306,22 +360,30 @@ def _load_toml(config_path: Path) -> dict:
 
 
 def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
-    """Load an assignment config layered over the course-level root config.
+    """Load an assignment config layered over the course config and, when
+    present, the global config above it (``assignments/config.toml``).
 
-    The root config (``assignments/config.toml``) supplies [fetch] and
-    [plagiarism] course-wide defaults; per-key values in the assignment config
-    win. Paths always resolve against the assignment directory.
+    Merge order is global < course < assignment: per-key values in the
+    assignment config win. Paths always resolve against the assignment
+    directory. In the legacy two-level layout the global layer is absent and
+    behavior is unchanged.
     """
     if not config_path.exists():
         msg = f"Assignment config not found: {config_path}"
         raise FileNotFoundError(msg)
 
     cfg = _load_toml(config_path)
-    root = find_root_config(config_path)
-    if root is not None:
-        cfg = _merge_configs(_load_toml(root), cfg)
-    # The root's [[fetch.assignments]] list is course-level orchestration,
-    # not per-assignment state; keep it out of merged assignment configs.
+    course = find_root_config(config_path)
+    global_cfg = find_global_config(course) if course is not None else None
+    # Merge low to high so later layers win per key.
+    merged: dict = {}
+    if global_cfg is not None:
+        merged = _load_toml(global_cfg)
+    if course is not None:
+        merged = _merge_configs(merged, _load_toml(course))
+    cfg = _merge_configs(merged, cfg)
+    # The [[fetch.assignments]] list is course-level orchestration, not
+    # per-assignment state; keep it out of merged assignment configs.
     fetch = cfg.get("fetch")
     if isinstance(fetch, dict):
         fetch.pop("assignments", None)

@@ -10,7 +10,7 @@ from pydantic_settings import CliApp, get_subcommand
 from src.analysis import analyze_assignment
 from src.assignment_config import (
     FetchSection,
-    is_root_config,
+    find_root_config,
     load_assignment_file,
 )
 from src.canvas_fetch import (
@@ -64,26 +64,48 @@ def _format_job_summary(summary: dict) -> str:
 
 
 def _root_fetch(cfg_path: Path) -> FetchSection | None:
-    """Fetch state from a root config (course-level keys only)."""
+    """Fetch state from a course/global config (course-level keys only)."""
     toml = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
     root_fetch = toml.get("fetch")
     return FetchSection.model_validate(root_fetch) if root_fetch else None
+
+
+def _is_container(cfg_path: Path | None) -> bool:
+    """Container = a config that cannot load as an assignment: it has no
+    [grading] (course/global config). Presence of [fetch] is irrelevant —
+    a fresh course config before first fetch is still a container."""
+    if cfg_path is None or not cfg_path.is_file():
+        return False
+    try:
+        load_assignment_file(cfg_path)
+        return False
+    except ValueError as err:
+        # Bad TOML: surface load_assignment_file's guidance, not a bare
+        # TOMLDecodeError from _root_fetch.
+        try:
+            _root_fetch(cfg_path)
+        except ValueError:
+            raise err from None
+        return True
+
+
+def _classify_config(cfg_path: Path) -> tuple[Path, FetchSection | None]:
+    """Classify one config.toml: a container (self-evidence: cannot load as
+    an assignment — no [grading]) yields its course-level [fetch] state; any
+    other config is an assignment config."""
+    if _is_container(cfg_path):
+        return cfg_path, _root_fetch(cfg_path)
+    return cfg_path, load_assignment_file(cfg_path).fetch
 
 
 def _load_config(
     config_arg: str | Path | None,
 ) -> tuple[Path | None, FetchSection | None]:
     if config_arg is not None:
-        cfg_path = Path(config_arg).resolve()
-        if is_root_config(cfg_path):
-            # Root config has no [grading]; only its [fetch] state applies.
-            return cfg_path, _root_fetch(cfg_path)
-        return cfg_path, load_assignment_file(cfg_path).fetch
+        return _classify_config(Path(config_arg).resolve())
     cwd_config = Path.cwd() / "config.toml"
     if cwd_config.exists():
-        if is_root_config(cwd_config):
-            return cwd_config, _root_fetch(cwd_config)
-        return cwd_config, load_assignment_file(cwd_config).fetch
+        return _classify_config(cwd_config)
     return None, None
 
 
@@ -107,27 +129,39 @@ def _remember(
     assignment_id: int,
     mode: str,
 ) -> None:
-    """Persist fetch state: course-level keys in assignments/config.toml,
-    assignment-level keys in the assignment config.toml."""
-    assignment_cfg = cfg_path if cfg_path is not None else out.parent / "config.toml"
-    root_cfg = assignment_cfg.parent.parent / "config.toml"
-    is_assignments_tree = assignment_cfg.parent.parent.name == "assignments"
-
-    if root_cfg.exists() or is_assignments_tree:
-        if not root_cfg.exists():
-            root_cfg.write_text(
-                "# TATA course-level config (gitignored): merged into every\n"
-                "# assignment config under this directory.\n",
-                encoding="utf-8",
+    """Persist fetch state: course-level keys in the course config.toml,
+    assignment-level keys in the assignment config.toml. A container config
+    (course/global) writes course-level keys to itself and assignment-level
+    keys to the assignment config next to the output dir. Without a course
+    config everything goes into the assignment config."""
+    if cfg_path is not None:
+        cfg_path = cfg_path.resolve()
+        # Container config (course/global): its own [fetch] is the course-level
+        # memory — never climb up. find_root_config from a course config would
+        # land on the global (or another course's) config and misdirect keys,
+        # and the old whole-block remember_fetch would wipe the course's own
+        # course_id/mode/[[fetch.assignments]].
+        if _is_container(cfg_path):
+            remember_fetch(cfg_path, course_id=course_id, mode=mode)
+            assignment_cfg = out.parent / "config.toml"
+            remember_fetch(
+                assignment_cfg,
+                assignment_id=assignment_id,
+                out_dir=os.path.relpath(out, assignment_cfg.parent),
             )
-            print(f"[fetch] created {root_cfg}")
-        remember_fetch(root_cfg, course_id=course_id, mode=mode)
+            print(f"[fetch] remembered in {cfg_path} and {assignment_cfg}")
+            return
+    assignment_cfg = cfg_path if cfg_path is not None else out.parent / "config.toml"
+    course_cfg = find_root_config(assignment_cfg)
+
+    if course_cfg is not None:
+        remember_fetch(course_cfg, course_id=course_id, mode=mode)
         remember_fetch(
             assignment_cfg,
             assignment_id=assignment_id,
             out_dir=os.path.relpath(out, assignment_cfg.parent),
         )
-        print(f"[fetch] remembered in {root_cfg} and {assignment_cfg}")
+        print(f"[fetch] remembered in {course_cfg} and {assignment_cfg}")
     else:
         remember_fetch(
             assignment_cfg,
@@ -139,18 +173,31 @@ def _remember(
         print(f"[fetch] remembered in {assignment_cfg}")
 
 
-def _fetch_entries(
+def _fetch_entries(  # ruff: ignore[too-many-arguments]
     canvas: Canvas,
     course_id: int,
     cfg_path: Path,
     cfg: FetchSection,
     *,
     assignment_filter: int | None = None,
+    seen: set[tuple[int, int]] | None = None,
 ) -> None:
-    """Fetch every [[fetch.assignments]] entry of a root config."""
+    """Fetch every [[fetch.assignments]] entry of a root config. With a
+    shared ``seen`` set (retry loop) an entry already fetched for its
+    (course_id, assignment_id) is skipped — global and course configs may
+    both carry the same assignment in a mixed tree."""
     for entry in cfg.assignments:
         if assignment_filter is not None and entry.assignment_id != assignment_filter:
             continue
+        if seen is not None:
+            key = (course_id, entry.assignment_id)
+            if key in seen:
+                print(
+                    f"[fetch] skip {entry.assignment_id} "
+                    f"(already fetched by course {course_id})"
+                )
+                continue
+            seen.add(key)
         out = (cfg_path.parent / entry.out).resolve()
         fetch_assignment(
             canvas,
@@ -161,34 +208,74 @@ def _fetch_entries(
         )
 
 
+def _fetch_course(
+    canvas: Canvas,
+    config_path: Path,
+    course_filter: int | None,
+    assignment_filter: int | None,
+    seen: set[tuple[int, int]] | None = None,
+) -> bool:
+    """Fetch one course config's [[fetch.assignments]] list; False when it
+    does not carry a usable list (or was filtered out by course_filter).
+    The gate is semantic only (MAJOR-2): any config holding a [fetch] table
+    with a course_id and a [[fetch.assignments]] list is fetchable — the
+    structural is_course_config heuristic flips under nested configs (M1)."""
+    if not config_path.exists():
+        return False
+    cfg = _root_fetch(config_path)
+    if cfg is None or cfg.course_id is None or not cfg.assignments:
+        return False
+    if course_filter is not None and cfg.course_id != course_filter:
+        return False
+    _fetch_entries(
+        canvas,
+        cfg.course_id,
+        config_path,
+        cfg,
+        assignment_filter=assignment_filter,
+        seen=seen,
+    )
+    return True
+
+
 def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> None:
     root = Path(__file__).resolve().parent
-    root_cfg = root / "assignments" / "config.toml"
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
 
-    # Root config list is the source of truth when present.
-    if root_cfg.exists():
-        root_fetch = _root_fetch(root_cfg)
-        if (
-            root_fetch is not None
-            and root_fetch.course_id is not None
-            and root_fetch.assignments
+    # Primary: course-level configs, each with its own [[fetch.assignments]]
+    # list. Three-level layout: assignments/<course>/config.toml; legacy
+    # two-level: assignments/config.toml (the only course-level file).
+    root_cfg = root / "assignments" / "config.toml"
+    # Fresh three-level layout has no assignments/config.toml — only feed
+    # _fetch_course paths that exist.
+    course_configs = [root_cfg] if root_cfg.exists() else []
+    course_configs += sorted(root.glob("assignments/*/config.toml"))
+    seen: set[tuple[int, int]] = set()
+    fetched_any = False
+    for config_path in course_configs:
+        if _fetch_course(
+            canvas, config_path, course_filter, assignment_filter, seen
         ):
-            if course_filter is not None and root_fetch.course_id != course_filter:
-                sys.exit(f"no [[fetch.assignments]] entries for course {course_filter}")
-            _fetch_entries(
-                canvas,
-                root_fetch.course_id,
-                root_cfg,
-                root_fetch,
-                assignment_filter=assignment_filter,
-            )
-            return
+            fetched_any = True
+    if fetched_any:
+        # Course-level lists are the source of truth; the fallback only serves
+        # a legacy two-level tree without a root (course) list.
+        return
 
-    # Fallback: per-assignment configs recorded before the root list existed.
+    # Fallback: per-assignment configs recorded before the course-level list
+    # existed — legacy two-level layout (assignments/*/config.toml) and
+    # three-level (assignments/*/*/config.toml).
     targets = []
-    for config_path in sorted(root.glob("assignments/*/config.toml")):
+    seen_paths: set[Path] = set()
+    for raw_path in sorted([
+        *root.glob("assignments/*/config.toml"),
+        *root.glob("assignments/*/*/config.toml"),
+    ]):
+        config_path = raw_path.resolve()
+        if config_path in seen_paths:
+            continue
+        seen_paths.add(config_path)
         try:
             cfg = load_assignment_file(config_path).fetch
         except (ValueError, FileNotFoundError):
@@ -203,7 +290,8 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
     if not targets:
         sys.exit(
             "no assignment configs with a [fetch] section matched; "
-            "add [[fetch.assignments]] entries to assignments/config.toml"
+            "add [[fetch.assignments]] entries to a course config "
+            "(assignments/<course>/config.toml)"
         )
     for config_path, cfg in targets:
         out = cfg.resolve_out_dir(config_path.parent)
