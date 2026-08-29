@@ -119,9 +119,10 @@ async def main() -> None:
         args = ScoreReviewCliOptions(score_dir=graded)
         app = Viewer(args)
         async with app.run_test(size=(120, 40)) as pilot:
-            md_view = app.query_one("#preview-markdown", Markdown)
-            text_view = app.query_one("#preview-text", Static)
-            panel = app.query_one("#preview-panel")
+            await pilot.pause()  # ScoreReviewScreen pushed in on_mount (async)
+            md_view = app.screen.query_one("#preview-markdown", Markdown)
+            text_view = app.screen.query_one("#preview-text", Static)
+            panel = app.screen.query_one("#preview-panel")
 
             # student 1: ipynb + processed -> rendered Markdown from processed
             await _wait_for(
@@ -138,12 +139,17 @@ async def main() -> None:
             await _wait_for(pilot, lambda: "# doc text" in text_view.content)
             assert text_view.display and not md_view.display, "doc text not shown"
 
-            # layout: wide = split, narrow = stacked
-            content_h = app.query_one("#content-horizontal")
+            # layout: wide = split, narrow = stacked (resize lives on the screen)
+            content_h = app.screen.query_one("#content-horizontal")
             assert not content_h.has_class("narrow"), "wide should not be narrow"
-            app.on_resize(events.Resize(size=Size(80, 40), virtual_size=Size(80, 40)))
+            review_screen = app.screen
+            review_screen.on_resize(
+                events.Resize(size=Size(80, 40), virtual_size=Size(80, 40))
+            )
             assert content_h.has_class("narrow"), "narrow class not applied"
-            app.on_resize(events.Resize(size=Size(120, 40), virtual_size=Size(120, 40)))
+            review_screen.on_resize(
+                events.Resize(size=Size(120, 40), virtual_size=Size(120, 40))
+            )
             assert not content_h.has_class("narrow"), "wide class not restored"
 
     print("preview check OK")

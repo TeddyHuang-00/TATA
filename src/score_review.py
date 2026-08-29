@@ -12,9 +12,11 @@ from typing import ClassVar
 
 from pydantic import ValidationError
 from pydantic_settings import CliApp
+from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
+from textual.screen import Screen
 from textual.widgets import (
     Button,
     Footer,
@@ -209,8 +211,14 @@ def _load_roster(roster: Path | None) -> dict[str, str]:
     return names
 
 
-class Viewer(App):
-    TITLE = "Score Review"
+class ScoreReviewScreen(Screen):
+    """Reusable score-review screen (shared by CLI Viewer and the platform).
+
+    Carries the full viewer UI/state — students, preview cache, bindings —
+    so the platform can ``push_screen(ScoreReviewScreen(score_dir))`` while
+    the CLI entry point keeps the original full-screen ``Viewer(App)`` shell.
+    """
+
     CSS_PATH = "score_review.tcss"
     BINDINGS: ClassVar = [
         ("left", "prev", "Prev"),
@@ -227,12 +235,18 @@ class Viewer(App):
         ("7", "copy_criterion('7')", "Copy comment 7"),
         ("8", "copy_criterion('8')", "Copy comment 8"),
         ("9", "copy_criterion('9')", "Copy comment 9"),
+        ("escape", "close", "Back"),
     ]
 
-    def __init__(self, args: ScoreReviewCliOptions) -> None:
+    def __init__(self, score_dir: Path, pop_on_escape: bool = False) -> None:
         super().__init__()
-        self.students = _load_students(args.score_dir)
-        roster = _find_roster(args.score_dir)
+        # pop_on_escape: True when pushed on a platform screen (esc pops back);
+        # False in the CLI Viewer, where the screen below is the App's own empty
+        # default Screen — esc is a no-op there (crossing that boundary removed
+        # the review screen with no way back, see design/03 §3.3).
+        self.pop_on_escape = pop_on_escape
+        self.students = _load_students(score_dir)
+        roster = _find_roster(score_dir)
         names = _load_roster(roster)
         for s in self.students:
             s["sortable_name"] = names.get(s["student"], s["student"])
@@ -281,7 +295,9 @@ class Viewer(App):
                 Container(id="preview-panel") as panel,
                 VerticalScroll(id="preview-scroll"),
             ):
-                yield Static("", id="preview-text")
+                # ponytail: raw/submission text may contain [brackets] (citations,
+                # markdown links) — never parse it as rich markup.
+                yield Static("", id="preview-text", markup=False)
                 yield Markdown("", id="preview-markdown")
         self.preview_panel = panel
         panel.border_title = "Raw File"
@@ -291,7 +307,7 @@ class Viewer(App):
         progress = self.query_one("#progress", ProgressBar)
         progress.total = len(self.students)
         self._sync_filters()
-        self._render()
+        self._render_review()
 
     def on_resize(self, event: events.Resize) -> None:
         content = self.query_one("#content-horizontal")
@@ -315,7 +331,7 @@ class Viewer(App):
             btn = self.query_one(f"#filter-{rating.replace(' ', '_')}", Button)
             btn.set_class(not on, "off")
 
-    def _render(self) -> None:
+    def _render_review(self) -> None:
         s = self.current
         self._refresh_preview()
         listing = self.query_one("#criteria-list", Static)
@@ -341,10 +357,10 @@ class Viewer(App):
             rating = item["rating"] or "(empty)"
             cls = RATING_CLASS.get(rating.lower(), "rating-other")
             lines.append(
-                f"[b][reverse]{item['criterion']}[/][/b]  "
-                f"[{cls}]rating: {rating}[/]"
+                f"[b][reverse]{escape(item['criterion'])}[/][/b]  "
+                f"[{cls}]rating: {escape(rating)}[/]"
                 f"  [dim](press {pos} to copy)[/]\n"
-                f"{item['comment']}\n"
+                f"{escape(item['comment'])}\n"
             )
         listing.update(
             "\n".join(lines)
@@ -405,7 +421,7 @@ class Viewer(App):
             result: tuple[str, str] | None = _preview_content(raw, processed)
         except Exception as error:
             result = ("text", f"Preview failed:\n{error}")
-        self.call_from_thread(self._on_preview_ready, student, result)
+        self.app.call_from_thread(self._on_preview_ready, student, result)
 
     def _on_preview_ready(self, student: str, result: tuple[str, str] | None) -> None:
         self.preview_pending.discard(student)
@@ -420,16 +436,21 @@ class Viewer(App):
     def action_prev(self) -> None:
         if self.index > 0:
             self.index -= 1
-            self._render()
+            self._render_review()
 
     def action_next(self) -> None:
         if self.index < len(self.students) - 1:
             self.index += 1
-            self._render()
+            self._render_review()
 
     def action_toggle_json(self) -> None:
         self.show_json = not self.show_json
-        self._render()
+        self._render_review()
+
+    def action_close(self) -> None:
+        """Pop back to the previous screen (platform push); CLI: no-op."""
+        if self.pop_on_escape and len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
 
     def action_copy_criterion(self, pos: str) -> None:
         s = self.current
@@ -437,7 +458,7 @@ class Viewer(App):
         idx = int(pos) - 1
         if 0 <= idx < len(items):
             item = items[idx]
-            self.copy_to_clipboard(item["comment"])
+            self.app.copy_to_clipboard(item["comment"])
             self.notify(f"Copied comment for {item['criterion']}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -450,12 +471,32 @@ class Viewer(App):
             rating = bid[len("filter-") :].replace("_", " ")
             self.rating_on[rating] = not self.rating_on[rating]
             self._sync_filters()
-            self._render()
+            self._render_review()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "student-select" and event.value is not None:
             self.index = event.value
-            self._render()
+            self._render_review()
+
+
+class Viewer(App):
+    """CLI view: full-screen App hosting ScoreReviewScreen (thin shell).
+
+    All behavior lives on ScoreReviewScreen; ``run()`` starts this App
+    exactly as before, so ``main.py view`` / ``uv run score-view`` are
+    unchanged.
+    """
+
+    TITLE = "Score Review"
+
+    def __init__(self, args: ScoreReviewCliOptions) -> None:
+        super().__init__()
+        self.score_dir = args.score_dir
+
+    def on_mount(self) -> None:
+        # ponytail: a Screen composed inline gets zero size in Textual 8.2,
+        # so the CLI shell pushes it — the same contract the platform uses.
+        self.push_screen(ScoreReviewScreen(self.score_dir))
 
 
 def _serve_web(score_dir: Path) -> None:
