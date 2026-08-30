@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import math
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import NormalDist, mean, median
 
@@ -513,7 +513,23 @@ def _load_assignment_records(
     return pair_data_files, pair_data_parsed, parse_errors, per_assignment_records
 
 
-def _build_payload(config: BuildConfig) -> AggregatePayload:
+def _assemble_pair_statistics(
+    config: BuildConfig,
+) -> tuple[
+    list[Path],
+    int,
+    int,
+    dict[str, dict[tuple[str, str], float]],
+    dict[str, str],
+    list[AssignmentDistributionStat],
+    list[PairCombinedStat],
+]:
+    """Shared pair pipeline core: records -> best scores -> z-scores -> ranking.
+
+    Both the CLI report (``_build_payload``) and the TUI pane rows
+    (``aggregate_pair_rows``) funnel through here; the row assembly lives
+    exactly once.
+    """
     pair_data_files, pair_data_parsed, parse_errors, per_assignment_records = (
         _load_assignment_records(config)
     )
@@ -533,6 +549,59 @@ def _build_payload(config: BuildConfig) -> AggregatePayload:
         assignment_pair_details,
         student_labels,
     )
+    return (
+        pair_data_files,
+        pair_data_parsed,
+        parse_errors,
+        per_assignment_pair_scores,
+        student_labels,
+        assignment_stats,
+        combined_pairs,
+    )
+
+
+def aggregate_pair_rows(
+    course_dir: Path, alpha: float, floor: float, cap: float
+) -> list[dict]:
+    """Ranked pair rows (combined Stouffer Z) for one course.
+
+    Same assembly as the CLI report; shared with the TUI pane.
+    """
+    config = BuildConfig(
+        assignments_root=course_dir,
+        pairs_glob=DEFAULT_PAIRS_GLOB,
+        pairwise_alpha=alpha,
+        individual_alpha=alpha,
+        score_floor=floor,
+        score_cap=cap,
+    )
+    *_, combined_pairs = _assemble_pair_statistics(config)
+    return [
+        {
+            "student_a": item.student_a,
+            "student_b": item.student_b,
+            # best raw similarity observed across the pair's assignments
+            "raw_similarity_pct": max(
+                score.raw_similarity_pct for score in item.assignment_scores
+            ),
+            "z_score": item.combined_z,
+            "one_sided_p_value": item.one_sided_p_value,
+            "shared_assignments": item.shared_assignments,
+        }
+        for item in combined_pairs
+    ]
+
+
+def _build_payload(config: BuildConfig) -> AggregatePayload:
+    (
+        pair_data_files,
+        pair_data_parsed,
+        parse_errors,
+        per_assignment_pair_scores,
+        student_labels,
+        assignment_stats,
+        combined_pairs,
+    ) = _assemble_pair_statistics(config)
     combined_students = _combine_students_stouffer(
         _build_individual_assignment_scores(per_assignment_pair_scores, student_labels),
         student_labels,
@@ -663,7 +732,3 @@ def _to_text(payload: AggregatePayload) -> str:
         "- Perform manual review for shared logic flaws, uncommon naming patterns, and identical mistakes.",
     ])
     return "\n".join(lines)
-
-
-def _to_json(payload: AggregatePayload) -> str:
-    return json.dumps(asdict(payload), indent=2)

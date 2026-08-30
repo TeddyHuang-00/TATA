@@ -15,9 +15,8 @@ Data sources:
 - pairs: ``<assignment>/plagiarism/all_pairs.json`` (copydetect rows)
 - aggregate: ``<course>/plagiarism/aggregate.json`` — ``detect_plagiarism``
   only prints the text report, so the [a] worker additionally writes this
-  JSON (built with the same plagiarism_aggregate pipeline; the pane reads
-  it).  ponytail: JSON schema is private to this screen; align with the
-  pipeline if the CLI ever writes one.
+  JSON; the pane reads it.  Rows are built with ``aggregate_pair_rows`` —
+  the same public entry point the CLI report assembly uses.
 """
 
 from __future__ import annotations
@@ -53,14 +52,7 @@ from src.aliases import (
 )
 from src.assignment_config import load_assignment_file
 from src.plagiarism import detect_plagiarism
-from src.plagiarism_aggregate import (
-    DEFAULT_PAIRS_GLOB,
-    BuildConfig,
-    _build_assignment_stats_and_zscores,
-    _collect_best_pair_scores,
-    _combine_pairs_stouffer,
-    _load_assignment_records,
-)
+from src.plagiarism_aggregate import aggregate_pair_rows
 from src.score_review import _base_uid, _find_raw_file, _preview_content
 from src.tata_workspace import (
     _format_job_summary,
@@ -148,39 +140,8 @@ def _overlap_display(pair: dict) -> str:
 
 
 def _aggregate_rows(course_dir: Path, alpha: float, floor: float, cap: float) -> list[dict]:
-    """Full combined pair ranking (mirrors ``_build_payload`` internals).
-
-    ponytail: duplicates the assembly from plagiarism_aggregate because
-    ``_build_payload`` drops the unranked list; add a pipeline entry point
-    if this ever drifts from the report.
-    """
-    cfg = BuildConfig(
-        assignments_root=course_dir,
-        pairs_glob=DEFAULT_PAIRS_GLOB,
-        pairwise_alpha=alpha,
-        individual_alpha=alpha,
-        score_floor=floor,
-        score_cap=cap,
-    )
-    _, _, _, records = _load_assignment_records(cfg)
-    all_records = [record for group in records.values() for record in group]
-    per_assign, labels = _collect_best_pair_scores(all_records)
-    _, details = _build_assignment_stats_and_zscores(per_assign, floor, cap)
-    combined = _combine_pairs_stouffer(details, labels)
-    return [
-        {
-            "student_a": item.student_a,
-            "student_b": item.student_b,
-            # best raw similarity observed across the pair's assignments
-            "raw_similarity_pct": max(
-                score.raw_similarity_pct for score in item.assignment_scores
-            ),
-            "z_score": item.combined_z,
-            "one_sided_p_value": item.one_sided_p_value,
-            "shared_assignments": item.shared_assignments,
-        }
-        for item in combined
-    ]
+    """Full combined pair ranking (shared core in plagiarism_aggregate)."""
+    return aggregate_pair_rows(course_dir, alpha, floor, cap)
 
 
 def _write_aggregate_json(course_config: Path) -> Path:
