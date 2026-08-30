@@ -69,3 +69,17 @@ and neglected a centralized markup policy for all Static text paths (json-view/p
 to achieve behavior-equivalent CLI view and a safe platform push,
 accepting that T5 landed with the verifier's M1 fix folded in and committed as a single T5 commit with both the extraction and the esc/markup fixes,
 because the M1 fix required touching the same file and a split would double review cost; T6 is then split into T6a (PlagiarismScreen, new file) and T6b (SettingsScreen, new file) running in parallel with no shared files, followed by T6c (Dashboard key wiring), because a single T6 subagent would have an oversized context and cross-file write conflicts; cross-course plagiarism Tab is explicitly NOT built (user 2026-08-29 correction, docs 04/01 still carry stale cross-course sections).
+
+## TUI plagiarism 交互改造 + 作业面板精简（Batch T1/T2/T3）
+
+**Date:** 2026-08-30
+**Status:** Accepted
+**Files:** `src/tata_jobs.py`（新）, `src/tata_app.py`, `src/tata_workspace.py`, `src/tata_plagiarism.py`, `src/tata_scan.py`, `src/assignment_config.py`, `src/plagiarism.py`, `src/score_review.py`, `src/aliases.py`
+
+In the context of the plagiarism tab popping a real browser window (copydetect autoopen=True) conflicting with Textual, the assignment panel still exposing a per-assignment plagiarism stage, the score viewer having no workspace entry, and the job protocol being duplicated ~100 lines across the two job screens,
+facing multiple maintainability findings (2 MAJOR + 10 MINOR + 4 COSMETIC, independent review),
+we decided to remove plagiarism from the assignment workspace (course panel + S4 tab only), rebuild S4 as course-scoped 4 tabs (Aggregate default / Assignments / Students / Pairs) with an embedded #cmp-pane compare (no push_screen, CompareModal deleted), fix the root cause with `CopyDetector(autoopen=False, silent=True)` plus a `quiet=True` kwarg suppressing the text report (TUI reads JSON), route the course panel [p] through the shared, JSON-writing run_aggregate_job, add a score review button wired through a shared open_score_review helper, unify the display threshold to a single tolerant course-config source, and extract the job protocol into a JobHost mixin in src/tata_jobs.py,
+and neglected preserving the per-assignment plagiarism stage, the plain-text report render, the modal-based compare, cross-course plagiarism, per-assignment threshold overrides in the S4 pane, and external-mutation invalidation of the alias lru_cache,
+to achieve one consistent interactive plagiarism view with no terminal-side windows, no duplicated job machinery, and a single threshold truth,
+accepting that the aggregate pane needs a prior [a]/course-p run to populate (no aggregate.json until then), that the real-data token_overlap int form never triggers red overlap highlighting (fixture list form only), that the JobHost drain timer is widget-bound (no current unmount trigger — documented), and that hand-edited alias.toml changes are visible only after restart or an in-process write,
+because the user asked for interactive tab-based plagiarism views without windows, assigned the extra scope decision on tab set (aggregate first) and compare pane retention (Textual-compatible embedded instead of built-in diff widget, which Textual 8.2.8 lacks), and the review's fixes were all low-risk deletions/extractions with byte-identical behavior verification per round. Local dev only (5 commits); remote main untouched per policy.
