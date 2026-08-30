@@ -138,3 +138,59 @@ def test_value_coercion(tmp_path: Path) -> None:
     assert "max_parallel_tasks = 6" in text  # int, unquoted
     assert "remove_base64_images = true" in text  # bool
     assert 'rubric = "hello world"' in text  # quoted string
+
+
+def test_set_creates_missing_file(tmp_path: Path) -> None:
+    """Regression (F3): `config set -c NEW.toml grading.max_parallel_tasks 4`
+    bootstraps a missing file instead of failing on rubric Field required."""
+    cfg = tmp_path / "new.toml"
+    assert not cfg.exists()
+    proc = _run_main("config", "set", "-c", str(cfg), "grading.max_parallel_tasks", "4")
+    assert proc.returncode == 0, proc.stderr
+    text = cfg.read_text(encoding="utf-8")
+    assert "max_parallel_tasks = 4" in text  # int value
+
+
+def test_set_fetch_on_missing_file(tmp_path: Path) -> None:
+    cfg = tmp_path / "new.toml"
+    proc = _run_main("config", "set", "-c", str(cfg), "fetch.course_id", "111")
+    assert proc.returncode == 0, proc.stderr
+    assert "course_id = 111" in cfg.read_text(encoding="utf-8")
+
+
+def test_set_unknown_section_still_rejected_on_missing_file(
+    tmp_path: Path,
+) -> None:
+    cfg = tmp_path / "new.toml"
+    proc = _run_main("config", "set", "-c", str(cfg), "bogus.k", "1")
+    assert proc.returncode == 1
+    assert "unknown config section 'bogus'" in proc.stderr
+    assert not cfg.exists()
+
+
+BROKEN_WEIGHTS_CONFIG = ASSIGNMENT_CONFIG + (
+    "\n[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.05\n"
+)
+
+
+def test_grading_edit_succeeds_on_broken_weights(tmp_path: Path) -> None:
+    """Regression (F4): weight-sum rule only guards [plagiarism] edits — an
+    unrelated grading edit on a pre-broken config must not be bricked."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(BROKEN_WEIGHTS_CONFIG, encoding="utf-8")
+    proc = _run_main("config", "set", "-c", str(cfg), "grading.max_parallel_tasks", "4")
+    assert proc.returncode == 0, proc.stderr
+    text = cfg.read_text(encoding="utf-8")
+    assert "max_parallel_tasks = 4" in text
+    assert "copydetect_weight = 0.9" in text  # weights untouched
+    assert "embedding_weight = 0.05" in text
+
+
+def test_weight_sum_still_applies_to_plagiarism_edits(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(BROKEN_WEIGHTS_CONFIG, encoding="utf-8")
+    proc = _run_main(
+        "config", "set", "-c", str(cfg), "plagiarism.copydetect_weight", "0.6"
+    )
+    assert proc.returncode == 1
+    assert "plagiarism weights" in proc.stderr

@@ -23,7 +23,7 @@
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ TATA · Dashboard [Global]   Canvas: OK   Courses: 1   [c]Import course      │
-│                            [p]Cross-course plagiarism  [r]Rescan  [q]Quit   │
+│                            [r]Rescan  [q]Quit   │
 ├────────────────────────────────────────────────────────────────────────────┤
 │ # Course   Assignments  raw  proc  grad  Avg score  Flags  Last run         │
 │ ── ─────── ──────────── ──── ───── ───── ────────── ────── ───────────       │
@@ -42,7 +42,6 @@
 | 状态列 | `DataTable` 单元格 `Static`（`.pill-*`） | 课程级聚合徽章（查重疑点：跨作业 flag 总和 >0 显示 `N`） |
 | 底部 | `Static`（`#dash-status`） | 选中行摘要 + 动作提示 |
 | 导入课程 | `Button`（顶栏，`import-course-btn`）+ `ModalScreen` | 见 §6.1 交互流 |
-| 跨课程查重 | `Button`（顶栏，`cross-plag-btn`） | 见 §6.4（v1.1 新增，用户确认） |
 | 全局配置 | `Button`（顶栏，`global-config-btn`） | 切 S5 并置 Settings 上下文=Global |
 
 **课程聚合行计算规则（供实现）：**
@@ -125,7 +124,6 @@ Assignment 层新增职责（相对 v1 的 S2）：
 | `c` | Course | Import assignment | Modal: pick assignment + out + mode → fetch → append to course config |
 | `F` | Course | Fetch all | Per-assignment cache skip (`.fetch-cache.json`) |
 | `p` | Course | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to S4 |
-| `p` | Global | Cross-course plagiarism (all courses) | See §6.4; on finish switch to S4 |
 | `cfg` | Course | Course config | Switch to S5 (context=Course) |
 | `g` | Global | Global config | Switch to S5 (context=Global) |
 | `s` | Course | Score review (selected assignment) | `push_screen(ScoreReviewScreen)` |
@@ -165,7 +163,8 @@ Assignment esc → 回 Course（工作台 state 销毁，重进时预扫描增�
 Course esc → 回 Global（current_course 保留，current_assignment 置 None）
 ```
 
-### 6.4 跨课程查重（Global 层，v1.1 新增——用户确认）
+### 6.4 跨课程查重（Global 层）— NOT IN SCOPE：已按用户决定移除，以下为历史设计，不实现
+
 ```
 Global 视图 [p] → Confirm Modal「Run plagiarism across ALL courses (N courses, schedule-able)」
     → job (exclusive): 
@@ -206,7 +205,7 @@ rm -r data/0-10-* data/1-1-* data/1-6-* \
       data/1-7-* data/1-10-* data/1-11-* data/config.toml
 ```
 - `[[fetch.assignments]].out` 值**不变**（相对 course config 解析：`1-6-…/raw` 在新位置下仍对）
-- 迁移后 `data/config.toml` 若保留 = **global config**（可选，跨课程默认；无它时三层退化为两层）
+- 迁移后 `data/config.toml` 若保留 = **global config**（可选，全局默认；无它时三层退化为两层）
 - course 目录名：默认 course_id（`271218`），任意唯一目录名 + config 内 course_id 亦可
 - 现有 `find_root_config`（`parent.parent/config.toml`）在迁移后**自动**指向 course config，无需修改；`load_assignment_file` 需增加第三层合并（global，可选）
 
@@ -214,7 +213,7 @@ rm -r data/0-10-* data/1-1-* data/1-6-* \
 
 ```
 data/
-├── config.toml              # GLOBAL（可选）：跨课程默认值（[plagiarism] 默认、fetch mode 默认）
+├── config.toml              # GLOBAL（可选）：全局默认值（[plagiarism] 默认、fetch mode 默认）
 ├── ITCS5153/                # COURSE 目录（识别：含 config.toml 且子目录=作业）
 │   ├── config.toml          # COURSE 配置：course_id、mode、[[fetch.assignments]]、[plagiarism] 覆盖
 │   └── 1-6-first-python/…   # ASSIGNMENT：grading/processing/hooks/scoring（覆盖 course）

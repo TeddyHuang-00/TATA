@@ -188,7 +188,9 @@ class ConfigSetCliOptions(BaseModel):
 
     Value is coerced TOML-style: true/false -> bool, int, float, else string.
     The result is validated with the same pydantic models the settings screen
-    uses before anything is written (no write on failure).
+    uses before anything is written (no write on failure). The config file is
+    created if missing; full model validation applies to existing files only
+    (a new file has no prior state — section sanity still applies).
     """
 
     config: Path = Field(

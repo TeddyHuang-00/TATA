@@ -623,13 +623,21 @@ class SettingsScreen(Vertical):
     # ---------- save / validation ----------
 
     @staticmethod
-    def _parse(kind: str, text: str) -> object:
+    def _parse(  # ruff: ignore[too-many-return-statements]
+        kind: str, text: str
+    ) -> object:
         """Coerce widget text to a TOML value (raises ValueError on bad input)."""
         text = text.strip()
         if kind == "float":
             return float(text)
         if kind == "int":
             return int(text)
+        if kind == "bool":
+            low = text.lower()
+            if low not in {"true", "false"}:
+                msg = f"not a boolean: {text!r}"
+                raise ValueError(msg)
+            return low == "true"
         if kind == "list":
             return [part.strip() for part in text.split(",") if part.strip()]
         if kind == "prompt":

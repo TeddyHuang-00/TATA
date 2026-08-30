@@ -67,6 +67,11 @@ def _format_job_summary(summary: dict) -> str:
 # --- fetch subcommand ---
 
 
+def _repo_root() -> Path:
+    """Repo root: this module lives in ``src/``, so one level up."""
+    return Path(__file__).resolve().parent.parent
+
+
 def _root_fetch(cfg_path: Path) -> FetchSection | None:
     """Fetch state from a course/global config (course-level keys only)."""
     return load_root_section(cfg_path, "fetch", FetchSection)
@@ -241,7 +246,7 @@ def _fetch_course(
 
 
 def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> None:
-    root = Path(__file__).resolve().parent
+    root = _repo_root()
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
 
@@ -451,7 +456,7 @@ def main() -> None:
 
     if isinstance(sub, SchemaCliOptions):
         print("Generating schemas...")
-        schema_files = generate_all_schemas(Path(__file__).resolve().parent.parent)
+        schema_files = generate_all_schemas(_repo_root())
         for schema_file in schema_files:
             print(f"[schema] {schema_file}")
         return

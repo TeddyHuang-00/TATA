@@ -4,27 +4,38 @@ This guide explains how to write `data/<assignment-name>/config.toml` without re
 
 ## Layered config
 
-Configs are layered. The course-level root config `data/config.toml`
-holds state shared across assignments; each `data/<name>/config.toml`
-holds assignment-specific settings. When the root config exists, it is merged
-under the assignment config: per-key assignment values win. All paths resolve
-against the assignment directory (root config values are scalars only).
+Configs are layered (three levels). The global base config `data/config.toml`
+holds defaults shared across courses (`[fetch]` course_id/mode,
+`[plagiarism]` settings) but no assignment list; each course config
+`data/<course>/config.toml` holds course-level fetch state plus the course's
+assignment list; each `data/<course>/<assignment>/config.toml` (this file)
+holds assignment-specific settings. Per key, assignment values win, then
+course, then global. All paths resolve against the assignment directory
+(global/course values are scalars only). The legacy two-level layout
+(`data/config.toml` + assignment configs directly under it, assignment list
+in the global file) still works as an abbreviation.
 
-- Root layer (`data/config.toml`, gitignored): `[fetch]` course-level
-  state (`course_id`, shared `mode`) plus the course's assignment list
-  (`[[fetch.assignments]]`: `assignment_id`, optional `mode` override, `out`
-  = fetch output dir relative to the root), and `[plagiarism]` course-wide
-  knobs (blend weights, aggregate alphas). It has no `[grading]`.
-- Assignment layer: everything else, plus overrides (`assignment_id`,
-  `mode = "text"` when it differs from the root default, `template_file`, ...).
-- Standalone assignment configs without a root config work exactly as before.
+- Global base layer (`data/config.toml`, gitignored): `[fetch]` defaults
+  (`course_id`, shared `mode`) and `[plagiarism]` course-wide knobs (blend
+  weights, aggregate alphas). It has no `[grading]` and no assignment list.
+- Course layer (`data/<course>/config.toml`, gitignored): course `[fetch]`
+  state plus the course's assignment list (`[[fetch.assignments]]`:
+  `assignment_id`, optional `mode` override, `out` = fetch output dir
+  relative to the course config).
+- Assignment layer: everything else (grading, processing, hooks, scoring),
+  plus overrides (`assignment_id`, `mode = "text"` when it differs from the
+  course default, `template_file`, ...).
+- Standalone assignment configs without a global/course config work exactly
+  as before.
 
-The root list is the course's source of truth: `main.py fetch -c data/config.toml` fetches every listed entry in one shot (per-entry
-mode/out win), `fetch --retry` replays it, and `main.py plagiarism -c data/config.toml --aggregate` runs and aggregates exactly the listed
-assignments. `main.py fetch` also writes course-level state to the root
+The course list is the course's source of truth: `main.py fetch -c data/<course>/config.toml` fetches every listed entry in one shot (per-entry
+mode/out win), `fetch --retry` replays it, and `main.py plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
+assignments. `main.py fetch` also writes course-level state to the course
 config and assignment-level state to the assignment config automatically.
+With `-c data/config.toml` (no assignment list) plagiarism falls back to the
+discovered course configs (`data/*/config.toml`).
 
-Example root config:
+Example course config:
 
 ```toml
 [fetch]
@@ -33,8 +44,8 @@ mode = "attach"   # default for entries without their own
 
 [[fetch.assignments]]
 assignment_id = 2979511
-mode = "text"              # optional; falls back to the root mode
-out = "1-10-my-ai-starting-point/raw"  # fetch dir; assignment root = its parent
+mode = "text"              # optional; falls back to the course mode
+out = "2979511/raw"        # fetch dir; assignment root = its parent
 ```
 
 ## Where this file sits in the workflow
@@ -76,11 +87,11 @@ reference_file = "reference.md"
 
 [fetch]
 # Canvas memory for `main.py fetch`; course-level keys (course_id, shared
-# mode) live in data/config.toml. Only override what differs from the
-# root; the root's [[fetch.assignments]] list drives batch fetch and the
-# plagiarism aggregate.
+# mode) live in the course config (data/<course>/config.toml). Only override
+# what differs from the course default; the course config's
+# [[fetch.assignments]] list drives batch fetch and the plagiarism aggregate.
 assignment_id = 2979509
-# mode = "text"     # only when it differs from the root [fetch] mode
+# mode = "text"     # only when it differs from the course [fetch] mode
 # out_dir = "raw"   # only when it differs from the default
 
 [processing]

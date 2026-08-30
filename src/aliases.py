@@ -4,11 +4,11 @@ Each alias.toml holds up to three optional tables — ``[course]``,
 ``[assignment]``, ``[student]`` — mapping string IDs to display names::
 
     [course]
-    "271218" = "ITCS 5153"
+    "111111" = "Example Course"
     [assignment]
-    "2978557" = "First Colab"
+    "222222" = "Example Assignment"
     [student]
-    "412607" = "Aalla, Movin Reddy"
+    "100001" = "Example Student"
 
 Files merge at three levels, closer wins (later files in the chain override
 earlier ones, per table and per key):
@@ -26,7 +26,7 @@ import argparse
 import csv
 import sys
 import tomllib
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 
 import tomlkit
@@ -188,6 +188,30 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
 
 # -- one-time migration: dir names -> assignment ids -----------------------
 
+def _patch_out_entries(doc: tomlkit.TOMLDocument, old: str, new: str) -> bool:
+    """Rewrite ``[[fetch.assignments]]`` ``out`` values naming ``old`` to
+    ``new`` (both the bare dir and ``<old>/raw`` shapes the old str.replace
+    covered); returns True when anything changed."""
+    fetch = doc.get("fetch")
+    if not isinstance(fetch, MutableMapping):
+        return False
+    entries = fetch.get("assignments")
+    if not isinstance(entries, list):
+        return False
+    changed = False
+    for entry in entries:
+        if not isinstance(entry, MutableMapping):
+            continue
+        out = entry.get("out")
+        if out == old:
+            entry["out"] = new
+            changed = True
+        elif out == f"{old}/raw":
+            entry["out"] = f"{new}/raw"
+            changed = True
+    return changed
+
+
 def _fetch_assignment_id(config_path: Path) -> int | None:
     try:
         fetch = load_root_section(config_path, "fetch", FetchSection)
@@ -268,12 +292,17 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
         child.rename(child.with_name(new_name))
         migrated = child.with_name(new_name)
         if course_config.is_file():
-            text = course_config.read_text(encoding="utf-8")
-            patched = text.replace(f'"{child.name}/raw"', f'"{new_name}/raw"').replace(
-                f'"{child.name}"', f'"{new_name}"'
-            )
-            if patched != text:
-                course_config.write_text(patched, encoding="utf-8")
+            try:
+                config_doc = tomlkit.parse(
+                    course_config.read_text(encoding="utf-8")
+                )
+                if _patch_out_entries(config_doc, child.name, new_name):
+                    _write_doc(course_config, config_doc)
+            except (OSError, tomlkit.exceptions.ParseError):
+                # ponytail: unreadable/corrupt course config -> leave it
+                # alone (the old blind str.replace would have rewritten a
+                # corrupt file anyway).
+                pass
         _seed_section(course_dir / "alias.toml", "assignment", new_name, child.name)
         if entries:
             upsert_student_aliases(migrated, entries)

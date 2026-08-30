@@ -567,7 +567,7 @@ class DashboardScreen(Vertical):
 
     @staticmethod
     def _fetch_all_section(course: CourseInfo) -> FetchSection | None:
-        """Course [fetch] section via main.py's loader (empty list -> None).
+        """Course [fetch] section via ``src/cli.py``'s loader (empty list -> None).
 
         Mirrors the CLI's root-config model exactly: ``[[fetch.assignments]]``
         entries with ``out`` (already '<aid>/raw') and ``mode`` falling back to
@@ -920,7 +920,9 @@ class ImportCourseModal(_ImportBase):
             return
         dest.mkdir(parents=True)
         (dest / "config.toml").write_text(
-            f'[fetch]\ncourse_id = {course_id}\nmode = "attach"\n',
+            tomlkit.dumps(
+                tomlkit.item({"fetch": {"course_id": course_id, "mode": "attach"}})
+            ),
             encoding="utf-8",
         )
         state = self.state

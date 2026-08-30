@@ -176,3 +176,48 @@ def test_fetch_entries_uses_list_out_and_mode(
         (111111, 11, str((tmp_path / "data/a/raw").resolve()), "attach"),
         (111111, 12, str((tmp_path / "data/b/raw").resolve()), "text"),
     ]
+
+
+def test_retry_finds_course_and_assignment_configs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression (F1): --retry must scan the repo root, not src/.
+
+    The retry scan is repo-root-relative (data/<course>/config.toml); with
+    cli.py in src/ the old ``Path(__file__).parent`` resolved to src/ and the
+    scan always reported 'no assignment configs...'.
+    """
+    import src.cli as main_mod
+
+    course = tmp_path / "data" / "111111"
+    (course / "222222").mkdir(parents=True)
+    (course / "config.toml").write_text(
+        '[fetch]\ncourse_id = 111111\nmode = "attach"\n',
+        encoding="utf-8",
+    )
+    (course / "222222" / "config.toml").write_text(
+        "[grading]\n"
+        'rubric = "rubrics/a.toml"\n'
+        'system_prompt = "prompt/system.md"\n'
+        'provider = "deepseek_chat_tool"\n'
+        "\n"
+        "[fetch]\n"
+        "course_id = 111111\n"
+        "assignment_id = 222222\n",
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[int, int, str, str]] = []
+    monkeypatch.setattr(main_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
+    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_assignment",
+        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+    )
+    main_mod._retry_fetch(None, None)  # no SystemExit: configs were found
+    assert calls == [
+        (111111, 222222, str((course / "222222" / "raw").resolve()), "attach")
+    ]

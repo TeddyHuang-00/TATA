@@ -55,7 +55,9 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv run main.py analyze -c data/my-assignment/config.toml
    ```
 
-7. Audit reference notebook TODO/instruction mismatches (optional):
+7. Audit reference notebook TODO/instruction mismatches (optional; repo-dev
+   utility — runs only from a source checkout, it is not part of the
+   installed package):
 
    ```bash
    uv run misc/reference_mismatch_audit.py \
@@ -65,19 +67,23 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 8. Aggregate plagiarism results across assignments (optional):
 
    ```bash
-   uv run main.py plagiarism -c data/config.toml --aggregate -o data/plagiarism-report.txt
+   uv run main.py plagiarism -c data/<course>/config.toml --aggregate -o data/plagiarism-report.txt
    ```
 
-   `--config data/config.toml` runs plagiarism for every assignment
-   listed in its `[[fetch.assignments]]` (code submissions via copydetect on
-   extracted notebook code, text/report submissions via copydetect on
-   processed markdown blended 95/5 with embedding similarity). `--aggregate`
-   appends the cross-assignment report: pairwise
+   `--config data/<course>/config.toml` runs plagiarism for every assignment
+   listed in that course config's `[[fetch.assignments]]` (code submissions
+   via copydetect on extracted notebook code, text/report submissions via
+   copydetect on processed markdown blended 95/5 with embedding similarity).
+   `--aggregate` appends the cross-assignment report: pairwise
    deletion + logit transform + per-assignment z-score + Stouffer aggregation,
    plus an individual-level detector using per-assignment max similarity with
    Gumbel fitting. It outputs statistically significant pairs and students under
-   the alphas configured in the root config's `[plagiarism]` section.
+   the alphas configured in the config's `[plagiarism]` section.
    Data source is `plagiarism/all_pairs.json` (full pair export).
+   The global config `data/config.toml` also works: with no assignment list
+   of its own it runs over the discovered course configs
+   (`data/*/config.toml`); use a course config for a per-course run.
+   Likewise, `fetch --retry` scans the global plus every course config.
 
 9. Edit one config value from the CLI (optional; comments and unrelated keys
    are preserved, and the result is validated against the same pydantic models
@@ -90,30 +96,42 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 
 ## Layered Config
 
-Config is layered: the course-level root config `data/config.toml` holds
-persistent fetch/plagiarism state shared across assignments (course id, fetch
-mode, plagiarism weights/alphas) plus the course's assignment list; each
-`data/<name>/config.toml` holds grading/scoring and assignment-specific
-overrides. Assignment values win per key; all paths resolve against the
-assignment directory. Standalone assignment configs (no root config) work
-exactly as before.
+Config is layered (three levels): the global base config `data/config.toml`
+holds defaults shared across courses (`[fetch]` course_id/mode, `[plagiarism]`
+settings) but no assignment list; each course config
+`data/<course>/config.toml` holds course-level fetch state plus the course's
+assignment list (`[[fetch.assignments]]`); each
+`data/<course>/<assignment>/config.toml` holds grading/scoring and
+assignment-specific overrides. Assignment values win per key; all paths
+resolve against the assignment directory. The legacy two-level layout
+(global `data/config.toml` + assignment configs directly under it, with the
+assignment list in the global file) still works as an abbreviation.
 
-The root `[[fetch.assignments]]` list drives batch fetch and the plagiarism
-aggregate: `fetch -c data/config.toml` fetches every listed entry in
-one shot (per-entry `mode`/`out` win), and `plagiarism -c data/config.toml --aggregate` runs and aggregates exactly the listed
-assignments.
+The course `[[fetch.assignments]]` list drives batch fetch and the plagiarism
+aggregate: `fetch -c data/<course>/config.toml` fetches every listed entry in
+one shot (per-entry `mode`/`out` win), and
+`plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates
+exactly the listed assignments. The global config `data/config.toml` carries
+no assignment list: `plagiarism -c data/config.toml` falls back to the
+discovered course configs (`data/*/config.toml`) and `fetch --retry` scans
+the global plus every course config.
 
 ```toml
-# data/config.toml (root layer, gitignored)
+# data/config.toml (global base layer, gitignored)
+[fetch]
+course_id = 271218
+mode = "attach"   # defaults merged under each course config
+
+# data/271218/config.toml (course layer, gitignored)
 [fetch]
 course_id = 271218
 mode = "attach"   # default for entries without their own
 
 [[fetch.assignments]]
 assignment_id = 2978557
-out = "0-10-first-colab/raw"  # fetch dir; assignment root = its parent
+out = "2978557/raw"  # fetch dir; assignment root = its parent
 
-# data/0-10-first-colab/config.toml (assignment layer)
+# data/271218/2978557/config.toml (assignment layer)
 [grading]
 rubric = "rubrics/0-10-first-colab.toml"
 ...
@@ -137,5 +155,6 @@ assignment_id = 2978557
 - Example assignment config: [data/example/config.toml](data/example/config.toml)
 - Example rubric: [rubrics/example_rubric.toml](rubrics/example_rubric.toml)
 - Generic system prompt: [prompt/system.md](prompt/system.md)
-- Reference mismatch audit script: [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)
-- Plagiarism: `uv run main.py plagiarism -c data/config.toml --aggregate`
+- Reference mismatch audit script (repo-dev utility; not installed):
+  [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)
+- Plagiarism: `uv run main.py plagiarism -c data/<course>/config.toml --aggregate`

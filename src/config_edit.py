@@ -138,17 +138,23 @@ def _weight_sum_error(plag: dict) -> str | None:
     return None
 
 
-def validate_config_edits(path: Path, edits: dict[str, dict[str, object]]) -> None:
+def validate_config_edits(  # ruff: ignore[too-many-branches]
+    path: Path, edits: dict[str, dict[str, object]]
+) -> None:
     """Validate ``edits`` against the project's pydantic models before writing.
 
     Mirrors the settings screen: an assignment config validates the full
     layered ``AssignmentFileConfig`` (as :func:`load_assignment_file` loads
     it) with the edits applied; course/global containers validate the edited
     sections only. The plagiarism weight-sum rule applies to the effective
-    layer either way. Unparseable TOML and unknown sections are rejected
-    (the writer would otherwise clobber them). Raises ValueError with a
-    one-line message.
+    layer either way, and only when the edit touches ``[plagiarism]`` keys.
+    A file that does not exist yet (bootstrap via ``config set``) is not
+    model-validated — there is no prior state, and the doc is written as the
+    edited section + key only; unknown sections are still rejected.
+    Unparseable TOML and unknown sections are rejected (the writer would
+    otherwise clobber them). Raises ValueError with a one-line message.
     """
+    file_preexists = path.exists()
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError:
@@ -165,6 +171,16 @@ def validate_config_edits(path: Path, edits: dict[str, dict[str, object]]) -> No
         if section not in _SECTION_MODELS:
             known = ", ".join(sorted(_SECTION_MODELS))
             errors.append(f"unknown config section {section!r} (known: {known})")
+
+    if not file_preexists:
+        # Bootstrap: only section sanity applies.
+        # ponytail: per-key range checks (max_parallel_tasks 1..10 etc.) are
+        # skipped on new files because the section models require sibling
+        # fields; add per-field checks if invalid bootstraps bite.
+        if errors:
+            raise ValueError("; ".join(errors))
+        return
+
     try:
         layered = load_assignment_file(path).model_dump()
     except (FileNotFoundError, ValueError):
@@ -185,8 +201,12 @@ def validate_config_edits(path: Path, edits: dict[str, dict[str, object]]) -> No
             errors.extend(_fmt_errors(exc))
         effective_plag = merged.get("plagiarism") or {}
 
-    weight_error = _weight_sum_error(effective_plag)
-    if weight_error is not None:
-        errors.append(weight_error)
+    # Weight-sum rule only guards edits that touch [plagiarism]: a config
+    # with broken weights must not brick unrelated edits (or the one-line
+    # fix itself) on a pre-broken config.
+    if "plagiarism" in edits:
+        weight_error = _weight_sum_error(effective_plag)
+        if weight_error is not None:
+            errors.append(weight_error)
     if errors:
         raise ValueError("; ".join(errors))
