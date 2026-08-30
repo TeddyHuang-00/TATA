@@ -45,7 +45,7 @@ from src.assignment_config import FetchSection
 from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
 from src.plagiarism import detect_plagiarism
-from src.score_review import ScoreReviewScreen
+from src.score_review import open_score_review
 from src.tata_plagiarism import PlagiarismScreen
 from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
 from src.tata_settings import SettingsScreen
@@ -727,11 +727,7 @@ class DashboardScreen(Vertical):
         item = self._selected()
         if item is None:
             return
-        graded_dir = item.config_path.parent / "graded"  # type: ignore[attr-defined]
-        if not list(graded_dir.glob("*.json")):
-            self.app.notify("No graded files — run grade first", severity="warning")
-            return
-        self.app.push_screen(ScoreReviewScreen(graded_dir, pop_on_escape=True))
+        open_score_review(self.app, item.config_path.parent)  # type: ignore[attr-defined]
 
     def action_filter_all(self) -> None:
         self._set_filter(None)

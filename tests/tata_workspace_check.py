@@ -21,6 +21,7 @@ from pathlib import Path
 
 from e2e_common import make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src import tata_workspace as tw
+from src.score_review import ScoreReviewScreen
 from src.tata_app import TataApp
 from src.tata_workspace import AssignmentScreen
 from textual.pilot import Pilot
@@ -39,7 +40,7 @@ def _stage_buttons(app: TataApp) -> dict[str, Button]:
     ws = app.query_one(AssignmentScreen)
     return {
         name: ws.query_one(f"#stage-{name}", Button)
-        for name in ("fetch", "preprocess", "grade", "score", "plagiarism", "analyze")
+        for name in ("fetch", "preprocess", "grade", "score", "analyze", "score_view")
     }
 
 
@@ -64,10 +65,16 @@ async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
     assert "2/2 done" in str(buttons["preprocess"].label), buttons["preprocess"].label
     assert "1 pending · 1 done" in str(buttons["grade"].label), buttons["grade"].label
     assert "1/1 scored" in str(buttons["score"].label), buttons["score"].label
-    assert "1 pair (1 flag)" in str(buttons["plagiarism"].label), buttons[
-        "plagiarism"
-    ].label
     assert "Not run" in str(buttons["analyze"].label), buttons["analyze"].label
+    assert str(buttons["score_view"].label).startswith("score view\n"), buttons[
+        "score_view"
+    ].label
+    # no _sub entry -> single-'…' subtitle fallback
+    assert str(buttons["score_view"].label).rstrip().endswith("…"), buttons[
+        "score_view"
+    ].label
+    assert not ws.query("#stage-plagiarism"), "plagiarism button should be gone"
+    assert not hasattr(ws, "action_run_plagiarism")
 
     body = ws.query_one("#config-body")
     text = str(body.content)
@@ -240,6 +247,32 @@ async def _check_fetch_gate(app: TataApp, pilot: Pilot) -> None:
         app.notify = orig_notify
 
 
+async def _check_score_view(app: TataApp, pilot: Pilot) -> None:
+    """Click #stage-score_view -> ScoreReviewScreen pushed; esc pops back."""
+    await pilot.click("#stage-score_view")
+    await pilot.pause()
+    assert isinstance(app.screen, ScoreReviewScreen), type(app.screen)
+    assert len(app.screen.students) > 0
+    await pilot.press("escape")
+    await pilot.pause()
+    assert not isinstance(app.screen, ScoreReviewScreen), type(app.screen)
+    assert len(app.screen_stack) == 1
+    assert app.query_one(AssignmentScreen).display
+
+
+async def _check_score_view_empty(app: TataApp, pilot: Pilot) -> None:
+    """Empty graded/ -> notify, no push."""
+    notices, orig_notify = spy_notify(app)
+    try:
+        await pilot.click("#stage-score_view")
+        await pilot.pause()
+        assert not isinstance(app.screen, ScoreReviewScreen), type(app.screen)
+        assert len(app.screen_stack) == 1
+        assert any("No graded files" in msg for msg, _sev in notices), notices
+    finally:
+        app.notify = orig_notify
+
+
 async def _check_help_and_back(app: TataApp, pilot: Pilot) -> None:
     from textual.widgets import HelpPanel
 
@@ -267,6 +300,7 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_button_click(app, pilot)
     await _check_editor_warning(app, pilot)
     await _check_fetch_gate(app, pilot)
+    await _check_score_view(app, pilot)
     await _check_help_and_back(app, pilot)
 
 
@@ -294,6 +328,17 @@ async def main() -> None:
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             await check_workspace(app, pilot)
+        # empty-graded guard: fresh root with a graded/ dir but no *.json
+        empty_root = root / "empty"
+        make_course(
+            empty_root / "data",
+            assignment_cfg=ASSIGNMENT_CFG,
+            env=True,
+        )
+        app2 = TataApp(root_dir=empty_root)
+        async with app2.run_test(size=(120, 40)) as pilot2:
+            await _enter_assignment(app2, pilot2)
+            await _check_score_view_empty(app2, pilot2)
     print("tata_workspace check OK")
 
 

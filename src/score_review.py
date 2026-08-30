@@ -8,7 +8,7 @@ import shlex
 import sys
 import tempfile
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic import ValidationError
 from pydantic_settings import CliApp
@@ -470,6 +470,15 @@ class ScoreReviewScreen(Screen):
         if event.select.id == "student-select" and event.value is not None:
             self.index = event.value
             self._render_review()
+
+
+def open_score_review(app: App[Any], assignment_dir: Path) -> None:
+    """Push ScoreReviewScreen for an assignment's graded dir (shared by platform screens)."""
+    graded = assignment_dir / "graded"
+    if not list(graded.glob("*.json")):
+        app.notify("No graded files — run grade first", severity="warning")
+        return
+    app.push_screen(ScoreReviewScreen(graded, pop_on_escape=True))
 
 
 class Viewer(App):

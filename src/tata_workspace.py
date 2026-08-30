@@ -12,7 +12,7 @@ Honesty notes over the design (design 99 accepted trade-offs):
 - The stage functions are not modified and print no done/total events, so
   determinate progress comes from polling the same counters the incremental
   scan uses (processed/checkpoint/scored file counts) once per tick. When the
-  count is unknown (fetch/plagiarism/analyze) the bar is indeterminate.
+  count is unknown (fetch/analyze) the bar is indeterminate.
 - Synchronous stage functions cannot be killed: ``cancel_event.set()`` puts
   the UI in "Stopping…" and the job's result is dropped when the function
   returns (checkpoint/mtime semantics make the next run incremental). No new
@@ -48,8 +48,8 @@ from src.analysis import analyze_assignment
 from src.assignment_config import load_assignment_file
 from src.cli_options import FetchCliOptions
 from src.grading import grade_assignment
-from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
+from src.score_review import open_score_review
 from src.scoring import score_assignment
 from src.tata_scan import AssignmentInfo, count_files, count_recursive
 
@@ -103,8 +103,8 @@ _STAGE_KEYS = (
     ("preprocess", "preprocess"),
     ("grade", "grade"),
     ("score", "score"),
-    ("plagiarism", "plagiarism"),
     ("analyze", "analyze"),
+    ("score view", "score_view"),
 )
 
 
@@ -150,34 +150,9 @@ def _checkpoint_done(assignment_dir: Path) -> int:
         return 0
 
 
-def _pair_count(assignment_dir: Path) -> int:
-    """Pairs in ``plagiarism/all_pairs.json`` (0 when not run)."""
-    file_ = assignment_dir / "plagiarism" / "all_pairs.json"
-    if not file_.is_file():
-        return 0
-    try:
-        data = json.loads(file_.read_text(encoding="utf-8"))
-        pairs = data.get("pairs", [])
-        if isinstance(pairs, list):
-            return len(pairs)
-        return int(data.get("pair_count", 0))
-    except (ValueError, OSError):
-        return 0
-
-
 def _is_fetched(assignment_dir: Path) -> bool:
     """Fetch freshness = ``raw/.fetch-cache.json`` presence (design §5)."""
     return (assignment_dir / "raw" / ".fetch-cache.json").is_file()
-
-
-def _pair_label(a: AssignmentInfo) -> str:
-    pairs = _pair_count(a.config_path.parent)
-    if pairs == 0:
-        return "Not run"
-    flags = a.flagged_pairs
-    return f"{pairs} pair{'s' if pairs != 1 else ''}" + (
-        f" ({flags} flag{'s' if flags != 1 else ''})" if flags else ""
-    )
 
 
 def _incremental_line(info: AssignmentInfo) -> str:
@@ -195,7 +170,6 @@ def _incremental_line(info: AssignmentInfo) -> str:
         "pre": max(raw - processed, 0),
         "grade": max(processed - done, 0),
         "score": max(graded - scored, 0),
-        "plag": 0 if _pair_count(a_dir) else 1,
     }
     no_change = sum(
         1
@@ -205,7 +179,6 @@ def _incremental_line(info: AssignmentInfo) -> str:
     return (
         f"To run: fetch {to_run['fetch']} · pre {to_run['pre']}"
         f" · grade {to_run['grade']} · score {to_run['score']}"
-        f" · plag {to_run['plag']}"
         f"  |  No change: {no_change}"
     )
 
@@ -308,8 +281,6 @@ class AssignmentScreen(Vertical):
         Binding("p", "run_preprocess", "Preprocess"),
         Binding("g", "run_grade", "Grade"),
         Binding("s", "run_score", "Score"),
-        Binding("k", "run_plagiarism", "Plagiarism"),
-        Binding(";", "run_plagiarism", "Plagiarism"),
         Binding("a", "run_analyze", "Analyze"),
         Binding("x", "cancel_job", "Cancel job"),
         Binding("e", "edit_config", "Edit config"),
@@ -422,7 +393,6 @@ class AssignmentScreen(Vertical):
             "score": (
                 f"{scored}/{graded} scored" if graded > 0 else "Needs grade first"
             ),
-            "plagiarism": _pair_label(info),
             "analyze": (
                 "stats done"
                 if (a_dir / "logs" / "meta_analysis.json").is_file()
@@ -434,7 +404,6 @@ class AssignmentScreen(Vertical):
             "preprocess": raw if raw > 0 else None,
             "grade": processed if processed > 0 else None,
             "score": graded if graded > 0 else None,
-            "plagiarism": None,
             "analyze": None,
         }
         self._render_topbar()
@@ -630,34 +599,16 @@ class AssignmentScreen(Vertical):
             return
         self._start_job("score", score_assignment, total=self._total["score"])
 
-    def action_run_plagiarism(self) -> None:
-        if self._protect():
-            return
-        if self._processed == 0:
-            self.app.notify(
-                "No processed submissions — run preprocess first",
-                severity="warning",
-            )
-            return
-        self.app.push_screen(
-            ConfirmationModal(
-                "Plagiarism",
-                f"Will check {self._processed} processed texts"
-                " (copydetect + embeddings) and run the aggregate report.",
-                [("Check + aggregate", "run")],
-            ),
-            self._confirm_plagiarism,
-        )
-
-    def _confirm_plagiarism(self, choice: str | None) -> None:
-        if choice is None:
-            return
-        self._start_job("plagiarism", detect_plagiarism, kwargs={"aggregate": True})
-
     def action_run_analyze(self) -> None:
         if self._protect() or self._needs_fetch():
             return
         self._start_job("analyze", analyze_assignment)
+
+    def action_run_score_view(self) -> None:
+        info = self._info
+        if info is None:
+            return
+        open_score_review(self.app, info.config_path.parent)
 
     def action_cancel_job(self) -> None:
         job = self._job
