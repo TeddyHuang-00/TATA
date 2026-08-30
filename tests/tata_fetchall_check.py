@@ -13,20 +13,17 @@ Run: uv run tests/tata_fetchall_check.py
 from __future__ import annotations
 
 import asyncio
-import sys
 import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import src.tata_app as tata_app_mod
+from e2e_common import COURSE, make_course, spy_notify, text, wait_for, write_aliases  # isort: skip - seeds repo-root sys.path before src imports
 from rich.text import Text as RichText
+from src import tata_app as tata_app_mod
 from src.cli_options import FetchCliOptions
 from src.tata_app import TataApp
 from src.tata_workspace import ConfirmationModal
-from textual.pilot import Pilot
 from textual.widgets import DataTable, Static
 
 AIDS = [1001, 1002, 1003]
@@ -35,35 +32,20 @@ AIDS = [1001, 1002, 1003]
 LABELS = {1001: "Week [1]", 1002: "1002", 1003: "1003"}
 
 
-def _make_course(
-    assignments_dir: Path,
-    name: str,
-    course_id: int,
-    with_entries: bool,
-    with_aliases: bool = False,
-) -> None:
+def _build(assignments_dir: Path, *, entries: bool, aliases: bool = False) -> None:
     """One course with 3 assignment dirs; optionally [[fetch.assignments]]."""
-    course_dir = assignments_dir / name
-    course_dir.mkdir(parents=True)
-    entries = "".join(
-        f'[[fetch.assignments]]\nassignment_id = {aid}\nout = "{aid}/raw"\n'
-        for aid in AIDS
+    make_course(
+        assignments_dir,
+        course=COURSE,
+        course_id=111111,
+        assignments={str(aid): aid for aid in AIDS},
+        entries=entries,
     )
-    (course_dir / "config.toml").write_text(
-        f"[fetch]\ncourse_id = {course_id}\n" + (entries if with_entries else ""),
-        encoding="utf-8",
-    )
-    if with_aliases:
+    if aliases:
         # Markup-hostile display name: brackets must be escaped on render.
-        (course_dir / "alias.toml").write_text(
-            '[assignment]\n"1001" = "Week [1]"\n', encoding="utf-8"
-        )
-    for aid in AIDS:
-        a_dir = course_dir / str(aid)
-        a_dir.mkdir()
-        (a_dir / "raw").mkdir()
-        (a_dir / "config.toml").write_text(
-            f"[fetch]\nassignment_id = {aid}\n", encoding="utf-8"
+        write_aliases(
+            assignments_dir / COURSE / "alias.toml",
+            assignment_alias={"1001": "Week [1]"},
         )
 
 
@@ -80,26 +62,9 @@ def _make_recorder(
     return recorder
 
 
-def _text(widget: Static) -> str:
-    return str(widget.content)
-
-
 def _plain(widget: Static) -> str:
     """Display text of a markup Static (content holds the markup source)."""
     return RichText.from_markup(str(widget.content)).plain
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    msg = "timeout waiting for predicate"
-    raise AssertionError(msg)
 
 
 async def _check_fetch_all(root: Path) -> None:
@@ -111,7 +76,7 @@ async def _check_fetch_all(root: Path) -> None:
         table = app.query_one("#dashboard-table", DataTable)
         panel = app.query_one("#dash-progress", Static)
         status = app.query_one("#dash-status", Static)
-        await _wait_for(pilot, lambda: table.row_count == 1)
+        await wait_for(pilot, lambda: table.row_count == 1)
         assert not panel.display, "panel visible before any fetch-all"
 
         table.focus()
@@ -126,15 +91,15 @@ async def _check_fetch_all(root: Path) -> None:
         await pilot.press("enter")
 
         # Mid-run: first target running, others pending, live panel shown.
-        await _wait_for(pilot, lambda: len(calls) == 1)
+        await wait_for(pilot, lambda: len(calls) == 1)
         await pilot.pause()
         assert panel.display
         assert "▶ Week [1]" in _plain(panel), _plain(panel)
         assert "○ 1002" in _plain(panel), _plain(panel)
-        assert "Fetching 1/3" in _text(status), _text(status)
+        assert "Fetching 1/3" in text(status), text(status)
 
         # Completion: all done, sequential per-target calls with entry.out.
-        await _wait_for(pilot, lambda: app.state.active_job is None)
+        await wait_for(pilot, lambda: app.state.active_job is None)
         await pilot.pause()
         assert len(calls) == 3, calls
         course = app.state.current_course
@@ -146,13 +111,13 @@ async def _check_fetch_all(root: Path) -> None:
             assert call.course == 111111, call.course
             assert call.config == course.config_path
 
-        text = _plain(panel)
+        panel_text = _plain(panel)
         assert panel.display, "panel hidden after completion"
         for aid in AIDS:
-            assert f"✓ {LABELS[aid]}" in text, text
-        assert "Fetch complete: 3/3 ok" in _text(status), _text(status)
-        assert "data/" not in text
-        assert "/raw" not in text
+            assert f"✓ {LABELS[aid]}" in panel_text, panel_text
+        assert "Fetch complete: 3/3 ok" in text(status), text(status)
+        assert "data/" not in panel_text
+        assert "/raw" not in panel_text
         assert app.state.active_job is None
 
 
@@ -165,27 +130,25 @@ async def _check_fetch_all_failure(root: Path) -> None:
         table = app.query_one("#dashboard-table", DataTable)
         panel = app.query_one("#dash-progress", Static)
         status = app.query_one("#dash-status", Static)
-        await _wait_for(pilot, lambda: table.row_count == 1)
+        await wait_for(pilot, lambda: table.row_count == 1)
         table.focus()
         await pilot.press("enter")
         await pilot.pause()
-        notices: list[tuple] = []
-        app.notify = lambda *args, **kwargs: notices.append((args, kwargs))  # type: ignore[method-assign]
+        notices, _orig = spy_notify(app)
         await pilot.press("F")
         await pilot.pause()
         await pilot.press("enter")
-        await _wait_for(pilot, lambda: app.state.active_job is None)
+        await wait_for(pilot, lambda: app.state.active_job is None)
         await pilot.pause()
 
         assert len(calls) == 3, "failed target must not stop the run"
-        text = _plain(panel)
-        assert "✗ 1002" in text, text
-        assert "✓ Week [1]" in text, text
-        assert "✓ 1003" in text, text
-        assert "Fetch complete: 2/3 ok, 1 failed" in _text(status), _text(status)
+        panel_text = _plain(panel)
+        assert "✗ 1002" in panel_text, panel_text
+        assert "✓ Week [1]" in panel_text, panel_text
+        assert "✓ 1003" in panel_text, panel_text
+        assert "Fetch complete: 2/3 ok, 1 failed" in text(status), text(status)
         assert any(
-            "1 failed" in args[0] and kwargs.get("severity") == "warning"
-            for args, kwargs in notices
+            "1 failed" in msg and sev == "warning" for msg, sev in notices
         ), notices
 
 
@@ -196,40 +159,33 @@ async def _check_fetch_all_empty(root: Path) -> None:
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
         table = app.query_one("#dashboard-table", DataTable)
-        await _wait_for(pilot, lambda: table.row_count == 1)
+        await wait_for(pilot, lambda: table.row_count == 1)
         table.focus()
         await pilot.press("enter")
         await pilot.pause()
-        notices: list[tuple] = []
-        app.notify = lambda *args, **kwargs: notices.append((args, kwargs))  # type: ignore[method-assign]
+        notices, _orig = spy_notify(app)
         await pilot.press("F")
         await pilot.pause()
 
         assert calls == [], calls
         assert not isinstance(app.screen, ConfirmationModal)
         assert notices, "no notify emitted"
-        assert "No assignments configured" in notices[0][0][0], notices
+        assert "No assignments configured" in notices[0][0], notices
         assert app.state.active_job is None
 
 
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(
-            root / "data", "c1-first", 111111, with_entries=True,
-            with_aliases=True,
-        )
+        _build(root / "data", entries=True, aliases=True)
         await _check_fetch_all(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(
-            root / "data", "c1-first", 111111, with_entries=True,
-            with_aliases=True,
-        )
+        _build(root / "data", entries=True, aliases=True)
         await _check_fetch_all_failure(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data", "c1-first", 111111, with_entries=False)
+        _build(root / "data", entries=False)
         await _check_fetch_all_empty(root)
 
     print("tata_fetchall check OK")

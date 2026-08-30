@@ -16,15 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import tempfile
 import time
-from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import src.tata_plagiarism as plag_mod
+from e2e_common import cell, spy_notify, wait_for, write_aliases  # isort: skip - seeds repo-root sys.path before src imports
+from src import tata_plagiarism as plag_mod
 from src.tata_app import TataApp
 from src.tata_plagiarism import CompareModal, PlagiarismScreen, _pair_student_name
 from textual.app import ComposeResult, Screen
@@ -121,20 +118,26 @@ def _make_fixture(assignments_dir: Path) -> None:
     # global [student] only (overridden by course), course [course]/[assignment],
     # assignment-level [student] for the pairs file stems + a course-student
     # override (later files win -> "Carol, Z").
-    (assignments_dir / "alias.toml").write_text(
-        '[student]\n"1001" = "Global Alice"\n', encoding="utf-8"
+    write_aliases(assignments_dir / "alias.toml", students={"1001": "Global Alice"})
+    write_aliases(
+        course_dir / "alias.toml",
+        course_alias="My Course",
+        assignment_alias={"1001": "First Assignment"},
+        students={
+            "1001": "Alice, A",
+            "1002": "Bob, B",
+            "1003": "Carol, C",
+            "1004": "Dave, D",
+        },
     )
-    (course_dir / "alias.toml").write_text(
-        '[course]\n"111111" = "My Course"\n'
-        '[assignment]\n"1001" = "First Assignment"\n'
-        '[student]\n"1001" = "Alice, A"\n"1002" = "Bob, B"\n'
-        '"1003" = "Carol, C"\n"1004" = "Dave, D"\n',
-        encoding="utf-8",
-    )
-    (a_dir / "alias.toml").write_text(
-        '[student]\n"a1b" = "Alice A"\n"a1c" = "Bob B"\n"1003" = "Carol, Z"\n'
-        '"333333" = "Doe, Jane"\n',
-        encoding="utf-8",
+    write_aliases(
+        a_dir / "alias.toml",
+        students={
+            "a1b": "Alice A",
+            "a1c": "Bob B",
+            "1003": "Carol, Z",
+            "333333": "Doe, Jane",
+        },
     )
 
 
@@ -147,26 +150,6 @@ class PlagiarismHost(Screen):
 
     def compose(self) -> ComposeResult:
         yield PlagiarismScreen(self._state)  # type: ignore[arg-type]
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    message = "timeout waiting for predicate"
-    raise AssertionError(message)
-
-
-def _cell(table: DataTable, row: int, col: int) -> object:
-    from textual.coordinate import Coordinate
-
-    cell = table.get_cell_at(Coordinate(row, col))
-    return cell.plain if hasattr(cell, "plain") else str(cell)
 
 
 async def _enter(app: TataApp, pilot: Pilot) -> PlagiarismScreen:
@@ -196,18 +179,18 @@ def _check_pairs_pane(screen: PlagiarismScreen) -> None:
     assert labels == ["File A", "File B", "sim %", "overlap", "diff", "Flag"], labels
     # sorted by sim desc: 91.2 first, threshold 90% from the config override;
     # file stems (student uids) resolve to [student] aliases
-    assert _cell(table, 0, 0) == "Alice A", _cell(table, 0, 0)
-    assert _cell(table, 0, 1) == "Bob B", _cell(table, 0, 1)
-    assert _cell(table, 0, 2) == "91.2", _cell(table, 0, 2)
-    assert _cell(table, 0, 3) == "3", _cell(table, 0, 3)  # line-set length
-    assert _cell(table, 0, 4) == "+1.2", _cell(table, 0, 4)
-    assert _cell(table, 0, 5) == "FLAG", _cell(table, 0, 5)
-    assert _cell(table, 1, 5) == "-", _cell(table, 1, 5)
-    assert _cell(table, 1, 2) == "65.5", _cell(table, 1, 2)
-    assert _cell(table, 1, 4) == "-24.5", _cell(table, 1, 4)
+    assert cell(table, 0, 0) == "Alice A", cell(table, 0, 0)
+    assert cell(table, 0, 1) == "Bob B", cell(table, 0, 1)
+    assert cell(table, 0, 2) == "91.2", cell(table, 0, 2)
+    assert cell(table, 0, 3) == "3", cell(table, 0, 3)  # line-set length
+    assert cell(table, 0, 4) == "+1.2", cell(table, 0, 4)
+    assert cell(table, 0, 5) == "FLAG", cell(table, 0, 5)
+    assert cell(table, 1, 5) == "-", cell(table, 1, 5)
+    assert cell(table, 1, 2) == "65.5", cell(table, 1, 2)
+    assert cell(table, 1, 4) == "-24.5", cell(table, 1, 4)
     # unaliased stem falls back to the raw stem
-    assert _cell(table, 1, 0) == "a1d", _cell(table, 1, 0)
-    assert _cell(table, 1, 1) == "a1e", _cell(table, 1, 1)
+    assert cell(table, 1, 0) == "a1d", cell(table, 1, 0)
+    assert cell(table, 1, 1) == "a1e", cell(table, 1, 1)
     topbar = str(screen.query_one("#plag-topbar", Static).content)
     assert "My Course / First Assignment" in topbar, topbar
     assert "pairs 2" in topbar, topbar
@@ -228,16 +211,16 @@ async def _check_aggregate_pane(screen: PlagiarismScreen, pilot: Pilot) -> None:
     assert table.row_count == 2, table.row_count
     # course-scoped student names: course alias beats global; assignment-level
     # override wins for 1003 ("Carol, Z")
-    assert _cell(table, 0, 0) == "Alice, A", _cell(table, 0, 0)
-    assert _cell(table, 0, 1) == "Bob, B", _cell(table, 0, 1)
-    assert _cell(table, 0, 2) == "88.4", _cell(table, 0, 2)
-    assert _cell(table, 0, 3) == "5.21", _cell(table, 0, 3)
-    assert _cell(table, 0, 4) == "0.0002", _cell(table, 0, 4)
-    assert _cell(table, 0, 5) == "FLAG", _cell(table, 0, 5)
-    assert _cell(table, 1, 0) == "Carol, Z", _cell(table, 1, 0)
-    assert _cell(table, 1, 1) == "Dave, D", _cell(table, 1, 1)
-    assert _cell(table, 1, 5) == "? watch", _cell(table, 1, 5)
-    assert _cell(table, 1, 3) == "3.40", _cell(table, 1, 3)
+    assert cell(table, 0, 0) == "Alice, A", cell(table, 0, 0)
+    assert cell(table, 0, 1) == "Bob, B", cell(table, 0, 1)
+    assert cell(table, 0, 2) == "88.4", cell(table, 0, 2)
+    assert cell(table, 0, 3) == "5.21", cell(table, 0, 3)
+    assert cell(table, 0, 4) == "0.0002", cell(table, 0, 4)
+    assert cell(table, 0, 5) == "FLAG", cell(table, 0, 5)
+    assert cell(table, 1, 0) == "Carol, Z", cell(table, 1, 0)
+    assert cell(table, 1, 1) == "Dave, D", cell(table, 1, 1)
+    assert cell(table, 1, 5) == "? watch", cell(table, 1, 5)
+    assert cell(table, 1, 3) == "3.40", cell(table, 1, 3)
     # back to pairs
     await pilot.press("tab")
     await pilot.pause()
@@ -287,14 +270,7 @@ async def _check_error_states(screen: PlagiarismScreen, app: TataApp) -> None:
         / "all_pairs.json"
     )
     original = pairs_path.read_text(encoding="utf-8")
-    notices: list[tuple[str, str | None]] = []
-    orig_notify = app.notify
-
-    def notify_spy(message: str, *args: object, **kwargs: object) -> None:
-        notices.append((str(message), str(kwargs.get("severity"))))
-        orig_notify(message, *args, **kwargs)
-
-    app.notify = notify_spy
+    notices, orig_notify = spy_notify(app)
     try:
         # corrupt JSON -> Load failed
         pairs_path.write_text("{not json", encoding="utf-8")
@@ -345,12 +321,7 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
     original_detect = plag_mod.detect_plagiarism
     original_write = plag_mod._write_aggregate_json
     written: list[Path] = []
-    notices: list[tuple[str, str | None]] = []
-    orig_notify = app.notify
-
-    def notify_spy(message: str, *args: object, **kwargs: object) -> None:
-        notices.append((str(message), str(kwargs.get("severity"))))
-        orig_notify(message, *args, **kwargs)
+    notices, orig_notify = spy_notify(app)
 
     plag_mod.detect_plagiarism = _fake_detect
 
@@ -359,11 +330,10 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
         return config_path.parent
 
     plag_mod._write_aggregate_json = fake_write
-    app.notify = notify_spy
     try:
         # [p] -> detect job on the assignment config (single-assignment, no aggregate)
         await pilot.press("p")
-        await _wait_for(pilot, lambda: screen._job is not None)
+        await wait_for(pilot, lambda: screen._job is not None)
         assert screen._job["stage"] == "detect", screen._job
         assert screen._job["config_path"].name == "config.toml"
         assert str(screen._job["config_path"].parent).endswith(ASSIGNMENT)
@@ -372,7 +342,7 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
         await pilot.pause()
         assert screen._job["stage"] == "detect"
         assert any("running" in msg for msg, _sev in notices), notices
-        await _wait_for(pilot, lambda: screen._job is None)
+        await wait_for(pilot, lambda: screen._job is None)
         log = screen.query_one("#plag-log", RichLog)
         lines = [str(line) for line in log.lines]
         assert any("[done]" in line for line in lines), lines
@@ -380,10 +350,10 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
 
         # [a] -> aggregate job on the course config, writes the aggregate JSON
         await pilot.press("a")
-        await _wait_for(pilot, lambda: screen._job is not None)
+        await wait_for(pilot, lambda: screen._job is not None)
         assert screen._job["stage"] == "aggregate", screen._job
         assert str(screen._job["config_path"]).endswith(f"{COURSE}/config.toml")
-        await _wait_for(pilot, lambda: screen._job is None)
+        await wait_for(pilot, lambda: screen._job is None)
         assert written, "aggregate JSON writer should have been called"
         assert any(sev == "success" for _m, sev in notices), notices
     finally:

@@ -14,13 +14,10 @@ Run: uv run tests/review_screen_check.py
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from e2e_common import write_aliases, write_graded  # isort: skip - seeds repo-root sys.path before src imports
 from src.cli_options import ScoreReviewCliOptions
 from src.score_review import ScoreReviewScreen, Viewer
 from textual.app import App, ComposeResult
@@ -34,33 +31,19 @@ class _Harness(App):
         yield Static("home", id="home")
 
 
-def _make_graded(graded: Path) -> None:
-    (graded / "100001.json").write_text(
-        json.dumps({"task1": {"rating": "correct", "feedback": "good work"}}),
-        encoding="utf-8",
-    )
-    (graded / "100002.json").write_text(
-        json.dumps({"task1": {"rating": "partial", "feedback": "meh"}}),
-        encoding="utf-8",
-    )
-    # late submission: fetch suffixes the stem (_LATE_0); the alias key is
-    # the base uid ("333333").
-    (graded / "333333_LATE_0.json").write_text(
-        json.dumps({"task1": {"rating": "partial", "feedback": "late"}}),
-        encoding="utf-8",
-    )
-
-
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         graded = Path(tmp) / "graded"
         graded.mkdir()
-        _make_graded(graded)
+        write_graded(graded, "100001", "correct", "good work")
+        write_graded(graded, "100002", "partial", "meh")
+        # late submission: fetch suffixes the stem (_LATE_0); the alias key is
+        # the base uid ("333333").
+        write_graded(graded, "333333_LATE_0", "partial", "late")
         # Assignment-root alias.toml supplies display names (was roster.csv).
-        (Path(tmp) / "alias.toml").write_text(
-            '[student]\n"100001" = "Doe, A"\n"100002" = "Zed, Z"\n'
-            '"333333" = "Doe, Jane"\n',
-            encoding="utf-8",
+        write_aliases(
+            Path(tmp) / "alias.toml",
+            students={"100001": "Doe, A", "100002": "Zed, Z", "333333": "Doe, Jane"},
         )
 
         # 1. platform contract: push -> render -> esc pops back

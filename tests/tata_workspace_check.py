@@ -14,87 +14,25 @@ Run: uv run tests/tata_workspace_check.py
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import sys
 import tempfile
 import time
-from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import src.tata_workspace as tw
+from e2e_common import make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
+from src import tata_workspace as tw
 from src.tata_app import TataApp
 from src.tata_workspace import AssignmentScreen
 from textual.pilot import Pilot
 from textual.widgets import Button, RichLog
 
-COURSE = "c1-first"
-
-
-def _make_assignment(assignments_dir: Path) -> None:
-    course_dir = assignments_dir / COURSE
-    course_dir.mkdir(parents=True)
-    (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
-    )
-    a_dir = course_dir / "a1"
-    for sub in ("raw", "processed", "graded", "scored", "logs", "plagiarism"):
-        (a_dir / sub).mkdir(parents=True)
-    (a_dir / "config.toml").write_text(
-        "[fetch]\nassignment_id = 1001\n"
-        "[grading]\nrubric = 'rubrics/exam.toml'\n"
-        "system_prompt = 'prompt/system.md'\n"
-        "provider = 'deepseek'\n"
-        "max_parallel_tasks = 4\n",
-        encoding="utf-8",
-    )
-    (a_dir / "raw" / "100001.ipynb").write_text("{}", encoding="utf-8")
-    (a_dir / "raw" / "100002.txt").write_text("hi", encoding="utf-8")
-    (a_dir / "raw" / ".fetch-cache.json").write_text("{}", encoding="utf-8")
-    (a_dir / "processed" / "100001.md").write_text("# p", encoding="utf-8")
-    (a_dir / "processed" / "100002.md").write_text("# q", encoding="utf-8")
-    (a_dir / "graded" / "100001.json").write_text(
-        json.dumps({"task1": {"rating": "correct"}}), encoding="utf-8"
-    )
-    (a_dir / "scored" / "100001.txt").write_text(
-        "Total Score: 15.0/25.0", encoding="utf-8"
-    )
-    (a_dir / "logs" / "grading.checkpoint.json").write_text(
-        json.dumps({"done": ["100001"]}), encoding="utf-8"
-    )
-    (a_dir / "plagiarism" / "all_pairs.json").write_text(
-        json.dumps({
-            "version": 1,
-            "pair_count": 1,
-            "pairs": [
-                {
-                    "test_file": "x.py",
-                    "reference_file": "y.py",
-                    "max_similarity_pct": 95.0,
-                }
-            ],
-        }),
-        encoding="utf-8",
-    )
-    (assignments_dir.parent / ".env").write_text(
-        "CANVAS_BASE_URL=https://canvas.example.edu\nCANVAS_ACCESS_TOKEN=tok\n",
-        encoding="utf-8",
-    )
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    message = "timeout waiting for predicate"
-    raise AssertionError(message)
+ASSIGNMENT_CFG = (
+    "[grading]\n"
+    "rubric = 'rubrics/exam.toml'\n"
+    "system_prompt = 'prompt/system.md'\n"
+    "provider = 'deepseek'\n"
+    "max_parallel_tasks = 4\n"
+)
 
 
 def _stage_buttons(app: TataApp) -> dict[str, Button]:
@@ -107,14 +45,14 @@ def _stage_buttons(app: TataApp) -> dict[str, Button]:
 
 async def _enter_assignment(app: TataApp, pilot: Pilot) -> None:
     table = app.query_one("#dashboard-table")
-    await _wait_for(pilot, lambda: table.row_count == 1)
+    await wait_for(pilot, lambda: table.row_count == 1)
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "course"
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "assignment"
-    await _wait_for(pilot, lambda: app.query_one(AssignmentScreen).display)
+    await wait_for(pilot, lambda: app.query_one(AssignmentScreen).display)
 
 
 async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
@@ -155,7 +93,7 @@ async def _wait_modal_focused(
 ) -> None:
     """Wait until the ConfirmationModal is up AND its first button is focused
     (enter would otherwise be swallowed by the widget focused below)."""
-    await _wait_for(
+    await wait_for(
         pilot,
         lambda: isinstance(app.screen, tw.ConfirmationModal)
         and app.screen.query_one(f"Button#{button_id}").has_focus,
@@ -168,7 +106,7 @@ async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
     await pilot.press("g")
     await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("escape")
-    await _wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.ConfirmationModal))
+    await wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.ConfirmationModal))
     assert ws._job is None
 
     # slow stub so the check can observe the running JobHandle; no real grading
@@ -191,7 +129,7 @@ async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
     # a thread, so the running _job window is transient); assert the
     # observable outcome instead — the job summary line in the log.
     log = ws.query_one("#richlog", RichLog)
-    await _wait_for(
+    await wait_for(
         pilot,
         lambda: any("[grading]" in str(line) for line in log.lines),
     )
@@ -217,11 +155,11 @@ async def _check_cancel(app: TataApp, pilot: Pilot) -> None:
     await pilot.press("g")
     await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
-    await _wait_for(pilot, lambda: ws._job is not None)
+    await wait_for(pilot, lambda: ws._job is not None)
     await pilot.press("x")
     await pilot.pause()
     assert ws._job["state"] == "stopping"  # cancel_event set, UI in Stopping
-    await _wait_for(pilot, lambda: ws._job is None)
+    await wait_for(pilot, lambda: ws._job is None)
     lines = [str(line) for line in log.lines]
     assert any("Cancel requested" in line for line in lines), lines
 
@@ -246,30 +184,23 @@ async def _check_button_click(app: TataApp, pilot: Pilot) -> None:
     await pilot.pause()
     assert isinstance(ws.app.screen, tw.ConfirmationModal), ws.app.screen
     await pilot.press("escape")
-    await _wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.ConfirmationModal))
+    await wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.ConfirmationModal))
 
     await pilot.click("#stage-grade")
     await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
-    await _wait_for(pilot, lambda: ws._job is not None)
+    await wait_for(pilot, lambda: ws._job is not None)
     await pilot.click("#ws-cancel")
     await pilot.pause()
     assert ws._job["state"] == "stopping"
-    await _wait_for(pilot, lambda: ws._job is None)
+    await wait_for(pilot, lambda: ws._job is None)
     lines = [str(line) for line in log.lines]
     assert any("Cancel requested" in line for line in lines), lines
 
 
 async def _check_editor_warning(app: TataApp, pilot: Pilot) -> None:
     """F5: e with EDITOR unset -> warning notify (no fake 'Config reloaded')."""
-    notices: list[tuple[str, str | None]] = []
-    orig_notify = app.notify
-
-    def notify_spy(message: str, *args: object, **kwargs: object) -> None:
-        notices.append((str(message), str(kwargs.get("severity")) if "severity" in kwargs else None))
-        orig_notify(message, *args, **kwargs)
-
-    app.notify = notify_spy
+    notices, orig_notify = spy_notify(app)
     old_editor = os.environ.pop("EDITOR", None)
     try:
         await pilot.press("e")
@@ -288,14 +219,7 @@ async def _check_fetch_gate(app: TataApp, pilot: Pilot) -> None:
     ws = app.query_one(AssignmentScreen)
     cfg_path = ws._info.config_path
     original = cfg_path.read_text(encoding="utf-8")
-    notices: list[tuple[str, str | None]] = []
-    orig_notify = app.notify
-
-    def notify_spy(message: str, *args: object, **kwargs: object) -> None:
-        notices.append((str(message), str(kwargs.get("severity")) if "severity" in kwargs else None))
-        orig_notify(message, *args, **kwargs)
-
-    app.notify = notify_spy
+    notices, orig_notify = spy_notify(app)
     try:
         cfg_path.write_text(
             "[grading]\n"
@@ -349,7 +273,17 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_assignment(root / "data")
+        make_course(
+            root / "data",
+            assignment_cfg=ASSIGNMENT_CFG,
+            graded="first",
+            processed=["100001", "100002"],
+            scored=True,
+            fetch_cache=True,
+            logs=True,
+            pairs="full",
+            env=True,
+        )
         tw.grade_assignment = lambda config_path, **kwargs: {
             "stage": "grading",
             "success": 1,

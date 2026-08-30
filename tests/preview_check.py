@@ -14,14 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import tempfile
-import time
-from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.cli_options import ScoreReviewCliOptions
 from src.score_review import (
     Viewer,
@@ -30,7 +26,6 @@ from src.score_review import (
 )
 from textual import events
 from textual.geometry import Size
-from textual.pilot import Pilot
 from textual.widgets import Markdown, Static
 
 
@@ -55,19 +50,6 @@ def _write_notebook(path: Path) -> None:
         "nbformat_minor": 5,
     }
     path.write_text(json.dumps(nb), encoding="utf-8")
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 60.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.05)
-    msg = "timeout waiting for predicate"
-    raise AssertionError(msg)
 
 
 async def main() -> None:  # ruff: ignore[too-many-statements]
@@ -132,7 +114,7 @@ async def main() -> None:  # ruff: ignore[too-many-statements]
             panel = app.screen.query_one("#preview-panel")
 
             # student 1: ipynb + processed -> rendered Markdown from processed
-            await _wait_for(
+            await wait_for(
                 pilot,
                 lambda: (
                     "Processed Content" in (getattr(md_view, "_markdown", "") or "")
@@ -144,7 +126,7 @@ async def main() -> None:  # ruff: ignore[too-many-statements]
 
             # student 2: document (.md, no processed) -> Static text
             await pilot.click("#next-btn")
-            await _wait_for(pilot, lambda: "# doc text" in text_view.content)
+            await wait_for(pilot, lambda: "# doc text" in text_view.content)
             assert text_view.display, "doc text not shown"
             assert not md_view.display, "doc text not shown"
 

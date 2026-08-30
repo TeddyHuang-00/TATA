@@ -12,55 +12,16 @@ Run: uv run tests/tata_modal_check.py
 from __future__ import annotations
 
 import asyncio
-import sys
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import src.tata_workspace as tw
+from e2e_common import make_course, wait_for  # isort: skip - seeds repo-root sys.path before src imports
+from src import tata_workspace as tw
 from src.tata_app import TataApp
 from src.tata_workspace import AssignmentScreen, ConfirmationModal
 from textual.containers import Vertical
 from textual.pilot import Pilot
 from textual.widgets import DataTable, HelpPanel
-
-COURSE = "c1-first"
-
-
-def _make_course(assignments_dir: Path) -> None:
-    course_dir = assignments_dir / COURSE
-    course_dir.mkdir(parents=True)
-    (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 111111\n"
-        '[[fetch.assignments]]\nassignment_id = 1001\nout = "a1/raw"\n',
-        encoding="utf-8",
-    )
-    a_dir = course_dir / "a1"
-    (a_dir / "raw").mkdir(parents=True)
-    (a_dir / "processed").mkdir()
-    (a_dir / "config.toml").write_text(
-        "[fetch]\nassignment_id = 1001\n", encoding="utf-8"
-    )
-    (a_dir / "raw" / "x.py").write_text("print(1)", encoding="utf-8")
-    (a_dir / "processed" / "x.md").write_text("# x", encoding="utf-8")
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
-) -> None:
-    import asyncio as _asyncio
-    import time
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await _asyncio.sleep(0.02)
-    message = "timeout waiting for predicate"
-    raise AssertionError(message)
 
 
 async def _check_modal_centered(
@@ -90,21 +51,21 @@ async def main() -> None:
     assert not hasattr(tw, "HelpModal"), "HelpModal class must be deleted"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data")
+        make_course(root / "data", entries=True)
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#dashboard-table", DataTable)
-            await _wait_for(pilot, lambda: table.row_count == 1)
+            await wait_for(pilot, lambda: table.row_count == 1)
             table.focus()
             await pilot.press("enter")
             await pilot.pause()
             assert app.state.dashboard_level == "course"
             # F -> ConfirmationModal (push) -> centered
             await pilot.press("F")
-            await _wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
             await _check_modal_centered(app, pilot, (120, 40))
             await pilot.press("escape")
-            await _wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+            await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
             # native '?' keys panel on the dashboard screen
             await _check_native_help(app, pilot)
             # ...and inside the assignment workspace too
@@ -121,17 +82,17 @@ async def main() -> None:
     # 80x30: the modal must not clip (width 92 > 80 previously overflowed)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data")
+        make_course(root / "data", entries=True)
         app = TataApp(root_dir=root)
         async with app.run_test(size=(80, 30)) as pilot:
             table = app.query_one("#dashboard-table", DataTable)
-            await _wait_for(pilot, lambda: table.row_count == 1)
+            await wait_for(pilot, lambda: table.row_count == 1)
             table.focus()
             await pilot.press("enter")
             await pilot.pause()
             assert app.state.dashboard_level == "course"
             await pilot.press("F")
-            await _wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
             await _check_modal_centered(app, pilot, (80, 30))
     print("tata_modal check OK")
 

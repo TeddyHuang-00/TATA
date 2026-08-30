@@ -20,22 +20,17 @@ Run: uv run tests/tata_settings_check.py
 from __future__ import annotations
 
 import asyncio
-import sys
 import tempfile
-import time
 import tomllib
-from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.assignment_config import load_assignment_file
 from src.config_edit import dump_toml
 from src.tata_app import AppState
 from src.tata_scan import scan_courses
 from src.tata_settings import SettingsScreen
 from textual.app import App, ComposeResult
-from textual.pilot import Pilot
 from textual.widgets import Checkbox, Input, Select, Static, TabbedContent
 
 GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndisplay_threshold = 0.75\n"
@@ -111,19 +106,6 @@ def _make_state(root: Path, *, course: bool, assignment: bool) -> AppState:
         state.load_assignments(state.current_course)
         state.current_assignment = state.assignments[0]
     return state
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 10.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    message = "timeout waiting for predicate"
-    raise AssertionError(message)
 
 
 def _status_text(screen: SettingsScreen) -> str:
@@ -238,7 +220,7 @@ async def _check_assignment_load_and_save(root: Path) -> None:
         copydetect.value = "0.8"
         screen.query_one("#f-plagiarism-embedding_weight", Input).value = "0.2"
         await pilot.press("ctrl+s")
-        await _wait_for(pilot, lambda: "Saved to" in _status_text(screen))
+        await wait_for(pilot, lambda: "Saved to" in _status_text(screen))
         assignment_cfg = root / _ASSIGNMENT_CFG
         saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
         assert _close(saved["plagiarism"]["copydetect_weight"], 0.8)

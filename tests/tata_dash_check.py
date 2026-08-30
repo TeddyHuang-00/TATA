@@ -11,18 +11,21 @@ Run: uv run tests/tata_dash_check.py
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 import tempfile
-import time
 from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-import src.cli as main_mod
-import src.tata_app as tata_app_mod
+from e2e_common import (  # isort: skip - seeds repo-root sys.path before src imports
+    COURSE,
+    cell,
+    make_course,
+    spy_notify,
+    text,
+    wait_for,
+    write_aliases,
+)
 from rich.text import Text as RichText
+from src import cli as main_mod, tata_app as tata_app_mod
 from src.cli_options import FetchCliOptions
 from src.score_review import ScoreReviewScreen
 from src.tata_app import (
@@ -37,83 +40,22 @@ from src.tata_workspace import ConfirmationModal
 from textual.pilot import Pilot
 from textual.widgets import DataTable, Select, Static
 
-COURSE = "c1-first"
 
-
-def _make_course(assignments_dir: Path, *, graded: bool = True) -> None:
-    """One course with a1 (flagged + graded) and a2 (partial, no graded)."""
-    course_dir = assignments_dir / COURSE
-    course_dir.mkdir(parents=True)
-    (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
-    )
-    for name, aid in [("a1", 1001), ("a2", 1002)]:
-        a_dir = course_dir / name
-        (a_dir / "raw").mkdir(parents=True)
-        (a_dir / "processed").mkdir()
-        (a_dir / "graded").mkdir()
-        (a_dir / "config.toml").write_text(
-            f"[fetch]\nassignment_id = {aid}\n", encoding="utf-8"
-        )
-        (a_dir / "raw" / "x.py").write_text("print(1)", encoding="utf-8")
-        (a_dir / "processed" / "x.md").write_text("# x", encoding="utf-8")
-        if graded and name == "a1":
-            (a_dir / "graded" / "100001.json").write_text(
-                json.dumps({"task1": {"rating": "correct"}}), encoding="utf-8"
-            )
-    pairs = course_dir / "a1" / "plagiarism"
-    pairs.mkdir()
-    (pairs / "all_pairs.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "pairs": [{"max_similarity_pct": 95.0}],
-            }
-        ),
-        encoding="utf-8",
+def _fix(root: Path, *, env: bool = False) -> None:
+    """Standard dash fixture: c1-first with a1 (flagged + graded) and a2."""
+    make_course(
+        root / "data",
+        assignments={"a1": 1001, "a2": 1002},
+        graded="first",
+        pairs="minimal",
+        env=env,
     )
     # alias.toml display names: course dir aliases itself + both assignments
-    (course_dir / "alias.toml").write_text(
-        '[course]\n"111111" = "My Course"\n'
-        '[assignment]\n"1001" = "My Alias"\n"1002" = "Second Alias"\n',
-        encoding="utf-8",
+    write_aliases(
+        root / "data" / COURSE / "alias.toml",
+        course_alias="My Course",
+        assignment_alias={"1001": "My Alias", "1002": "Second Alias"},
     )
-
-
-def _cell(table: DataTable, row: int, col: int) -> object:
-    from textual.coordinate import Coordinate
-
-    cell = table.get_cell_at(Coordinate(row, col))
-    return cell.plain if hasattr(cell, "plain") else str(cell)
-
-
-def _text(widget: Static) -> str:
-    return str(widget.content)
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    message = "timeout waiting for predicate"
-    raise AssertionError(message)
-
-
-def _spy_notify(app: TataApp) -> tuple[list[tuple[str, str | None]], Callable]:
-    notices: list[tuple[str, str | None]] = []
-    orig = app.notify
-
-    def spy(message: str, *args: object, **kwargs: object) -> None:
-        notices.append((str(message), str(kwargs.get("severity")) if "severity" in kwargs else None))
-        orig(message, *args, **kwargs)
-
-    app.notify = spy
-    return notices, spy
 
 
 def _assert_modal_gone(app: TataApp, modal_type: type) -> None:
@@ -124,11 +66,11 @@ async def _check_import_course_gate_without_env() -> None:
     """Global + no .env: c -> error notify, no modal."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data")
+        _fix(root)
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            notices, _spy = _spy_notify(app)
+            notices, _spy = spy_notify(app)
             table = app.query_one("#dashboard-table", DataTable)
             table.focus()
             await pilot.press("c")
@@ -145,11 +87,7 @@ async def _check_import_course_modal_with_env(
     """Global + .env: c -> ImportCourseModal; cancel -> no side effects."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data")
-        (root / ".env").write_text(
-            "CANVAS_BASE_URL=https://canvas.example.edu\nCANVAS_ACCESS_TOKEN=tok\n",
-            encoding="utf-8",
-        )
+        _fix(root, env=True)
         orig_list_courses = tata_app_mod.list_courses
         monkeypatch(
             tata_app_mod, "list_courses", lambda _canvas: [(111111, "c1-first"), (777, "hw-course")]
@@ -161,18 +99,18 @@ async def _check_import_course_modal_with_env(
                 table = app.query_one("#dashboard-table", DataTable)
                 table.focus()
                 await pilot.press("c")
-                await _wait_for(
+                await wait_for(
                     pilot, lambda: isinstance(app.screen, ImportCourseModal)
                 )
                 modal = app.screen
                 assert isinstance(modal, ImportCourseModal)
                 # background worker populates the Select
-                await _wait_for(
+                await wait_for(
                     pilot, lambda: modal.query_one(Select).value == 111111
                 )
                 # cancel: escape -> no new dirs
                 await pilot.press("escape")
-                await _wait_for(
+                await wait_for(
                     pilot, lambda: not isinstance(app.screen, ImportCourseModal)
                 )
                 dirs = sorted(
@@ -195,24 +133,24 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
     main_mod._run_fetch = fake_fetch
     try:
         await pilot.press("c")
-        await _wait_for(pilot, lambda: isinstance(app.screen, ImportAssignmentModal))
+        await wait_for(pilot, lambda: isinstance(app.screen, ImportAssignmentModal))
         modal = app.screen
         assert isinstance(modal, ImportAssignmentModal)
-        await _wait_for(pilot, lambda: modal.query_one(Select).value == 777)
+        await wait_for(pilot, lambda: modal.query_one(Select).value == 777)
         # default mode = auto (third radio pressed), out defaults to the id
         mode_set = modal.query_one("#modal-mode")
         assert mode_set.pressed_button.id == "mode-auto"  # type: ignore[union-attr]
         await pilot.pause()
         await pilot.click("#import")
-        await _wait_for(pilot, lambda: bool(calls))
-        await _wait_for(pilot, lambda: app.query_one(DashboardScreen)._job is None)
+        await wait_for(pilot, lambda: bool(calls))
+        await wait_for(pilot, lambda: app.query_one(DashboardScreen)._job is None)
         assert len(calls) == 1
         arg = calls[0]
         assert arg.course == 111111
         assert arg.assignment == 777
         assert arg.out == "777/raw", arg.out
         assert arg.mode == "auto"
-        status = _text(app.query_one("#dash-status", Static))
+        status = text(app.query_one("#dash-status", Static))
         assert "Done in" in status, status
     finally:
         main_mod._run_fetch = orig_fetch
@@ -223,12 +161,12 @@ async def _check_score_review(pilot: Pilot, app: TataApp) -> None:
     table = app.query_one("#dashboard-table", DataTable)
     # a1 (cursor row 0) has graded json -> push ScoreReviewScreen
     await pilot.press("s")
-    await _wait_for(pilot, lambda: isinstance(app.screen, ScoreReviewScreen))
+    await wait_for(pilot, lambda: isinstance(app.screen, ScoreReviewScreen))
     await pilot.press("escape")
-    await _wait_for(pilot, lambda: not isinstance(app.screen, ScoreReviewScreen))
+    await wait_for(pilot, lambda: not isinstance(app.screen, ScoreReviewScreen))
 
     # move to a2 (no graded) -> warning, no push
-    notices, _spy = _spy_notify(app)
+    notices, _spy = spy_notify(app)
     table.focus()
     await pilot.press("down")
     await pilot.pause()
@@ -260,9 +198,9 @@ async def _check_fetch_all_confirm(pilot: Pilot, app: TataApp) -> None:
     table = app.query_one("#dashboard-table", DataTable)
     table.focus()
     await pilot.press("F")
-    await _wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+    await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
     await pilot.press("escape")
-    await _wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+    await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
     assert app.query_one(DashboardScreen)._job is None
 
 
@@ -271,9 +209,9 @@ async def _check_plagiarism_confirm(pilot: Pilot, app: TataApp) -> None:
     table = app.query_one("#dashboard-table", DataTable)
     table.focus()
     await pilot.press("p")
-    await _wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+    await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
     await pilot.press("escape")
-    await _wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+    await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
     assert app.query_one(DashboardScreen)._job is None
 
 
@@ -340,21 +278,21 @@ async def _check_aliases(pilot: Pilot, app: TataApp) -> None:
     await pilot.press("escape")
     await pilot.pause()
     assert app.state.dashboard_level == "global"
-    assert _cell(table, 0, 0) == "My Course", _cell(table, 0, 0)
+    assert cell(table, 0, 0) == "My Course", cell(table, 0, 0)
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "course"
-    breadcrumb = _text(app.query_one("#breadcrumb", Static))
+    breadcrumb = text(app.query_one("#breadcrumb", Static))
     assert "My Course" in breadcrumb, breadcrumb
     assert table.row_count == 2
-    assert _cell(table, 0, 0) == "My Alias", _cell(table, 0, 0)
-    assert _cell(table, 1, 0) == "Second Alias", _cell(table, 1, 0)
+    assert cell(table, 0, 0) == "My Alias", cell(table, 0, 0)
+    assert cell(table, 1, 0) == "Second Alias", cell(table, 1, 0)
     table.move_cursor(row=0)
     await pilot.pause()
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "assignment"
-    topbar = _text(app.query_one("#ws-topbar", Static))
+    topbar = text(app.query_one("#ws-topbar", Static))
     assert "My Alias" in topbar, topbar
 
 
@@ -378,15 +316,15 @@ async def _check_alias_brackets() -> None:
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#dashboard-table", DataTable)
-            await _wait_for(pilot, lambda: table.row_count == 1)
+            await wait_for(pilot, lambda: table.row_count == 1)
             # global-level cell: escaped markup renders the literal name
-            assert _cell(table, 0, 0) == "My Course [S]", _cell(table, 0, 0)
+            assert cell(table, 0, 0) == "My Course [S]", cell(table, 0, 0)
             table.focus()
             await pilot.press("enter")
             await pilot.pause()
             assert app.state.dashboard_level == "course"
-            topbar = _text(app.query_one("#topbar", Static))
-            breadcrumb = _text(app.query_one("#breadcrumb", Static))
+            topbar = text(app.query_one("#topbar", Static))
+            breadcrumb = text(app.query_one("#breadcrumb", Static))
             # display text keeps literal brackets; the stored content is
             # markup-escaped, so rendering raises no MarkupError
             assert RichText.from_markup(topbar).plain == (
@@ -394,7 +332,7 @@ async def _check_alias_brackets() -> None:
             ), topbar
             assert RichText.from_markup(breadcrumb).plain == "Global / My Course [S]"
             assert table.row_count == 1
-            assert _cell(table, 0, 0) == "Week [1]", _cell(table, 0, 0)
+            assert cell(table, 0, 0) == "Week [1]", cell(table, 0, 0)
 
 
 async def main() -> None:
@@ -403,11 +341,7 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data")
-        (root / ".env").write_text(
-            "CANVAS_BASE_URL=https://canvas.example.edu\nCANVAS_ACCESS_TOKEN=tok\n",
-            encoding="utf-8",
-        )
+        _fix(root, env=True)
 
         def monkeypatch(module: object, name: str, fn: object) -> None:
             setattr(module, name, fn)

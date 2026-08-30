@@ -10,70 +10,19 @@ Run: uv run tests/tata_app_check.py
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 import tempfile
-import time
-from collections.abc import Callable
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from e2e_common import COURSE, make_course, text, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.tata_app import TataApp
 from src.tata_plagiarism import PlagiarismScreen
 from src.tata_scan import scan_assignments, scan_courses
 from src.tata_settings import SettingsScreen
 from src.tata_workspace import AssignmentScreen
-from textual.pilot import Pilot
 from textual.widgets import DataTable, Static
 
-COURSE_A = "c1-first"
+COURSE_A = COURSE
 COURSE_B = "c2-second"
-
-
-def _make_course(
-    assignments_dir: Path, name: str, course_id: int, assignments: dict[str, int]
-) -> None:
-    course_dir = assignments_dir / name
-    course_dir.mkdir(parents=True)
-    (course_dir / "config.toml").write_text(
-        f"[fetch]\ncourse_id = {course_id}\n", encoding="utf-8"
-    )
-    for a_name, a_id in assignments.items():
-        a_dir = course_dir / a_name
-        (a_dir / "raw").mkdir(parents=True)
-        (a_dir / "processed").mkdir()
-        (a_dir / "graded").mkdir()
-        (a_dir / "scored" / "txt").mkdir(parents=True)
-        (a_dir / "config.toml").write_text(
-            f"[fetch]\nassignment_id = {a_id}\n", encoding="utf-8"
-        )
-        (a_dir / "raw" / "100001.ipynb").write_text("{}", encoding="utf-8")
-        (a_dir / "raw" / "100002.txt").write_text("hi", encoding="utf-8")
-        (a_dir / "processed" / "100001.md").write_text("# p", encoding="utf-8")
-        (a_dir / "graded" / "100001.json").write_text(
-            json.dumps({"task1": {"rating": "correct"}}), encoding="utf-8"
-        )
-        (a_dir / "scored" / "txt" / "100001.txt").write_text(
-            "Total Score: 15.0/25.0", encoding="utf-8"
-        )
-
-
-def _text(widget: Static) -> str:
-    return str(widget.content)
-
-
-async def _wait_for(
-    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        await pilot.pause()
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    message = "timeout waiting for predicate"
-    raise AssertionError(message)
 
 
 def _check_scanner(assignments_dir: Path) -> None:
@@ -110,10 +59,10 @@ async def _check_navigation(root: Path) -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         table = app.query_one("#dashboard-table", DataTable)
         breadcrumb = app.query_one("#breadcrumb", Static)
-        await _wait_for(pilot, lambda: table.row_count == 2)
+        await wait_for(pilot, lambda: table.row_count == 2)
 
         assert table.row_count == 2, table.row_count
-        assert "Global" in _text(breadcrumb)
+        assert "Global" in text(breadcrumb)
 
         # drill down: Global -> Course (row 0 = COURSE_A)
         table.focus()
@@ -123,13 +72,13 @@ async def _check_navigation(root: Path) -> None:
         assert app.state.current_course is not None
         assert app.state.current_course.dir_name == COURSE_A
         assert table.row_count == 2  # a1, a2
-        assert COURSE_A in _text(breadcrumb)
+        assert COURSE_A in text(breadcrumb)
 
         # drill up: Course -> Global
         await pilot.press("escape")
         await pilot.pause()
         assert app.state.dashboard_level == "global"
-        assert "Global" in _text(breadcrumb)
+        assert "Global" in text(breadcrumb)
         assert table.row_count == 2
 
         # drill all the way to the assignment workspace
@@ -145,9 +94,9 @@ async def _check_navigation(root: Path) -> None:
         # fixture configs have no [grading] -> workspace empty state, buttons off
         empty = workspace.query_one("#ws-empty", Static)
         assert empty.display, "no-config empty state not shown"
-        assert "No valid config.toml" in _text(empty), _text(empty)
+        assert "No valid config.toml" in text(empty), text(empty)
         assert len(workspace.query(".stage-btn")) == 6
-        assert "a1" in _text(breadcrumb)
+        assert "a1" in text(breadcrumb)
 
         # back up twice to Global
         await pilot.press("escape")
@@ -169,14 +118,14 @@ async def _check_empty_state(root: Path) -> None:
         table = app.query_one("#dashboard-table", DataTable)
         assert empty.display, "empty state not shown"
         assert not table.display
-        assert "No courses yet" in _text(empty), _text(empty)
+        assert "No courses yet" in text(empty), text(empty)
 
 
 async def _check_tabs(root: Path) -> None:
     """T4c: real Plagiarism/Settings screens mounted; tab switching refreshes."""
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for(pilot, lambda: app.state.courses != [])
+        await wait_for(pilot, lambda: app.state.courses != [])
         # placeholders are gone: the real screens are mounted
         assert app.query_one(PlagiarismScreen) is not None
         assert app.query_one(SettingsScreen) is not None
@@ -207,24 +156,22 @@ async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assignments_dir = root / "data"
-        _make_course(assignments_dir, COURSE_A, 111111, {"a1": 1001, "a2": 1002})
-        _make_course(assignments_dir, COURSE_B, 999001, {"b1": 2001})
-        # one flagged pair for a1's flagged_pairs
-        pairs_path = assignments_dir / COURSE_A / "a1" / "plagiarism" / "all_pairs.json"
-        pairs_path.parent.mkdir(parents=True)
-        pairs_path.write_text(
-            json.dumps({
-                "version": 1,
-                "pair_count": 1,
-                "pairs": [
-                    {
-                        "test_file": "x.py",
-                        "reference_file": "y.py",
-                        "max_similarity_pct": 95.0,
-                    }
-                ],
-            }),
-            encoding="utf-8",
+        make_course(
+            assignments_dir,
+            course=COURSE_A,
+            course_id=111111,
+            assignments={"a1": 1001, "a2": 1002},
+            graded="all",
+            scored=True,
+            pairs="full",  # one flagged pair for a1's flagged_pairs
+        )
+        make_course(
+            assignments_dir,
+            course=COURSE_B,
+            course_id=999001,
+            assignments={"b1": 2001},
+            graded="all",
+            scored=True,
         )
 
         _check_scanner(assignments_dir)
