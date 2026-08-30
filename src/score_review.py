@@ -29,13 +29,13 @@ from textual.widgets import (
 )
 from textual_serve.server import Server
 
+from src.aliases import student_display_name
 from src.cli_options import ScoreReviewCliOptions
 from src.processing import (
     _convert_docx_to_markdown,
     _convert_html_to_markdown,
     _convert_ipynb_to_markdown,
 )
-from src.tata_alias import student_display_name
 
 # Layout threshold: stack the panels below this width (Textual has no media
 # queries; same threshold as the discussion TUI viewer).
@@ -232,7 +232,7 @@ class ScoreReviewScreen(Screen):
         self.students = _load_students(score_dir)
         # Display names come from the alias.toml chain; the assignment root is
         # score_dir.parent, so the chain candidates are assignment root /
-        # parent / parent.parent alias.toml files (see src.tata_alias).
+        # parent / parent.parent alias.toml files (see src.aliases).
         assignment_root = score_dir.parent
         assignments_dir = assignment_root.parent.parent
         course_dir_name = assignment_root.parent.name

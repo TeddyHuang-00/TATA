@@ -45,6 +45,12 @@ from textual.widgets import (
     TabPane,
 )
 
+from src.aliases import (
+    assignment_display_name,
+    course_display_name,
+    course_student_display_name,
+    student_display_name,
+)
 from src.assignment_config import load_assignment_file
 from src.plagiarism import detect_plagiarism
 from src.plagiarism_aggregate import (
@@ -56,12 +62,6 @@ from src.plagiarism_aggregate import (
     _load_assignment_records,
 )
 from src.score_review import _base_uid, _find_raw_file, _preview_content
-from src.tata_alias import (
-    assignment_display_name,
-    course_display_name,
-    course_student_display_name,
-    student_display_name,
-)
 from src.tata_workspace import (
     _format_job_summary,
     _is_displayed,

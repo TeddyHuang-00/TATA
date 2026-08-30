@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.aliases import load_alias_file
 from src.canvas_fetch import fetch_assignment, remember_fetch
-from src.tata_alias import load_alias_file
 
 
 class StubAtt:

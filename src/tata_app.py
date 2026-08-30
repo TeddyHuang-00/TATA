@@ -40,12 +40,12 @@ from textual.widgets import (
     TabPane,
 )
 
+from src.aliases import assignment_display_name, course_display_name
 from src.assignment_config import FetchSection
 from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
 from src.plagiarism import detect_plagiarism
 from src.score_review import ScoreReviewScreen
-from src.tata_alias import assignment_display_name, course_display_name
 from src.tata_plagiarism import PlagiarismScreen
 from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
 from src.tata_settings import SettingsScreen

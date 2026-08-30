@@ -11,7 +11,7 @@ from typing import Literal
 
 from canvasapi import Canvas
 
-from src.tata_alias import upsert_student_aliases
+from src.aliases import upsert_student_aliases
 
 FetchMode = Literal["attach", "text", "auto"]
 

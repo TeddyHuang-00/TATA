@@ -317,7 +317,7 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        prog="python -m src.tata_alias",
+        prog="python -m src.aliases",
         description="TATA alias.toml ops: one-time migrate of a course dir "
         "from display-name dirs to assignment-id dirs.",
     )

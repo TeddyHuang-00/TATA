@@ -43,6 +43,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, RichLog, Static
 
+from src.aliases import assignment_display_name
 from src.analysis import analyze_assignment
 from src.assignment_config import load_assignment_file
 from src.cli_options import FetchCliOptions
@@ -50,7 +51,6 @@ from src.grading import grade_assignment
 from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
 from src.scoring import score_assignment
-from src.tata_alias import assignment_display_name
 from src.tata_scan import AssignmentInfo
 
 if TYPE_CHECKING:

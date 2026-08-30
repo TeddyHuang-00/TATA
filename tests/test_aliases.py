@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.tata_alias import (
+from src.aliases import (
     assignment_display_name,
     course_display_name,
     course_student_display_name,
