@@ -2,8 +2,8 @@
 
 *.schema.json
 
-assignments/*
-!assignments/example
+data/*
+!data/example
 
 __pycache__/
 .vscode

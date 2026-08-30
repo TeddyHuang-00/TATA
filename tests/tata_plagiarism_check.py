@@ -59,7 +59,7 @@ PAIRS_JSON = {
 }
 
 AGGREGATE_JSON = {
-    "assignments_root": f"assignments/{COURSE}",
+    "data_root": f"data/{COURSE}",
     "alpha": 0.01,
     "tested_pairs": 2,
     "flagged_pairs": 1,
@@ -417,7 +417,7 @@ async def check_screen(app: TataApp, pilot: Pilot) -> None:
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_fixture(root / "assignments")
+        _make_fixture(root / "data")
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             await check_screen(app, pilot)

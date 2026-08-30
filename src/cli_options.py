@@ -82,7 +82,7 @@ class PlagiarismCliOptions(ConfigFileOptions):
     """Detect plagiarism across submissions.
 
     ``--config`` accepts either an assignment config (that assignment only,
-    code + text as applicable) or the course root ``assignments/config.toml``
+    code + text as applicable) or the course root ``data/config.toml``
     (every assignment under it).
     """
 

@@ -1,7 +1,7 @@
 # TATA 设计稿 v1.1 — 04 · Plagiarism（S4）
 
 > 职责：相似度对排名表（DataTable）、行选中→对比弹窗（Modal 并排文本）、顶部聚合报告入口；**z 分数按 per-assignment 与聚合两套呈现**；上下文=当前 course（跨作业聚合）或当前作业（单作业对）
-> v1.1 变更：顶部标题显示课程上下文；`[a]` 聚合键驱动 **course config**（`assignments/<course>/config.toml` 的 `[[fetch.assignments]]`），不再是 assignments/ 根配置；聚合只在本 course 内（跨课程聚合 v1 不做，YAGNI）
+> v1.1 变更：顶部标题显示课程上下文；`[a]` 聚合键驱动 **course config**（`data/<course>/config.toml` 的 `[[fetch.assignments]]`），不再是 data/ 根配置；聚合只在本 course 内（跨课程聚合 v1 不做，YAGNI）
 > 数据来源：`plagiarism/all_pairs.json`（copydetect：`{test_file, reference_file, test_similarity_pct, reference_similarity_pct, max_similarity_pct, token_overlap}`）、`all_pairs.embedding.json`（嵌入向量来源），聚合报告来自 `plagiarism_aggregate`（`MatchRecord{student_a, student_b, raw_similarity_pct, logit_similarity, z_score, one_sided_p_value}` + 个体方法 gumbel 统计 + 合并 z）
 
 ---
@@ -76,7 +76,7 @@
   ├─ 有 current_assignment → 上下文绑定该作业（视图 A 用该作业的 all_pairs.json）
   ├─ 只有 current_course → 上下文绑定该 course（视图 A/B 显示 course 内聚合：所有作业 pairs）
   ├─ 无 course → 显示 Global 提示：「请先在 Dashboard 进入某课程再使用查重屏幕」
-        （例外：若存在 assignments/plagiarism-cross-course.json，顶部出现跨课程 Tab 并可查看）
+        （例外：若存在 data/plagiarism-cross-course.json，顶部出现跨课程 Tab 并可查看）
   ├─ all_pairs.json 存在 → 解析 → 视图 A 填充（按 max_similarity_pct 降序，默认 20 行）
   ├─ 聚合 JSON 存在 → 视图 B 填充；不存在 → 视图 B 空态 + [a] 按钮高亮
   ├─ 作业未运行检测 → 视图 A 空态 + [p] 按钮高亮
@@ -85,7 +85,7 @@
    → o 发起 $EDITOR 打开原文件；esc 关闭返回表格
 [a] 运行聚合 → job（后台：读本 course 各作业 all_pairs*.json → 合并统计 → 写聚合 JSON/MD）→ 完成后视图 B 刷新 + notify
 [p] 运行检测 → job（与 S2 的 K 按钮同一协议）→ 完成后视图 A 刷新
-[跨课程 Tab]（来自 Global 层 p 或 CLI --cross-course）→ 读 assignments/plagiarism-cross-course.json → 视图 C 填充
+[跨课程 Tab]（来自 Global 层 p 或 CLI --cross-course）→ 读 data/plagiarism-cross-course.json → 视图 C 填充
 ```
 
 ## 5. 键盘映射表
@@ -110,7 +110,7 @@
 | **空态·未运行检测** | 视图 A 居中 Static：「No pairs yet. Run plagiarism (`p`) on the assignment or `[a]` for course aggregation.」 |
 | **空态·无对** | `pair_count == 0`（模板单文件/无参考匹配）：「Detection done, 0 pairs (submissions <2 or all below threshold).」 |
 | **空态·聚合缺失** | 视图 B：Static「No aggregate report yet. Run `a` for cross-assignment z-scores (needs `[[fetch.assignments]]` in the course config).」 |
-| **空态·course config 缺作业清单** | `[a]` 点击时 `notify(error, "assignments/<course>/config.toml missing [[fetch.assignments]]")`，引导去 S1·Course 导入作业 |
+| **空态·course config 缺作业清单** | `[a]` 点击时 `notify(error, "data/<course>/config.toml missing [[fetch.assignments]]")`，引导去 S1·Course 导入作业 |
 | **空态·无跨课程报告** | 视图 C：Static「No cross-course report yet. Run from the Global view (`p`) or `main.py plagiarism --cross-course`.」 |
 | **加载态·检测运行中** | 视图 A 顶部行 `Static`「Detecting: 12/18 …」+ 不定态 ProgressBar；表数据加载完成后替换 |
 | **错误态·JSON 损坏** | 该视图显示「Load failed: <err>」+ `notify(error)`；建议 `p` 重跑 |

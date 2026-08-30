@@ -1,7 +1,7 @@
 # TATA 设计稿 v1.1 — 05 · Settings（S5）
 
 > 职责：provider、Canvas、plagiarism 权重、路径与 schema 生成的集中配置编辑；**上下文选择器：Global / Course / Assignment 三级**（右上 Select）
-> v1.1 变更：写入目标由「根配置/作业配置」两层改为**三层**：global config（`assignments/config.toml`，可选，跨课程默认）、**course config**（`assignments/<course>/config.toml`：course_id/mode/`[[fetch.assignments]]`/[plagiarism] 覆盖）、assignment config（`assignments/<course>/<name>/config.toml`：`[grading]`/`[plagiarism]`/`[assignment]`/`[processing]`）；.env 仍全局
+> v1.1 变更：写入目标由「根配置/作业配置」两层改为**三层**：global config（`data/config.toml`，可选，跨课程默认）、**course config**（`data/<course>/config.toml`：course_id/mode/`[[fetch.assignments]]`/[plagiarism] 覆盖）、assignment config（`data/<course>/<name>/config.toml`：`[grading]`/`[plagiarism]`/`[assignment]`/`[processing]`）；.env 仍全局
 > 上下文来源：`state.current_course` / `state.current_assignment`；从 S1 三层的 `cfg`/`g` 进入时预置（Global 视图 `g`→Global 上下文；Course 视图 `cfg`→Course 上下文；Assignment 视图 `e`→Assignment 上下文）
 > 保存逻辑：全屏右侧显示「将写入: 文件路径」；内容经 `load_assignment_file` 校验通过才落盘（pydantic 错误逐条展示）
 
@@ -23,7 +23,7 @@
 │  │ rubric        [rubrics/example_rubric.toml ]                            │
 │  │ system_prompt [prompt/system.md            ]  (comma-separated)         │
 │  │ ────────────────────────────────────────────                            │
-│  │ Will write: assignments/271218/1-10-my-ai-start/…/config.toml [grading] │
+│  │ Will write: data/271218/1-10-my-ai-start/…/config.toml [grading] │
 ├──┴─────────────────────────────────────────────────────────────────────────┤
 │ [ctrl+s Save]  [Validation: OK]  [r Reset]                                 │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -49,9 +49,9 @@
 
 | 上下文 | 可编辑内容 | 写入目标 |
 |--------|-----------|---------|
-| **Global** | 环境 `.env`（BASE_URL/TOKEN）；provider 注册表（`config/provider.toml`）；global config 可选的跨课程默认（[plagiarism] 权重/阈值） | `.env` / `config/provider.toml` / `assignments/config.toml` |
-| **Course** | `[fetch]` course_id/mode、`[[fetch.assignments]]` 只读摘要、`[plagiarism]` course 级覆盖 | `assignments/<course>/config.toml` |
-| **Assignment** | `[grading]`（provider/rubric/prompt/parallel）、`[assignment]` 目录、`[processing]`、`[plagiarism]` | `assignments/<course>/<name>/config.toml` |
+| **Global** | 环境 `.env`（BASE_URL/TOKEN）；provider 注册表（`config/provider.toml`）；global config 可选的跨课程默认（[plagiarism] 权重/阈值） | `.env` / `config/provider.toml` / `data/config.toml` |
+| **Course** | `[fetch]` course_id/mode、`[[fetch.assignments]]` 只读摘要、`[plagiarism]` course 级覆盖 | `data/<course>/config.toml` |
+| **Assignment** | `[grading]`（provider/rubric/prompt/parallel）、`[assignment]` 目录、`[processing]`、`[plagiarism]` | `data/<course>/<name>/config.toml` |
 
 > 未选作业时 Assignment 上下文禁用（只显示 Global/Course）——与 v1 行为一致但扩展为「未选课程」亦然。Course 上下文字段与 v1 根配置页相同（Canvas 页从「根配置」改名为「课程配置」）。
 
@@ -127,7 +127,7 @@
 | **空态·未选课程** | 面板顶部 Static：「未选中课程——Grading/Plagiarism/路径页禁用；前往 Dashboard 的 Global 视图进入课程后重进。」 |
 | **空态·无 .env** | Canvas Tab 顶部黄色 `Static`：「.env 不存在。填入 BASE_URL/TOKEN 后保存将创建 .env（gitignored）。」 |
 | **空态·provider 注册表为空** | provider `Select` 显示「(无可用 provider)」+ 红色提示；保存禁用 |
-| **加载态·读配置** | 首帧 `Static`「读取 assignments/xxx/config.toml …」 |
+| **加载态·读配置** | 首帧 `Static`「读取 data/xxx/config.toml …」 |
 | **加载态·测试连接** | 「正在连接 Canvas…」+ 按钮 disabled + 不定态旋转符 |
 | **错误态·校验失败** | Modal 错误列表（见 §4）；例：「grading.max_parallel_tasks: Input should be less than or equal to 10」「plagiarism weights: sum 1.20 ≠ 1.00」 |
 | **错误态·写盘失败(权限)** | `notify(error, "写入失败: <err>")`；不丢输入（field 内容保留，可重试） |

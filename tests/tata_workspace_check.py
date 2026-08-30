@@ -349,7 +349,7 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_assignment(root / "assignments")
+        _make_assignment(root / "data")
         tw.grade_assignment = lambda config_path, **kwargs: {
             "stage": "grading",
             "success": 1,

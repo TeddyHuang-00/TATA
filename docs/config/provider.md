@@ -69,7 +69,7 @@ If env var is missing, placeholder resolves to empty string, which usually cause
 
 ## Cross-file consistency rule
 
-`assignments/<name>/config.toml` -> `[grading].provider` must exactly match a key under `[providers.<name>]` here.
+`data/<name>/config.toml` -> `[grading].provider` must exactly match a key under `[providers.<name>]` here.
 
 Example:
 

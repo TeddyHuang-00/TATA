@@ -42,7 +42,7 @@ This generates:
 
 ## 5. Start from example config
 
-Copy [assignments/example/config.toml](../assignments/example/config.toml) and edit it for your assignment.
+Copy [data/example/config.toml](../data/example/config.toml) and edit it for your assignment.
 
 Minimal required fields are in `[grading]` only:
 
@@ -69,7 +69,7 @@ Plagiarism settings are optional under `[plagiarism]` and default to:
 
 ## 6. Prepare assignment files
 
-For an assignment folder (for example `assignments/my-assignment`):
+For an assignment folder (for example `data/my-assignment`):
 
 - put student submissions into `raw/`
 - put the reference answer into `reference.md` at assignment root
@@ -82,55 +82,55 @@ For an assignment folder (for example `assignments/my-assignment`):
 Preprocess only:
 
 ```bash
-uv run main.py preprocess -c assignments/my-assignment/config.toml
+uv run main.py preprocess -c data/my-assignment/config.toml
 ```
 
 Grade only:
 
 ```bash
-uv run main.py grade -c assignments/my-assignment/config.toml
+uv run main.py grade -c data/my-assignment/config.toml
 ```
 
 Plagiarism only:
 
 ```bash
-uv run main.py plagiarism -c assignments/my-assignment/config.toml
+uv run main.py plagiarism -c data/my-assignment/config.toml
 ```
 
 Score only:
 
 ```bash
-uv run main.py score -c assignments/my-assignment/config.toml
+uv run main.py score -c data/my-assignment/config.toml
 ```
 
 Analyze grading quality (meta analysis):
 
 ```bash
-uv run main.py analyze -c assignments/my-assignment/config.toml
+uv run main.py analyze -c data/my-assignment/config.toml
 ```
 
 Audit reference notebook TODO/instruction mismatches:
 
 ```bash
 uv run misc/reference_mismatch_audit.py \
-	--notebook assignments/my-assignment/reference.ipynb
+	--notebook data/my-assignment/reference.ipynb
 ```
 
 Aggregate plagiarism reports across assignments:
 
 ```bash
-uv run main.py plagiarism -c assignments/config.toml --aggregate \
+uv run main.py plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 
 Run all stages:
 
 ```bash
-uv run main.py preprocess -c assignments/my-assignment/config.toml
-uv run main.py plagiarism -c assignments/my-assignment/config.toml
-uv run main.py grade -c assignments/my-assignment/config.toml
-uv run main.py score -c assignments/my-assignment/config.toml
-uv run main.py analyze -c assignments/my-assignment/config.toml
+uv run main.py preprocess -c data/my-assignment/config.toml
+uv run main.py plagiarism -c data/my-assignment/config.toml
+uv run main.py grade -c data/my-assignment/config.toml
+uv run main.py score -c data/my-assignment/config.toml
+uv run main.py analyze -c data/my-assignment/config.toml
 ```
 
 `all` executes stages in this order: plagiarism -> preprocess -> grade -> score -> analyze.

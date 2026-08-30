@@ -8,7 +8,7 @@ Symptom:
 
 Fix:
 
-1. Start from [assignments/example/config.toml](../assignments/example/config.toml)
+1. Start from [data/example/config.toml](../data/example/config.toml)
 1. Ensure `[grading]` has all required keys:
    - `rubric`
    - `system_prompt`
@@ -177,5 +177,5 @@ Run the rule-based audit helper and manually review flagged TODOs:
 
 ```bash
 uv run misc/reference_mismatch_audit.py \
-   --notebook assignments/my-assignment/reference.ipynb
+   --notebook data/my-assignment/reference.ipynb
 ```

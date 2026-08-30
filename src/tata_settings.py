@@ -1,8 +1,8 @@
 """TATA Settings screen (S5, T6b): three-layer config editing.
 
 The screen edits ``config.toml`` at three layers — global
-(``assignments/config.toml``), course (``assignments/<course>/config.toml``)
-and assignment (``assignments/<course>/<name>/config.toml``) — selected by a
+(``data/config.toml``), course (``data/<course>/config.toml``)
+and assignment (``data/<course>/<name>/config.toml``) — selected by a
 context ``Select``. The read path reuses :mod:`src.assignment_config`
 (layered merge via :func:`load_assignment_file`); writes merge **only the
 edited keys** into the target file and validate the result with the same
@@ -462,7 +462,7 @@ class SettingsScreen(Vertical):
     # ---------- loading ----------
 
     def _global_path(self) -> Path:
-        return self.state.root_dir / "assignments" / "config.toml"
+        return self.state.root_dir / "data" / "config.toml"
 
     @staticmethod
     def _read_raw(path: Path | None) -> dict:
@@ -538,7 +538,7 @@ class SettingsScreen(Vertical):
             )
         elif self._ctx == "global" and not self._global_exists:
             hint = (
-                "No global config file (assignments/config.toml) — press e to "
+                "No global config file (data/config.toml) — press e to "
                 "create it, or save here once the file exists."
             )
         self.query_one("#ctx-hint", Static).update(hint)
@@ -828,7 +828,7 @@ class SettingsScreen(Vertical):
         if self._ctx == "global" and not target.is_file():
             self._fail(
                 "No global config",
-                "assignments/config.toml does not exist — create it with "
+                "data/config.toml does not exist — create it with "
                 "$EDITOR (e) first",
             )
             return

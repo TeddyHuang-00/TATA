@@ -4,17 +4,17 @@
 
 Use this project as a starter by keeping only generic assets:
 
-- [assignments/example/config.toml](../assignments/example/config.toml)
+- [data/example/config.toml](../data/example/config.toml)
 - [rubrics/example_rubric.toml](../rubrics/example_rubric.toml)
 - [prompt/system.md](../prompt/system.md)
 - schemas under [config](../config)
 
-Create one folder per assignment under assignments/.
+Create one folder per assignment under data/.
 
 ## 2. Create a new assignment quickly
 
-1. Create new folder: `assignments/{name}`
-2. Copy [assignments/example/config.toml](../assignments/example/config.toml)
+1. Create new folder: `data/{name}`
+2. Copy [data/example/config.toml](../data/example/config.toml)
 3. Point rubric and prompt to your files
 4. Put student inputs into `raw/`
 5. Put reference into `reference.md` (or `reference.ipynb`/`reference.html`) at assignment root
@@ -55,7 +55,7 @@ For notebook-based labs, run TODO/instruction mismatch audit on your reference n
 
 ```bash
 uv run misc/reference_mismatch_audit.py \
-	--notebook assignments/{name}/reference.ipynb
+	--notebook data/{name}/reference.ipynb
 ```
 
 Treat this as a preflight check to reduce rubric ambiguity and downstream grading drift.
@@ -65,7 +65,7 @@ Treat this as a preflight check to reduce rubric ambiguity and downstream gradin
 After individual assignment plagiarism runs, build a single aggregate view:
 
 ```bash
-uv run main.py plagiarism -c assignments/config.toml --aggregate \
+uv run main.py plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 

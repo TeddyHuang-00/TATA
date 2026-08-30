@@ -170,9 +170,9 @@ def test_fetch_entries_uses_list_out_and_mode(
         "fetch_assignment",
         lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
     )
-    cfg_path = tmp_path / "assignments" / "config.toml"
+    cfg_path = tmp_path / "data" / "config.toml"
     main_mod._fetch_entries(object(), 271218, cfg_path, cfg)
     assert calls == [
-        (271218, 11, str((tmp_path / "assignments/a/raw").resolve()), "attach"),
-        (271218, 12, str((tmp_path / "assignments/b/raw").resolve()), "text"),
+        (271218, 11, str((tmp_path / "data/a/raw").resolve()), "attach"),
+        (271218, 12, str((tmp_path / "data/b/raw").resolve()), "text"),
     ]

@@ -244,13 +244,13 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
     canvas = Canvas(base_url, token)
 
     # Primary: course-level configs, each with its own [[fetch.assignments]]
-    # list. Three-level layout: assignments/<course>/config.toml; legacy
-    # two-level: assignments/config.toml (the only course-level file).
-    root_cfg = root / "assignments" / "config.toml"
-    # Fresh three-level layout has no assignments/config.toml — only feed
+    # list. Three-level layout: data/<course>/config.toml; legacy
+    # two-level: data/config.toml (the only course-level file).
+    root_cfg = root / "data" / "config.toml"
+    # Fresh three-level layout has no data/config.toml — only feed
     # _fetch_course paths that exist.
     course_configs = [root_cfg] if root_cfg.exists() else []
-    course_configs += sorted(root.glob("assignments/*/config.toml"))
+    course_configs += sorted(root.glob("data/*/config.toml"))
     seen: set[tuple[int, int]] = set()
     fetched_any = False
     for config_path in course_configs:
@@ -264,13 +264,13 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
         return
 
     # Fallback: per-assignment configs recorded before the course-level list
-    # existed — legacy two-level layout (assignments/*/config.toml) and
-    # three-level (assignments/*/*/config.toml).
+    # existed — legacy two-level layout (data/*/config.toml) and
+    # three-level (data/*/*/config.toml).
     targets = []
     seen_paths: set[Path] = set()
     for raw_path in sorted([
-        *root.glob("assignments/*/config.toml"),
-        *root.glob("assignments/*/*/config.toml"),
+        *root.glob("data/*/config.toml"),
+        *root.glob("data/*/*/config.toml"),
     ]):
         config_path = raw_path.resolve()
         if config_path in seen_paths:
@@ -291,7 +291,7 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
         sys.exit(
             "no assignment configs with a [fetch] section matched; "
             "add [[fetch.assignments]] entries to a course config "
-            "(assignments/<course>/config.toml)"
+            "(data/<course>/config.toml)"
         )
     for config_path, cfg in targets:
         out = cfg.resolve_out_dir(config_path.parent)

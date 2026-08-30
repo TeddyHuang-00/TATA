@@ -1,7 +1,7 @@
 # TATA 设计稿 v1.1 — 01 · Dashboard（S1，三层导航）
 
 > 职责：三层 drill-down 工作台 —— **Global（课程一览）→ Course（课程作业一览 + 跨作业操作）→ Assignment（作业工作台，即原 S2 内容）**
-> 版本变更（v1.1 多课程支持）：Dashboard 吸收原 S2 Pipeline Tab；`assignments/` 目录插入 course 层（`assignments/<course>/<assignment>`）；配置分层 global→course→assignment
+> 版本变更（v1.1 多课程支持）：Dashboard 吸收原 S2 Pipeline Tab；`data/` 目录插入 course 层（`data/<course>/<assignment>`）；配置分层 global→course→assignment
 > 对应 CLI：`fetch`、`plagiarism --aggregate`、帮助、`list_courses/list_assignments`
 
 ---
@@ -10,7 +10,7 @@
 
 | 层 | 职责 | 动作 | 数据扫描 |
 |----|------|------|---------|
-| **Global** | 课程一览（每行 = 一个 course 的聚合状态） | 导入课程、全局配置 | 扫描 `assignments/*/` 中**含 `config.toml` 且其子目录亦含 `config.toml` 的目录**（即 course 目录） |
+| **Global** | 课程一览（每行 = 一个 course 的聚合状态） | 导入课程、全局配置 | 扫描 `data/*/` 中**含 `config.toml` 且其子目录亦含 `config.toml` 的目录**（即 course 目录） |
 | **Course** | 该课程所有作业一览 + 跨作业操作 | 导入作业、fetch 全部、查重+聚合、课程配置 | `scan_assignments(course_dir)` |
 | **Assignment** | 单作业工作台（信息 + pipeline 操作 + 设置入口） | 原 S2 全部 stage 操作 | 沿用 02-pipeline.md |
 
@@ -51,8 +51,8 @@
 平均分 = Σ(作业平均分) / 作业数（有分数的作业）
 查重疑点 = Σ 各作业 pair 中 $error 判定数（聚合 z 超 alpha）
 最近运行 = max(旗下作业 stage_mtime)
-课程识别：assignments/<dir>/config.toml 存在 且 <dir> 的子目录含 config.toml
-        （排除 example/、无 config 的杂目录；排除 assignments/config.toml 本身）
+课程识别：data/<dir>/config.toml 存在 且 <dir> 的子目录含 config.toml
+        （排除 example/、无 config 的杂目录；排除 data/config.toml 本身）
 ```
 
 ## 3. 视图 B · Course（Course 层）线框（≤100 列）
@@ -90,8 +90,8 @@
 | 动作 | 键 | 等价 CLI | 行为 |
 |------|----|---------|------|
 | 导入作业 | `c` | `fetch` 交互选择 | Modal 选 Canvas 作业 + out/mode → 单作业 fetch → 写 course config 的 `[[fetch.assignments]]` |
-| fetch 全部 | `F` | `fetch -c assignments/<course>/config.toml` | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」 |
-| 查重+聚合 | `p` | `plagiarism -c assignments/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏 |
+| fetch 全部 | `F` | `fetch -c data/<course>/config.toml` | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」 |
+| 查重+聚合 | `p` | `plagiarism -c data/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏 |
 | 课程配置 | `cfg` | — | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/mode/`[[fetch.assignments]]`/[plagiarism] 覆盖） |
 
 > `[maybe]` 全局聚合（跨课程查重）v1 不做 —— 用户未要求，YAGNI；将来加就是 global 视图一个按钮。
@@ -121,7 +121,7 @@ Assignment 层新增职责（相对 v1 的 S2）：
 | `↑/↓` 或 `j/k` | S1 全层 | Move selection | DataTable 原生 |
 | `enter` | Global/Course | Drill down one level | Global→Course→Assignment; inside Assignment 'enter' unused (02 has no enter binding) |
 | `esc` / `backspace` | Course/Assignment | Drill up one level | Assignment→Course→Global; at Global top esc closes Modal or is ignored |
-| `c` | Global | Import course | Modal: pick Canvas course → create `assignments/<dir>/config.toml` → enter Course view |
+| `c` | Global | Import course | Modal: pick Canvas course → create `data/<dir>/config.toml` → enter Course view |
 | `c` | Course | Import assignment | Modal: pick assignment + out + mode → fetch → append to course config |
 | `F` | Course | Fetch all | Per-assignment cache skip (`.fetch-cache.json`) |
 | `p` | Course | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to S4 |
@@ -138,11 +138,11 @@ Assignment 层新增职责（相对 v1 的 S2）：
 ### 6.1 导入课程（Global 层入口，新）
 ```
 [c] → Modal「Import course from Canvas」: Select(list_courses)     # 后台线程预载
-    → 确认: 创建 assignments/<dir>/config.toml（[fetch].course_id=…, mode=attach）
+    → 确认: 创建 data/<dir>/config.toml（[fetch].course_id=…, mode=attach）
        <dir> 默认 = course_id（如 "271218"），Modal 内 Input 可自定义（唯一性校验：重名报错）
     → 进入 Course 视图（若该课程已有作业目录则扫描显示；否则空态提示 [c] 导入作业）
 ```
-> 目录创建只写一份最小 course config（course_id + mode）；作业清单 `[[fetch.assignments]]` 由后续「导入作业」累积。course config 是 gitignored（`assignments/*`），与 v1 根配置同语义。**目录名约定：默认 course_id（用户 2026-08-29 确认），可自定义；迁移后课程显示名 = 目录名（或在目录名后附 course_id）。**
+> 目录创建只写一份最小 course config（course_id + mode）；作业清单 `[[fetch.assignments]]` 由后续「导入作业」累积。course config 是 gitignored（`data/*`），与 v1 根配置同语义。**目录名约定：默认 course_id（用户 2026-08-29 确认），可自定义；迁移后课程显示名 = 目录名（或在目录名后附 course_id）。**
 
 ### 6.2 导入作业 / fetch 全部 / 查重+聚合（course 内）
 ```
@@ -173,7 +173,7 @@ Global 视图 [p] → Confirm Modal「Run plagiarism across ALL courses (N cours
         ② 调用新入口 cross_course_aggregate(course_configs) —— 读各课程 all_pairs.json，
            用现有 src/plagiarism_aggregate.py 的 logit/z/Stouffer 逻辑做全局合并
            （复用 BuildConfig.pair_data_files 的构造方式，只是 pair 文件跨课程路径）
-        ③ 写 assignments/plagiarism-cross-course.json + 报告（暂定存 Global root）
+        ③ 写 data/plagiarism-cross-course.json + 报告（暂定存 Global root）
     → 完成后主动切 S4 显示跨课程聚合视图；其余时间 S4 顶部提供「跨课程」Tab（见 04)
 ```
 > 跨课程输出位置与 CLI 形式：新增 `main.py plagiarism --cross-course`（无 `-c`，扫描全部课程）；TUI 按钮等价该命令。实现上在 `src/plagiarism_aggregate.py` 增加一个接受多课程 pair 列表的入口（现有核心统计函数复用，仅输入装配不同）。
@@ -182,7 +182,7 @@ Global 视图 [p] → Confirm Modal「Run plagiarism across ALL courses (N cours
 
 | 态 | 表现（**文案全英文**） |
 |----|------|
-| **Empty·no courses** | Global 表格区居中 Static：「No courses yet. Press `c` to import one from Canvas, or drop an `assignments/<course>/config.toml` and press `r`.」 |
+| **Empty·no courses** | Global 表格区居中 Static：「No courses yet. Press `c` to import one from Canvas, or drop an `data/<course>/config.toml` and press `r`.」 |
 | **Empty·course without assignments** | Course 表格区 Static：「No assignments in this course yet. Press `c` to import.」 |
 | **Empty·no .env** | Global 顶栏 `Canvas: ✗ (.env missing)`，`c` 禁用；提示去 S5·Global 配置。 |
 | **Loading·scanning** | 各层首帧 `Static`「Scanning…」，<100ms 通常一闪而过 |
@@ -193,27 +193,27 @@ Global 视图 [p] → Confirm Modal「Run plagiarism across ALL courses (N cours
 
 ```
 # 步骤 1: 拷贝（不破坏原数据）
-mkdir assignments/271218
-cp -r assignments/0-10-* assignments/1-1-* assignments/1-6-* \
-      assignments/1-7-* assignments/1-10-* assignments/1-11-*  assignments/271218/
-cp assignments/config.toml assignments/271218/config.toml
+mkdir data/271218
+cp -r data/0-10-* data/1-1-* data/1-6-* \
+      data/1-7-* data/1-10-* data/1-11-*  data/271218/
+cp data/config.toml data/271218/config.toml
 # 步骤 2: 验证（确认运行无误）
-#   - 每个作业 config: uv run python -c "from src.assignment_config import load_assignment_file; load_assignment_file('assignments/271218/<name>/config.toml')" 全部通过
+#   - 每个作业 config: uv run python -c "from src.assignment_config import load_assignment_file; load_assignment_file('data/271218/<name>/config.toml')" 全部通过
 #   - 课程枚举: 新 scan_courses() 正确识别 271218、各作业计数一致
-#   - CLI 冒烟: fetch -c assignments/271218/config.toml --retry 空跑/缓存命中无错误；plagiarism --aggregate 能读到作业
+#   - CLI 冒烟: fetch -c data/271218/config.toml --retry 空跑/缓存命中无错误；plagiarism --aggregate 能读到作业
 # 步骤 3: 确认后删除原位置（仅在验证全过后；用户 2026-08-29 明确：确认运行无误后再删）
-rm -r assignments/0-10-* assignments/1-1-* assignments/1-6-* \
-      assignments/1-7-* assignments/1-10-* assignments/1-11-* assignments/config.toml
+rm -r data/0-10-* data/1-1-* data/1-6-* \
+      data/1-7-* data/1-10-* data/1-11-* data/config.toml
 ```
 - `[[fetch.assignments]].out` 值**不变**（相对 course config 解析：`1-6-…/raw` 在新位置下仍对）
-- 迁移后 `assignments/config.toml` 若保留 = **global config**（可选，跨课程默认；无它时三层退化为两层）
+- 迁移后 `data/config.toml` 若保留 = **global config**（可选，跨课程默认；无它时三层退化为两层）
 - course 目录名：默认 course_id（`271218`），任意唯一目录名 + config 内 course_id 亦可
 - 现有 `find_root_config`（`parent.parent/config.toml`）在迁移后**自动**指向 course config，无需修改；`load_assignment_file` 需增加第三层合并（global，可选）
 
 ## 9. 配置分层契约（v1.1 核心）
 
 ```
-assignments/
+data/
 ├── config.toml              # GLOBAL（可选）：跨课程默认值（[plagiarism] 默认、fetch mode 默认）
 ├── ITCS5153/                # COURSE 目录（识别：含 config.toml 且子目录=作业）
 │   ├── config.toml          # COURSE 配置：course_id、mode、[[fetch.assignments]]、[plagiarism] 覆盖

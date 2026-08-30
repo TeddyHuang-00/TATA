@@ -151,7 +151,7 @@ async def _check_fetch_all(root: Path) -> None:
         for aid in AIDS:
             assert f"✓ {LABELS[aid]}" in text, text
         assert "Fetch complete: 3/3 ok" in _text(status), _text(status)
-        assert "assignments/" not in text
+        assert "data/" not in text
         assert "/raw" not in text
         assert app.state.active_job is None
 
@@ -216,20 +216,20 @@ async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _make_course(
-            root / "assignments", "c1-first", 271218, with_entries=True,
+            root / "data", "c1-first", 271218, with_entries=True,
             with_aliases=True,
         )
         await _check_fetch_all(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _make_course(
-            root / "assignments", "c1-first", 271218, with_entries=True,
+            root / "data", "c1-first", 271218, with_entries=True,
             with_aliases=True,
         )
         await _check_fetch_all_failure(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments", "c1-first", 271218, with_entries=False)
+        _make_course(root / "data", "c1-first", 271218, with_entries=False)
         await _check_fetch_all_empty(root)
 
     print("tata_fetchall check OK")

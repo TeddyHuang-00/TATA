@@ -90,7 +90,7 @@ async def main() -> None:
     assert not hasattr(tw, "HelpModal"), "HelpModal class must be deleted"
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments")
+        _make_course(root / "data")
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#dashboard-table", DataTable)
@@ -121,7 +121,7 @@ async def main() -> None:
     # 80x30: the modal must not clip (width 92 > 80 previously overflowed)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments")
+        _make_course(root / "data")
         app = TataApp(root_dir=root)
         async with app.run_test(size=(80, 30)) as pilot:
             table = app.query_one("#dashboard-table", DataTable)

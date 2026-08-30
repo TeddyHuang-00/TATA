@@ -206,7 +206,7 @@ async def _check_tabs(root: Path) -> None:
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        assignments_dir = root / "assignments"
+        assignments_dir = root / "data"
         _make_course(assignments_dir, COURSE_A, 271218, {"a1": 1001, "a2": 1002})
         _make_course(assignments_dir, COURSE_B, 999001, {"b1": 2001})
         # one flagged pair for a1's flagged_pairs

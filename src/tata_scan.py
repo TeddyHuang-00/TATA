@@ -1,6 +1,6 @@
 """Course/assignment directory scanning for the TATA TUI.
 
-Course recognition follows design 01 §2: a course dir under ``assignments/``
+Course recognition follows design 01 §2: a course dir under ``data/``
 holds a ``config.toml`` whose own subdirectories are leaf assignments (each
 with a ``config.toml``).  :func:`src.assignment_config.is_course_config`
 implements exactly that rule (it also rejects ``example/`` and stray leaf

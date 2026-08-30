@@ -16,8 +16,8 @@ from src.tata_alias import (
 
 
 def _write_chain(tmp_path: Path) -> Path:
-    """Two-level chain: assignments/, assignments/271218/, .../a1/"""
-    assignments = tmp_path / "assignments"
+    """Two-level chain: data/, data/271218/, .../a1/"""
+    assignments = tmp_path / "data"
     (assignments / "271218" / "a1").mkdir(parents=True)
     (assignments / "alias.toml").write_text(
         '[course]\n"271218" = "Global Course"\n'
@@ -136,7 +136,7 @@ def test_upsert_creates_file_with_header(tmp_path: Path) -> None:
 
 
 def _make_course_tree(tmp_path: Path) -> Path:
-    course = tmp_path / "assignments" / "271218"
+    course = tmp_path / "data" / "271218"
     (course / "first-colab" / "raw").mkdir(parents=True)
     (course / "first-colab" / "config.toml").write_text(
         '[fetch]\nassignment_id = 2978557\nmode = "text"\n', encoding="utf-8"

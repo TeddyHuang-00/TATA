@@ -122,7 +122,7 @@
 
 | 态 | 表现 |
 |----|------|
-| **Empty·no config** | 进入时检测 `assignments/<course>/<name>/config.toml` 缺失或 `[grading]` 段校验失败 → 全屏 Static 提示 + 「Open Settings」按钮（切 S5），stage 按钮全禁用 |
+| **Empty·no config** | 进入时检测 `data/<course>/<name>/config.toml` 缺失或 `[grading]` 段校验失败 → 全屏 Static 提示 + 「Open Settings」按钮（切 S5），stage 按钮全禁用 |
 | **Empty·not fetched** | raw 计数 0：preprocess/grade/score 按钮副标题显示「needs fetch first」，按钮**可点但弹「建议先运行 fetch」确认** |
 | **Empty·no scores** | `s` 分数审查入口按钮 disabled + 副标题「No scores yet」 |
 | **Loading·config parse** | 面板区 `Static`「Parsing config…」 |

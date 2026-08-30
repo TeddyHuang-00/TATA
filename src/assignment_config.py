@@ -261,22 +261,22 @@ def ensure_assignment_dirs(paths: AssignmentPaths) -> None:
 
 def find_root_config(assignment_config_path: Path) -> Path | None:
     """Course-level config: ``config.toml`` in the parent of the assignment
-    directory (course layout: ``assignments/<course>/config.toml``; legacy
-    two-level layout: ``assignments/config.toml``)."""
+    directory (course layout: ``data/<course>/config.toml``; legacy
+    two-level layout: ``data/config.toml``)."""
     root = assignment_config_path.resolve().parent.parent / "config.toml"
     return root if root.is_file() else None
 
 
 def find_global_config(course_config_path: Path) -> Path | None:
-    """Global config above a course config (``assignments/config.toml``)."""
+    """Global config above a course config (``data/config.toml``)."""
     global_cfg = course_config_path.resolve().parent.parent / "config.toml"
     if not global_cfg.is_file() or not is_root_config(global_cfg):
         return None
-    # A true global sits in the layout root (assignments/); a config.toml one
+    # A true global sits in the layout root (data/); a config.toml one
     # level higher (e.g. the repo root) is the "climb one level too far"
     # poison — its dir always has child config.toml files, so is_root_config
     # alone can never reject it (MINOR-4).
-    if global_cfg.parent.name != "assignments":
+    if global_cfg.parent.name != "data":
         return None
     return global_cfg
 
@@ -310,7 +310,7 @@ def is_root_config(config_path: Path) -> bool:
 def is_course_config(config_path: Path) -> bool:
     """True when config_path is a course config: its children are leaf
     assignments (no config level below them). In the legacy two-level layout
-    ``assignments/config.toml`` also matches."""
+    ``data/config.toml`` also matches."""
     resolved = config_path.resolve()
     if resolved.name != "config.toml" or not resolved.is_file():
         return False
@@ -354,14 +354,14 @@ def _load_toml(config_path: Path) -> dict:
         msg = (
             f"Invalid TOML in config file: {config_path}\n"
             f"Details: {exc}\n"
-            "Tip: start from assignments/example/config.toml and edit only [grading] first."
+            "Tip: start from data/example/config.toml and edit only [grading] first."
         )
         raise ValueError(msg) from exc
 
 
 def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
     """Load an assignment config layered over the course config and, when
-    present, the global config above it (``assignments/config.toml``).
+    present, the global config above it (``data/config.toml``).
 
     Merge order is global < course < assignment: per-key values in the
     assignment config win. Paths always resolve against the assignment

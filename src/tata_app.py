@@ -104,7 +104,7 @@ class AppState:
 
     @property
     def assignments_dir(self) -> Path:
-        return self.root_dir / "assignments"
+        return self.root_dir / "data"
 
     def refresh_courses(self) -> None:
         self.courses = scan_courses(self.assignments_dir)
@@ -855,7 +855,7 @@ class _ImportBase(ModalScreen[object | None]):
 
 
 class ImportCourseModal(_ImportBase):
-    """Import a course: pick a Canvas course -> create assignments/<dir>/config.toml."""
+    """Import a course: pick a Canvas course -> create data/<dir>/config.toml."""
 
     @override
     def compose(self) -> ComposeResult:

@@ -71,9 +71,9 @@ remove_base64_images = false
 strip_canvas_suffix = false
 """
 
-_ASSIGNMENT_CFG = "assignments/c1/a1/config.toml"
-_COURSE_CFG = "assignments/c1/config.toml"
-_GLOBAL_CFG = "assignments/config.toml"
+_ASSIGNMENT_CFG = "data/c1/a1/config.toml"
+_COURSE_CFG = "data/c1/config.toml"
+_GLOBAL_CFG = "data/config.toml"
 
 
 class _SettingsTestApp(App[None]):
@@ -90,9 +90,9 @@ def _close(a: float, b: float) -> bool:
 
 
 def _build_fixture(root: Path) -> None:
-    (root / "assignments").mkdir(parents=True)
-    (root / "assignments" / "config.toml").write_text(GLOBAL_TOML, encoding="utf-8")
-    course_dir = root / "assignments" / "c1"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "config.toml").write_text(GLOBAL_TOML, encoding="utf-8")
+    course_dir = root / "data" / "c1"
     course_dir.mkdir()
     (course_dir / "config.toml").write_text(COURSE_TOML, encoding="utf-8")
     a_dir = course_dir / "a1"

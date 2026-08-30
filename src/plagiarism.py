@@ -553,8 +553,8 @@ def detect_plagiarism(
 ) -> dict | None:
     """Run plagiarism for one assignment, or for all under the root config.
 
-    ``--config assignments/config.toml`` runs every assignment below it;
-    ``--config assignments/X/config.toml`` runs X only. ``--aggregate`` appends
+    ``--config data/config.toml`` runs every assignment below it;
+    ``--config data/X/config.toml`` runs X only. ``--aggregate`` appends
     the cross-assignment z-score report over the assignments root.
     """
     resolved = config_path.resolve()

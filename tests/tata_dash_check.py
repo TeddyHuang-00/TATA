@@ -124,7 +124,7 @@ async def _check_import_course_gate_without_env() -> None:
     """Global + no .env: c -> error notify, no modal."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments")
+        _make_course(root / "data")
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
@@ -145,7 +145,7 @@ async def _check_import_course_modal_with_env(
     """Global + .env: c -> ImportCourseModal; cancel -> no side effects."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments")
+        _make_course(root / "data")
         (root / ".env").write_text(
             "CANVAS_BASE_URL=https://canvas.example.edu\nCANVAS_ACCESS_TOKEN=tok\n",
             encoding="utf-8",
@@ -176,7 +176,7 @@ async def _check_import_course_modal_with_env(
                     pilot, lambda: not isinstance(app.screen, ImportCourseModal)
                 )
                 dirs = sorted(
-                    p.name for p in (root / "assignments").iterdir() if p.is_dir()
+                    p.name for p in (root / "data").iterdir() if p.is_dir()
                 )
                 assert dirs == [COURSE], dirs
                 assert app.state.dashboard_level == "global"
@@ -362,7 +362,7 @@ async def _check_alias_brackets() -> None:
     """Alias names containing markup brackets: escaped, plain text displayed."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        course_dir = root / "assignments" / COURSE
+        course_dir = root / "data" / COURSE
         (course_dir / "a1").mkdir(parents=True)
         (course_dir / "config.toml").write_text(
             "[fetch]\ncourse_id = 271218\n", encoding="utf-8"
@@ -403,7 +403,7 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments")
+        _make_course(root / "data")
         (root / ".env").write_text(
             "CANVAS_BASE_URL=https://canvas.example.edu\nCANVAS_ACCESS_TOKEN=tok\n",
             encoding="utf-8",

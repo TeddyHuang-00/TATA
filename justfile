@@ -15,4 +15,4 @@ check:
 
 [doc("Run cross-assignment plagiarism analysis")]
 plagiarism:
-    uv run main.py plagiarism -c assignments/config.toml --aggregate -o assignments/plagiarism-report.txt
+    uv run main.py plagiarism -c data/config.toml --aggregate -o data/plagiarism-report.txt

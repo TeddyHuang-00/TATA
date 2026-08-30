@@ -48,7 +48,7 @@ def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
         "CANVAS_BASE_URL=https://canvas.example.com\nCANVAS_ACCESS_TOKEN=abc\n",
         encoding="utf-8",
     )
-    sub = root / "assignments"
+    sub = root / "data"
     sub.mkdir()
     (sub / ".env").write_text("CANVAS_BASE_URL=https://broken\n", encoding="utf-8")
 

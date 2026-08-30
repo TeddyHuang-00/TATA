@@ -20,10 +20,10 @@ Workflow (recommended):
 
 Usage examples:
   uv run misc/reference_mismatch_audit.py \
-    --notebook assignments/4-lab-poly-ridge-regres/reference.ipynb
+    --notebook data/4-lab-poly-ridge-regres/reference.ipynb
 
   uv run misc/reference_mismatch_audit.py \
-    --notebook assignments/1-lab-python-review/reference.ipynb \
+    --notebook data/1-lab-python-review/reference.ipynb \
     --format json --output misc/audit_report.json
 """
 

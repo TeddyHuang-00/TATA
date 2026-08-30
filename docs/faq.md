@@ -11,7 +11,7 @@ system_prompt = "prompt/system.md"
 provider = "deepseek_chat_tool"
 ```
 
-Use [assignments/example/config.toml](../assignments/example/config.toml) as the baseline.
+Use [data/example/config.toml](../data/example/config.toml) as the baseline.
 
 ## 2. Which paths are optional?
 
@@ -65,11 +65,11 @@ Use this order:
 Or run all at once:
 
 ```bash
-uv run main.py preprocess -c assignments/my-assignment/config.toml
-uv run main.py plagiarism -c assignments/my-assignment/config.toml
-uv run main.py grade -c assignments/my-assignment/config.toml
-uv run main.py score -c assignments/my-assignment/config.toml
-uv run main.py analyze -c assignments/my-assignment/config.toml
+uv run main.py preprocess -c data/my-assignment/config.toml
+uv run main.py plagiarism -c data/my-assignment/config.toml
+uv run main.py grade -c data/my-assignment/config.toml
+uv run main.py score -c data/my-assignment/config.toml
+uv run main.py analyze -c data/my-assignment/config.toml
 ```
 
 ## 7. Where are outputs written?
@@ -121,7 +121,7 @@ No. Grade stage accepts reference files in:
 
 Set `[assignment].reference_file` to any of those formats. Non-markdown references are converted automatically during grading.
 
-Recommended location is assignment root (for example `assignments/my-assignment/reference.ipynb`) so it is separate from student submissions.
+Recommended location is assignment root (for example `data/my-assignment/reference.ipynb`) so it is separate from student submissions.
 
 ## 11. How does plagiarism detection reduce boilerplate false positives?
 
@@ -168,14 +168,14 @@ Yes. Use:
 
 ```bash
 uv run misc/reference_mismatch_audit.py \
-	--notebook assignments/my-assignment/reference.ipynb
+	--notebook data/my-assignment/reference.ipynb
 ```
 
 You can also output JSON:
 
 ```bash
 uv run misc/reference_mismatch_audit.py \
-	--notebook assignments/my-assignment/reference.ipynb \
+	--notebook data/my-assignment/reference.ipynb \
 	--format json \
 	--output misc/audit_report.json
 ```
@@ -185,7 +185,7 @@ uv run misc/reference_mismatch_audit.py \
 Yes. Use the aggregate helper script:
 
 ```bash
-uv run main.py plagiarism -c assignments/config.toml --aggregate \
+uv run main.py plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 

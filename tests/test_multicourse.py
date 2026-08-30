@@ -27,21 +27,21 @@ def _write(tree: Path, rel: str, text: str) -> Path:
 
 
 def _write_three_level(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """assignments/config.toml (global) + assignments/271218/config.toml
-    (course) + assignments/271218/hw1/config.toml (assignment)."""
+    """data/config.toml (global) + data/271218/config.toml
+    (course) + data/271218/hw1/config.toml (assignment)."""
     global_cfg = _write(
         tmp_path,
-        "assignments/config.toml",
+        "data/config.toml",
         '[fetch]\ncourse_id = 271218\nmode = "attach"\n',
     )
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[fetch]\ncourse_id = 271218\n",
     )
     assignment_cfg = _write(
         tmp_path,
-        "assignments/271218/hw1/config.toml",
+        "data/271218/hw1/config.toml",
         GRADING + "[fetch]\nassignment_id = 42\n",
     )
     return global_cfg, course_cfg, assignment_cfg
@@ -55,9 +55,9 @@ def test_is_course_config_three_level(tmp_path: Path) -> None:
 
 
 def test_is_course_config_two_level_root(tmp_path: Path) -> None:
-    _write(tmp_path, "assignments/config.toml", "[fetch]\ncourse_id = 1\n")
-    _write(tmp_path, "assignments/a/config.toml", GRADING)
-    root = tmp_path / "assignments" / "config.toml"
+    _write(tmp_path, "data/config.toml", "[fetch]\ncourse_id = 1\n")
+    _write(tmp_path, "data/a/config.toml", GRADING)
+    root = tmp_path / "data" / "config.toml"
     assert is_course_config(root)
     assert not is_global_config(root)
 
@@ -70,8 +70,8 @@ def test_is_global_config_three_level(tmp_path: Path) -> None:
 
 
 def test_is_course_config_missing_file_is_false(tmp_path: Path) -> None:
-    _write(tmp_path, "assignments/a/config.toml", GRADING)
-    root = tmp_path / "assignments" / "config.toml"
+    _write(tmp_path, "data/a/config.toml", GRADING)
+    root = tmp_path / "data" / "config.toml"
     assert not is_course_config(root)
     assert not is_global_config(root)
 
@@ -85,17 +85,17 @@ def test_find_global_config(tmp_path: Path) -> None:
 def test_three_layer_merge_precedence(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "assignments/config.toml",
+        "data/config.toml",
         "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\n",
     )
     _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[plagiarism]\ncopydetect_weight = 0.85\n",
     )
     assignment_cfg = _write(
         tmp_path,
-        "assignments/271218/hw1/config.toml",
+        "data/271218/hw1/config.toml",
         GRADING,
     )
     cfg = load_assignment_file(assignment_cfg)
@@ -106,7 +106,7 @@ def test_three_layer_merge_precedence(tmp_path: Path) -> None:
     # Assignment wins over both layers.
     _write(
         tmp_path,
-        "assignments/271218/hw1/config.toml",
+        "data/271218/hw1/config.toml",
         GRADING + "[plagiarism]\ncopydetect_weight = 0.95\n",
     )
     cfg = load_assignment_file(assignment_cfg)
@@ -116,19 +116,19 @@ def test_three_layer_merge_precedence(tmp_path: Path) -> None:
 def test_three_layer_fetch_assignments_do_not_leak(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "assignments/config.toml",
+        "data/config.toml",
         "[fetch]\ncourse_id = 271218\n"
         '\n[[fetch.assignments]]\nassignment_id = 99\nout = "other/raw"\n',
     )
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         '[fetch]\ncourse_id = 271218\nmode = "attach"\n'
         '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw2/raw"\n',
     )
     assignment_cfg = _write(
         tmp_path,
-        "assignments/271218/hw1/config.toml",
+        "data/271218/hw1/config.toml",
         GRADING + "[fetch]\nassignment_id = 42\n",
     )
 
@@ -154,12 +154,12 @@ def test_remember_container_writes_own_config(tmp_path: Path) -> None:
     [[fetch.assignments]] list must survive."""
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         '[fetch]\ncourse_id = 271218\nmode = "attach"\n'
         '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw2/raw"\n',
     )
-    _write(tmp_path, "assignments/271218/hw1/config.toml", GRADING)
-    out = tmp_path / "assignments" / "271218" / "hw1" / "raw"
+    _write(tmp_path, "data/271218/hw1/config.toml", GRADING)
+    out = tmp_path / "data" / "271218" / "hw1" / "raw"
     out.mkdir(parents=True)
 
     _remember(out, course_cfg, 271218, 42, "attach")
@@ -180,7 +180,7 @@ def test_remember_fetch_upsert_preserves_assignments(tmp_path: Path) -> None:
     [[fetch.assignments]] list stay."""
     cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         '[fetch]\ncourse_id = 271218\nmode = "attach"\n'
         '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw2/raw"\n',
     )
@@ -196,26 +196,26 @@ def test_remember_fetch_upsert_preserves_assignments(tmp_path: Path) -> None:
 
 
 def test_nested_config_does_not_break_container_detection(tmp_path: Path) -> None:
-    """M1 regression: a nested config.toml (assignments/271218/a/solutions/)
+    """M1 regression: a nested config.toml (data/271218/a/solutions/)
     defeats the leaf heuristics (is_course_config/is_global_config both
     return False), but the container check (is_root_config) must stay True so
     _load_config keeps treating the global/course configs as containers."""
     global_cfg = _write(
         tmp_path,
-        "assignments/config.toml",
+        "data/config.toml",
         "[fetch]\ncourse_id = 271218\n",
     )
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[fetch]\ncourse_id = 271218\n",
     )
     assignment_cfg = _write(
         tmp_path,
-        "assignments/271218/a/config.toml",
+        "data/271218/a/config.toml",
         GRADING + "[fetch]\nassignment_id = 42\n",
     )
-    _write(tmp_path, "assignments/271218/a/solutions/config.toml", GRADING)
+    _write(tmp_path, "data/271218/a/solutions/config.toml", GRADING)
 
     assert is_root_config(global_cfg)
     assert is_root_config(course_cfg)
@@ -245,7 +245,7 @@ def test_load_config_fresh_course_self_evidence(tmp_path: Path) -> None:
     is a self-evident container because it holds a [fetch] table."""
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         '[fetch]\ncourse_id = 271218\nmode = "attach"\n'
         '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw1/raw"\n',
     )
@@ -262,7 +262,7 @@ def test_load_config_fresh_course_self_evidence(tmp_path: Path) -> None:
 
 
 def test_remember_nested_assignment_no_container_pollution(tmp_path: Path) -> None:
-    """M1 regression: assignments/271218/a/config.toml has a nested
+    """M1 regression: data/271218/a/config.toml has a nested
     subdirectory config (a/solutions/config.toml), which made the
     structural container heuristics classify it as a container — _remember
     then wrote course_id/mode into the ASSIGNMENT config (pollution) and
@@ -270,16 +270,16 @@ def test_remember_nested_assignment_no_container_pollution(tmp_path: Path) -> No
     assignment, so course keys go to the course config."""
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[fetch]\ncourse_id = 271218\n",
     )
     assignment_cfg = _write(
         tmp_path,
-        "assignments/271218/a/config.toml",
+        "data/271218/a/config.toml",
         GRADING + "[fetch]\nassignment_id = 7\n",
     )
-    _write(tmp_path, "assignments/271218/a/solutions/config.toml", GRADING)
-    out = tmp_path / "assignments" / "271218" / "a" / "raw"
+    _write(tmp_path, "data/271218/a/solutions/config.toml", GRADING)
+    out = tmp_path / "data" / "271218" / "a" / "raw"
     out.mkdir(parents=True)
 
     _remember(out, assignment_cfg, 271218, 42, "attach")
@@ -298,19 +298,19 @@ def test_remember_nested_assignment_no_container_pollution(tmp_path: Path) -> No
 def test_retry_fetch_dedups_shared_assignment(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Mixed-tree retry: global (assignments/config.toml) and course
+    """Mixed-tree retry: global (data/config.toml) and course
     configs both list assignment 9901 — the shared seen set must fetch it
     exactly once (driven through _fetch_course, the same loop _retry_fetch
     runs, with fetch_assignment mocked)."""
     global_cfg = _write(
         tmp_path,
-        "assignments/config.toml",
+        "data/config.toml",
         "[fetch]\ncourse_id = 271218\n"
         '\n[[fetch.assignments]]\nassignment_id = 9901\nout = "hw1/raw"\n',
     )
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[fetch]\ncourse_id = 271218\n"
         '\n[[fetch.assignments]]\nassignment_id = 9901\nout = "hw1/raw"\n',
     )
@@ -334,7 +334,7 @@ def test_container_bad_toml_raises_guidance_not_bare_decode(
     with pytest.raises(ValueError, match="Invalid TOML") as excinfo:
         _classify_config(cont)
     assert not isinstance(excinfo.value, tomllib.TOMLDecodeError)
-    assert "Tip: start from assignments/example/config.toml" in str(
+    assert "Tip: start from data/example/config.toml" in str(
         excinfo.value
     )
 
@@ -345,7 +345,7 @@ def test_remember_fetch_inline_comment_table_header(tmp_path: Path) -> None:
     appended a second [fetch] block and produced invalid TOML."""
     cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[fetch] # fetch state\ncourse_id = 1\n",
     )
     remember_fetch(cfg, assignment_id=2)
@@ -358,17 +358,17 @@ def test_remember_fetch_inline_comment_table_header(tmp_path: Path) -> None:
 
 def test_find_global_config_repo_root_poison_rejected(tmp_path: Path) -> None:
     """MINOR-4: in the two-level layout the course config is
-    assignments/config.toml; find_global_config climbs parent.parent to the
+    data/config.toml; find_global_config climbs parent.parent to the
     repo root. A config.toml there must NOT be merged as a global layer —
     it would silently poison every assignment (here: copydetect_weight and
     course_id)."""
     course_cfg = _write(
         tmp_path,
-        "assignments/config.toml",
+        "data/config.toml",
         "[fetch]\ncourse_id = 1\n",
     )
-    assignment_cfg = _write(tmp_path, "assignments/a/config.toml", GRADING)
-    # Poison at the repo root (parent of assignments/, one level above the
+    assignment_cfg = _write(tmp_path, "data/a/config.toml", GRADING)
+    # Poison at the repo root (parent of data/, one level above the
     # structural layout root).
     _write(
         tmp_path,
@@ -388,7 +388,7 @@ def test_fetch_course_without_list_returns_false(tmp_path: Path) -> None:
     the canvas (None passed just to prove it)."""
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[fetch]\ncourse_id = 271218\n",
     )
     assert _fetch_course(None, course_cfg, None, None) is False
@@ -400,14 +400,14 @@ def test_remember_fresh_course_container(tmp_path: Path) -> None:
     structural heuristics; _remember must still treat it as a container
     (self-evidence): course_id/mode stay in the course config, assignment
     keys go to out.parent/config.toml, and nothing climbs to (or creates) a
-    shared assignments/config.toml."""
+    shared data/config.toml."""
     course_cfg = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         '[fetch]\ncourse_id = 271218\nmode = "attach"\n'
         '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw1/raw"\n',
     )
-    out = tmp_path / "assignments" / "271218" / "hw1" / "raw"
+    out = tmp_path / "data" / "271218" / "hw1" / "raw"
     out.mkdir(parents=True)
 
     _remember(out, course_cfg, 271218, 42, "attach")
@@ -422,14 +422,14 @@ def test_remember_fresh_course_container(tmp_path: Path) -> None:
     assignment_fetch = tomllib.loads((out.parent / "config.toml").read_text())["fetch"]
     assert assignment_fetch["assignment_id"] == 42
     # No shared global config was created (the old bug climbed to it).
-    assert not (tmp_path / "assignments" / "config.toml").exists()
+    assert not (tmp_path / "data" / "config.toml").exists()
 
 
 def test_fetch_course_missing_config_returns_false(tmp_path: Path) -> None:
     """MAJOR-A: _retry_fetch must never hand _fetch_course a path that does
-    not exist (fresh three-level layout has no assignments/config.toml);
+    not exist (fresh three-level layout has no data/config.toml);
     the existence guard makes a missing file return False, not raise."""
-    missing = tmp_path / "assignments" / "config.toml"
+    missing = tmp_path / "data" / "config.toml"
     assert _fetch_course(None, missing, None, None) is False
 
 
@@ -440,7 +440,7 @@ def test_load_config_container_without_fetch(tmp_path: Path) -> None:
     falling through to 'Missing required config fields: grading'."""
     cont = _write(
         tmp_path,
-        "assignments/271218/config.toml",
+        "data/271218/config.toml",
         "[plagiarism]\ncopydetect_weight = 0.1\n",
     )
     path, fetch = _load_config(cont)
@@ -449,7 +449,7 @@ def test_load_config_container_without_fetch(tmp_path: Path) -> None:
 
     assignment = _write(
         tmp_path,
-        "assignments/271218/hw1/config.toml",
+        "data/271218/hw1/config.toml",
         GRADING + "[fetch]\nassignment_id = 42\n",
     )
     path2, fetch2 = _load_config(assignment)

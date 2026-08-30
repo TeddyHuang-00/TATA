@@ -1,16 +1,16 @@
 # Assignment Config Format
 
-This guide explains how to write `assignments/<assignment-name>/config.toml` without relying on schema validation.
+This guide explains how to write `data/<assignment-name>/config.toml` without relying on schema validation.
 
 ## Layered config
 
-Configs are layered. The course-level root config `assignments/config.toml`
-holds state shared across assignments; each `assignments/<name>/config.toml`
+Configs are layered. The course-level root config `data/config.toml`
+holds state shared across assignments; each `data/<name>/config.toml`
 holds assignment-specific settings. When the root config exists, it is merged
 under the assignment config: per-key assignment values win. All paths resolve
 against the assignment directory (root config values are scalars only).
 
-- Root layer (`assignments/config.toml`, gitignored): `[fetch]` course-level
+- Root layer (`data/config.toml`, gitignored): `[fetch]` course-level
   state (`course_id`, shared `mode`) plus the course's assignment list
   (`[[fetch.assignments]]`: `assignment_id`, optional `mode` override, `out`
   = fetch output dir relative to the root), and `[plagiarism]` course-wide
@@ -19,8 +19,8 @@ against the assignment directory (root config values are scalars only).
   `mode = "text"` when it differs from the root default, `template_file`, ...).
 - Standalone assignment configs without a root config work exactly as before.
 
-The root list is the course's source of truth: `main.py fetch -c assignments/config.toml` fetches every listed entry in one shot (per-entry
-mode/out win), `fetch --retry` replays it, and `main.py plagiarism -c assignments/config.toml --aggregate` runs and aggregates exactly the listed
+The root list is the course's source of truth: `main.py fetch -c data/config.toml` fetches every listed entry in one shot (per-entry
+mode/out win), `fetch --retry` replays it, and `main.py plagiarism -c data/config.toml --aggregate` runs and aggregates exactly the listed
 assignments. `main.py fetch` also writes course-level state to the root
 config and assignment-level state to the assignment config automatically.
 
@@ -76,7 +76,7 @@ reference_file = "reference.md"
 
 [fetch]
 # Canvas memory for `main.py fetch`; course-level keys (course_id, shared
-# mode) live in assignments/config.toml. Only override what differs from the
+# mode) live in data/config.toml. Only override what differs from the
 # root; the root's [[fetch.assignments]] list drives batch fetch and the
 # plagiarism aggregate.
 assignment_id = 2979509
