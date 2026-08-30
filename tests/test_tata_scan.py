@@ -113,6 +113,29 @@ def test_assignment_id_from_numeric_dir_name(tmp_path: Path) -> None:
     assert by_name["legacy-name"] is None
 
 
+def test_raw_count_counts_student_folders_once(tmp_path: Path) -> None:
+    """SUBMIT-ALL: raw counts top-level ITEMS — a multi-file student folder
+    is one submission, dot-entries (.fetch-cache.json) are excluded."""
+    from src.tata_scan import scan_assignments
+
+    course = tmp_path / "data" / "111111"
+    a1 = course / "222222"
+    a1.mkdir(parents=True)
+    (course / "config.toml").write_text("", encoding="utf-8")
+    (a1 / "config.toml").write_text("", encoding="utf-8")
+    raw = a1 / "raw"
+    raw.mkdir()
+    (raw / "100001.html").write_text("<p>a</p>", encoding="utf-8")
+    (raw / ".fetch-cache.json").write_text("{}", encoding="utf-8")
+    multi = raw / "100002"
+    multi.mkdir()
+    (multi / "100002.html").write_text("<p>a</p>", encoding="utf-8")
+    (multi / "100002_0.ipynb").write_text("{}", encoding="utf-8")
+    infos = scan_assignments(course)
+    assert len(infos) == 1
+    assert infos[0].counts.raw == 2  # 1 flat file + 1 folder student
+
+
 def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     """MINOR-7: a .env missing either key must not short-circuit the walk."""
     from src.tata_app import _env_status

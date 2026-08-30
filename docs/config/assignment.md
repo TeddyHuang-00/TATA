@@ -5,7 +5,7 @@ This guide explains how to write `data/<assignment-name>/config.toml` without re
 ## Layered config
 
 Configs are layered (three levels). The global base config `data/config.toml`
-holds defaults shared across courses (`[fetch]` course_id/mode,
+holds defaults shared across courses (`[fetch]` course_id,
 `[plagiarism]` settings) but no assignment list; each course config
 `data/<course>/config.toml` holds course-level fetch state plus the course's
 assignment list; each `data/<course>/<assignment>/config.toml` (this file)
@@ -16,22 +16,24 @@ course, then global. All paths resolve against the assignment directory
 in the global file) still works as an abbreviation.
 
 - Global base layer (`data/config.toml`, gitignored): `[fetch]` defaults
-  (`course_id`, shared `mode`) and `[plagiarism]` course-wide knobs (blend
+  (`course_id`) and `[plagiarism]` course-wide knobs (blend
   weights, aggregate alphas). It has no `[grading]` and no assignment list.
 - Course layer (`data/<course>/config.toml`, gitignored): course `[fetch]`
-  state (`course_id`, `mode`) plus the course's assignment list
-  (`[[fetch.assignments]]`: `id`, optional `mode` override; the fetch output
-  dir is always `<course dir>/<id>/raw` — derived, never stored).
+  state (`course_id`) plus the course's assignment list
+  (`[[fetch.assignments]]`: `id` only — fetch auto-collects every submission
+  type per student; the fetch output dir is always
+  `<course dir>/<id>/raw` — derived, never stored).
 - Assignment layer: everything else (grading, processing, hooks, scoring),
-  plus overrides (`mode = "text"` when it differs from the course default,
-  `template_file`, ...). No `[fetch]` here — the assignment identity is the
-  numeric dir name.
+  plus overrides (`template_file`, ...). No `[fetch]` here — the assignment
+  identity is the numeric dir name.
 - Standalone assignment configs without a global/course config still fetch:
   the assignment resolves via `--course`/`--assignment` or interactively.
   Nothing is remembered — fetch memory is written only into a course config.
 
-The course list is the course's source of truth: `main.py fetch -c data/<course>/config.toml` fetches every listed entry in one shot (per-entry
-mode wins, falling back to the course mode), `fetch --retry` replays it, and `main.py plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
+The course list is the course's source of truth: `main.py fetch -c data/<course>/config.toml` fetches every listed entry in one shot (fetch collects
+the body text and all attachments per student; a multi-file student is
+written to `raw/<uid>/`, a single-file student flat at `raw/<file>`),
+`fetch --retry` replays it, and `main.py plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
 assignments. `main.py fetch` also writes course-level state to the course
 config automatically.
 With `-c data/config.toml` (no assignment list) plagiarism falls back to the
@@ -42,11 +44,9 @@ Example course config:
 ```toml
 [fetch]
 course_id = 271218
-mode = "auto"     # default for entries without their own
 
 [[fetch.assignments]]
 id = 2979511
-mode = "text"     # optional; falls back to the course mode
 ```
 
 ## Where this file sits in the workflow

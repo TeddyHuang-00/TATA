@@ -115,56 +115,26 @@ def _load_config(
     return None, None
 
 
-def _entry_mode(
-    cfg_path: Path | None, cfg: FetchSection | None, aid: int
-) -> str | None:
-    """Per-entry mode from the course config's [[fetch.assignments]] list.
-
-    ``cfg`` carries the list when the config is a container; when it is an
-    assignment config the list was stripped by ``load_assignment_file``, so
-    climb to the course config above it. None when the entry (or any course
-    config) is absent — callers fall back to the course mode.
-    """
-    entries = cfg.assignments if cfg is not None else []
-    if not entries and cfg_path is not None and not _is_container(cfg_path):
-        course_cfg = find_root_config(cfg_path)
-        if course_cfg is not None:
-            course_fetch = load_root_section(course_cfg, "fetch", FetchSection)
-            entries = course_fetch.assignments if course_fetch is not None else []
-    for entry in entries:
-        if entry.id == aid:
-            return entry.mode
-    return None
-
-
 def _remember(
     cfg_path: Path | None,
     course_id: int,
     assignment_id: int,
-    mode: str,
 ) -> None:
     """Persist fetch state into the course config only: a container config
     (course/global) is its own course config, anything else climbs to the
     course config above it. Without a course config nothing is written —
     the fetch was ad-hoc and a hint points where the [[fetch.assignments]]
-    entry would go. Never writes assignment configs or [fetch].mode."""
+    entry would go. Never writes assignment configs; ``[fetch].mode`` no
+    longer exists (legacy keys in existing configs are left untouched)."""
     course_cfg = None
     if cfg_path is not None:
         cfg_path = cfg_path.resolve()
         course_cfg = cfg_path if _is_container(cfg_path) else find_root_config(cfg_path)
     if course_cfg is not None:
-        # Don't bake the course-default mode into the entry: an entry whose
-        # mode equals the course config's [fetch].mode records no mode, so
-        # later fetches keep following the course default (mode != course
-        # mode or no course config -> record per the old rule).
-        course_fetch = load_root_section(course_cfg, "fetch", FetchSection)
-        entry_mode = mode
-        if course_fetch is not None and course_fetch.mode == mode:
-            entry_mode = None
         remember_course_fetch(
             course_cfg,
             course_id=course_id,
-            entry=(assignment_id, entry_mode),
+            assignment_id=assignment_id,
         )
         print(f"[fetch] remembered in {course_cfg}")
     else:
@@ -199,13 +169,7 @@ def _fetch_entries(  # ruff: ignore[too-many-arguments]
                 continue
             seen.add(key)
         out = (cfg_path.parent / str(entry.id) / "raw").resolve()
-        fetch_assignment(
-            canvas,
-            course_id,
-            entry.id,
-            out,
-            entry.mode or cfg.mode,
-        )
+        fetch_assignment(canvas, course_id, entry.id, out)
 
 
 def _fetch_course(
@@ -266,7 +230,7 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
     )
 
 
-def _pick_interactive(mode: str) -> None:
+def _pick_interactive() -> None:
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
 
@@ -280,8 +244,8 @@ def _pick_interactive(mode: str) -> None:
     assignments = list_assignments(canvas, course_id)
     assignment_id = _ask_choice(assignments, "assignment")
     out = (Path.cwd() / str(assignment_id) / "raw").resolve()
-    fetch_assignment(canvas, course_id, assignment_id, out, mode)
-    _remember(None, course_id, assignment_id, mode)
+    fetch_assignment(canvas, course_id, assignment_id, out)
+    _remember(None, course_id, assignment_id)
 
 
 def _ask_choice(items: list[tuple[int, str]], title: str) -> int:
@@ -309,7 +273,7 @@ def _ask_number(prompt: str, count: int, default: int) -> int:
         print(f"Enter a number between 1 and {count}.")
 
 
-def _run_fetch(args: FetchCliOptions) -> None:  # ruff: ignore[PLR0912]
+def _run_fetch(args: FetchCliOptions) -> None:
     if args.retry:
         _retry_fetch(args.course, args.assignment)
         return
@@ -324,12 +288,6 @@ def _run_fetch(args: FetchCliOptions) -> None:  # ruff: ignore[PLR0912]
         and cfg.course_id is not None
         and cfg.assignments
     ):
-        if args.mode != "auto":
-            print(
-                "warning: --mode is ignored with a root "
-                "[[fetch.assignments]] list; each entry defines its own",
-                file=sys.stderr,
-            )
         assert cfg_path is not None  # cfg non-None implies a config was found
         base_url, token = load_env()
         canvas = Canvas(base_url, token)
@@ -342,7 +300,7 @@ def _run_fetch(args: FetchCliOptions) -> None:  # ruff: ignore[PLR0912]
         else (cfg.course_id if cfg is not None else None)
     )
     if course_id is None:
-        _pick_interactive(args.mode)
+        _pick_interactive()
         return
 
     # The out dir for a single fetch: assignment config -> <dir>/raw;
@@ -378,16 +336,11 @@ def _run_fetch(args: FetchCliOptions) -> None:  # ruff: ignore[PLR0912]
         out = (cfg_path.parent / str(assignment_id) / "raw").resolve()
     else:
         out = (cfg_path.parent / "raw").resolve()
-    mode = args.mode
-    if mode == "auto":
-        mode = _entry_mode(cfg_path, cfg, assignment_id) or (
-            cfg.mode if cfg is not None else "auto"
-        )
 
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
-    fetch_assignment(canvas, course_id, assignment_id, out, mode)
-    _remember(cfg_path, course_id, assignment_id, mode)
+    fetch_assignment(canvas, course_id, assignment_id, out)
+    _remember(cfg_path, course_id, assignment_id)
 
 
 # --- config set subcommand ---

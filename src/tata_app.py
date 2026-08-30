@@ -15,7 +15,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, Literal, override
+from typing import ClassVar, override
 
 import dotenv
 import tomlkit
@@ -31,8 +31,6 @@ from textual.widgets import (
     Footer,
     Header,
     Input,
-    RadioButton,
-    RadioSet,
     Select,
     Static,
     TabbedContent,
@@ -497,36 +495,25 @@ class DashboardScreen(Vertical):
         )
 
     def _on_assignment_imported(self, value: object) -> None:
-        if not isinstance(value, tuple):
-            return
-        try:
-            aid, mode = value  # type: ignore[misc]
-        except (TypeError, ValueError):
-            return
-        if not isinstance(aid, int) or not isinstance(mode, str):
+        aid = value if isinstance(value, int) else None
+        if aid is None:
             return
         course = self.state.current_course
         if course is None or course.course_id is None:
             return
-        mode_val: Literal["attach", "text", "auto"] = (
-            mode if mode in {"attach", "text", "auto"} else "auto"
-        )  # type: ignore[assignment]
         self._start_job(
             "fetch",
-            partial(self._fetch_one, course, aid, mode_val),
+            partial(self._fetch_one, course, aid),
             after=self._rescan_course,
         )
 
     @staticmethod
-    def _fetch_one(
-        course: CourseInfo, aid: int, mode: Literal["attach", "text", "auto"]
-    ) -> None:
+    def _fetch_one(course: CourseInfo, aid: int) -> None:
         main_mod._run_fetch(
             FetchCliOptions(
                 course=course.course_id,
                 assignment=aid,
                 config=course.config_path,
-                mode=mode,
             )
         )
         # M3: record the assignment in the course config's [[fetch.assignments]]
@@ -550,8 +537,6 @@ class DashboardScreen(Vertical):
         ):
             return
         entry: dict[str, object] = {"id": aid}
-        if mode != "auto":
-            entry["mode"] = mode
         if isinstance(fetch, MutableMapping):
             if "assignments" not in fetch:
                 fetch["assignments"] = tomlkit.aot()
@@ -595,9 +580,9 @@ class DashboardScreen(Vertical):
         """Course [fetch] section via ``src/cli.py``'s loader (empty list -> None).
 
         Mirrors the CLI's root-config model exactly: ``[[fetch.assignments]]``
-        entries carry ``id`` with an optional ``mode`` falling back to the
-        course [fetch] mode; the fetch output dir is derived
-        (``<course dir>/<id>/raw``), not stored.
+        entries carry ``id`` only (fetch auto-collects all submission types);
+        the fetch output dir is derived (``<course dir>/<id>/raw``), not
+        stored.
         """
         try:
             cfg = main_mod._root_fetch(course.config_path)
@@ -647,7 +632,6 @@ class DashboardScreen(Vertical):
                             course=course_id,
                             assignment=entry.id,
                             config=config_path,
-                            mode=entry.mode or cfg.mode,
                         )
                     )
                     self._mark_fetch(i, "done", seconds=time.monotonic() - t0)
@@ -943,9 +927,7 @@ class ImportCourseModal(_ImportBase):
             return
         dest.mkdir(parents=True)
         (dest / "config.toml").write_text(
-            tomlkit.dumps(
-                tomlkit.item({"fetch": {"course_id": course_id, "mode": "attach"}})
-            ),
+            tomlkit.dumps(tomlkit.item({"fetch": {"course_id": course_id}})),
             encoding="utf-8",
         )
         state = self.state
@@ -971,19 +953,13 @@ class ImportCourseModal(_ImportBase):
 
 
 class ImportAssignmentModal(_ImportBase):
-    """Import an assignment: Canvas assignment + fetch mode; fetch job after."""
+    """Import an assignment: pick a Canvas assignment; fetch job after."""
 
     @override
     def compose(self) -> ComposeResult:
         with Vertical(classes="confirm-modal"):
             yield Static("[b]Import assignment from Canvas[/b]")
             yield Select([("Loading…", -1)], id="modal-assignment", allow_blank=False)
-            yield RadioSet(
-                RadioButton("attach", id="mode-attach"),
-                RadioButton("text", id="mode-text"),
-                RadioButton("auto", value=True, id="mode-auto"),
-                id="modal-mode",
-            )
             with Horizontal(classes="modal-actions"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Import", id="import", variant="primary")
@@ -1030,13 +1006,6 @@ class ImportAssignmentModal(_ImportBase):
             self.app.notify("No assignment selected", severity="error")
             return
         aid = select.value
-        mode_set: RadioSet = self.query_one("#modal-mode", RadioSet)
-        pressed = mode_set.pressed_button
-        mode: Literal["attach", "text", "auto"] = (
-            pressed.id.removeprefix("mode-")  # type: ignore[union-attr]
-            if pressed is not None and pressed.id is not None
-            else "auto"
-        )
         course = self.state.current_course
         if course is None:
             self.app.notify("No course selected", severity="error")
@@ -1045,7 +1014,7 @@ class ImportAssignmentModal(_ImportBase):
         if (course_dir / str(aid)).exists():
             self.app.notify(f"Already imported: {aid}", severity="error")
             return
-        self.dismiss((aid, mode))
+        self.dismiss(aid)
 
 
 class TataApp(App[None]):

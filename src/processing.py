@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
+from datetime import UTC, datetime
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -23,27 +27,22 @@ from .hooks_runtime import HookRuntime
 InputFormat = Literal["ipynb", "html", "markdown", "docx"]
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown", "docx")
 
+_SUFFIX_FORMATS: dict[str, InputFormat] = {
+    ".ipynb": "ipynb",
+    ".html": "html",
+    ".txt": "html",  # Canvas text-entry bodies arrive as .txt but contain HTML
+    ".md": "markdown",
+    ".docx": "docx",
+}
+
 
 class ProcessingCliOptions(ConfigFileCliOptions):
     pass
 
 
-def _detect_input_format(file_path: Path) -> InputFormat:
-    """Auto-detect input format from file extension."""
-    suffix = file_path.suffix.lower()
-    if suffix == ".ipynb":
-        return "ipynb"
-    if suffix in {
-        ".html",
-        ".txt",
-    }:  # Canvas text-entry bodies are saved as .txt but contain HTML
-        return "html"
-    if suffix == ".md":
-        return "markdown"
-    if suffix == ".docx":
-        return "docx"
-    msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .txt, .md, .docx"
-    raise ValueError(msg)
+def _format_for_suffix(suffix: str) -> InputFormat | None:
+    """Map a file suffix to a supported input format (None when unsupported)."""
+    return _SUFFIX_FORMATS.get(suffix.lower())
 
 
 def _clean_filename(filename: str) -> str:
@@ -475,15 +474,36 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
             shutil.rmtree(assets_dir)
 
 
-def _glob_for_format(raw_dir: Path, input_format: InputFormat) -> list[Path]:
-    pattern_map = {
-        "ipynb": ("*.ipynb",),
-        "html": ("*.html", "*.txt"),
-        "markdown": ("*.md",),
-        "docx": ("*.docx",),
-    }
-    files = [p for pat in pattern_map[input_format] for p in raw_dir.glob(pat)]
-    return sorted(files)
+def _iter_raw_items(raw_dir: Path) -> list[Path]:
+    """Top-level raw entries: files and dirs, dot-entries (e.g.
+    .fetch-cache.json) skipped. A top-level file whose base uid (stem with
+    any _N/_LATE_N suffix stripped) names a top-level dir is a stale flat
+    leftover of a folderized student (mixed legacy layout): skipped so the
+    student isn't double-processed."""
+    entries = sorted(
+        p
+        for p in raw_dir.iterdir()
+        if not p.name.startswith(".") and (p.is_file() or p.is_dir())
+    )
+    dirs = {p.name for p in entries if p.is_dir()}
+    return [
+        p
+        for p in entries
+        if not (p.is_file() and re.sub(r"_(?:LATE_)?\d+$", "", p.stem) in dirs)
+    ]
+
+
+def _submission_stamp(cache: dict[str, str], raw_file: Path) -> str:
+    """Stamp for a raw file: the .fetch-cache.json entry when known, else
+    the file's mtime, else '' — the submitted header part is omitted."""
+    stamp = cache.get(raw_file.name)
+    if stamp is not None:
+        return stamp
+    try:
+        modified = raw_file.stat().st_mtime
+    except OSError:
+        return ""
+    return datetime.fromtimestamp(modified, tz=UTC).isoformat(timespec="seconds")
 
 
 def _normalize_input_formats(
@@ -505,7 +525,14 @@ def _normalize_input_formats(
 
 
 def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
-    """Preprocess all raw files for an assignment into processed markdown."""
+    """Preprocess all raw files for an assignment into processed markdown.
+
+    Top-level raw entries are per-student: a file (single submission) or a
+    folder (multi-file student). Folders are concatenated into one
+    ``<folder>.md`` with a per-file header (``file:``, ``submitted:`` when the
+    stamp is known), and before/after_preprocess_file hooks fire per input
+    file with output_file set to the final concatenated file.
+    """
     cfg = load_assignment_file(assignment_config_path)
     processing = cfg.processing
     hook_runtime = HookRuntime.from_config(
@@ -521,38 +548,64 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
 
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get input format(s) (auto-detect from first supported file or config override)
+    # Determine input format(s): auto (per-file by suffix, no config) or an
+    # explicit [processing.input_format] list.
     configured_formats = _normalize_input_formats(processing.input_format)
 
-    if configured_formats is None:
-        supported_files = [
-            p
-            for p in sorted(raw_dir.glob("*"))
-            if p.is_file()
-            and p.suffix.lower() in {".ipynb", ".html", ".txt", ".md", ".docx"}
-        ]
-        if not supported_files:
+    items = _iter_raw_items(raw_dir)
+
+    def item_files(item: Path) -> list[tuple[Path, InputFormat]]:
+        """Supported files of one raw item: a top-level file itself, or the
+        files inside a folder (sorted by name), filtered by the configured
+        formats when set. Unsupported files inside a folder are logged as
+        skips instead of being dropped silently."""
+        files = (
+            [item]
+            if item.is_file()
+            else sorted(
+                (p for p in item.iterdir() if p.is_file()),
+                key=lambda p: (
+                    # unsuffixed-uid member (the body: <uid>.html) first,
+                    # then _N/_LATE_N members; stable by name within a group.
+                    0 if re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == p.stem else 1,
+                    p.name,
+                ),
+            )
+        )
+        found: list[tuple[Path, InputFormat]] = []
+        for f in files:
+            fmt = _format_for_suffix(f.suffix)
+            if fmt is None:
+                if item.is_dir():
+                    print(f"[skip] {f.name} (unsupported format)")
+                continue
+            if configured_formats is not None and fmt not in configured_formats:
+                continue
+            found.append((f, fmt))
+        return found
+
+    item_files_by = {item: item_files(item) for item in items}
+    if not any(item_files_by.values()):
+        if configured_formats is None:
             print(
                 "No supported files found in raw directory: "
                 f"{raw_dir}\n"
                 "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx), "
                 "then run preprocess again."
             )
-            return {
-                "stage": "preprocess",
-                "success": 0,
-                "errors": 0,
-                "total": 0,
-                "success_rate": 0,
-            }
-
-        first_file = supported_files[0]
-        detected_input_format = _detect_input_format(first_file)
-        configured_formats = [detected_input_format]
-        print(
-            f"Auto-detected input format: {detected_input_format} "
-            f"(from {first_file.name})"
-        )
+        else:
+            print(
+                "No files found for configured input format(s) "
+                f"{configured_formats} in: {raw_dir}\n"
+                "Check [processing.input_format] in config or place matching files in raw/."
+            )
+        return {
+            "stage": "preprocess",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
 
     if hook_runtime is not None:
         hook_runtime.run(
@@ -595,34 +648,27 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
     else:
         template_dir_path = None
 
-    # Process each file
-    raw_file_map: dict[Path, InputFormat] = {}
-    for fmt in configured_formats:
-        assert fmt in SUPPORTED_INPUT_FORMATS
-        for p in _glob_for_format(raw_dir, fmt):
-            raw_file_map[p] = fmt
-
-    raw_files = sorted(raw_file_map.keys())
-
-    if not raw_files:
-        print(
-            "No files found for configured input format(s) "
-            f"{configured_formats} in: {raw_dir}\n"
-            "Check [processing.input_format] in config or place matching files in raw/."
-        )
-        return {
-            "stage": "preprocess",
-            "success": 0,
-            "errors": 0,
-            "total": 0,
-            "success_rate": 0,
-        }
+    # Process each raw item (per-student): a file (single submission) or a
+    # folder (multi-file student, concatenated into one per-student md).
+    cache: dict[str, str] = {}
+    cache_path = raw_dir / ".fetch-cache.json"
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cache = {}
 
     processed_count = 0
     failed_count = 0
 
-    for raw_file in raw_files:
-        if raw_file.is_file():
+    for item in items:
+        files = item_files_by[item]
+        if not files:
+            if item.is_dir():
+                print(f"[skip] folder {item.name} (no supported files)")
+            continue
+        if item.is_file():
+            raw_file, file_format = files[0]
             # Determine output filename
             output_name = raw_file.name
             if strip_canvas_suffix:
@@ -633,9 +679,6 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             # Ensure .md extension
             output_stem = Path(output_name).stem
             output_file = processed_dir / f"{output_stem}.md"
-
-            # Detect format for this specific file
-            file_format = raw_file_map.get(raw_file) or _detect_input_format(raw_file)
 
             if hook_runtime is not None:
                 before_payload = hook_runtime.run(
@@ -712,6 +755,105 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                             "error": str(exc),
                         },
                     )
+        else:
+            # Multi-file student folder: convert each supported file to a
+            # temp md, then concatenate into one <folder>.md with per-file
+            # headers (file:, submitted: when the stamp is known). Hooks fire
+            # per input file but always report the final concatenated file as
+            # output_file.
+            output_file = processed_dir / f"{item.name}.md"
+            parts: list[str] = []
+            converted = 0
+            for raw_file, fmt in files:
+                tmp_file: Path | None = None
+                input_file = raw_file
+                file_format = fmt
+                try:  # ruff: ignore[too-many-statements-in-try-clause]
+                    if hook_runtime is not None:
+                        before_payload = hook_runtime.run(
+                            "before_preprocess_file",
+                            {
+                                "assignment_config": str(assignment_config_path),
+                                "input_file": str(raw_file),
+                                "output_file": str(output_file),
+                                "input_format": file_format,
+                            },
+                        )
+                        input_file = Path(
+                            before_payload.get("input_file", str(raw_file))
+                        )
+                        output_file = Path(
+                            before_payload.get("output_file", str(output_file))
+                        )
+                        file_format = str(
+                            before_payload.get("input_format", file_format)
+                        )
+                    assert file_format in SUPPORTED_INPUT_FORMATS, (
+                        f"Unsupported input format: {file_format}. "
+                        f"Must be one of: {SUPPORTED_INPUT_FORMATS}"
+                    )
+                    fd, tmp_name = tempfile.mkstemp(suffix=".md", dir=processed_dir)
+                    os.close(fd)
+                    tmp_file = Path(tmp_name)
+                    _process_single_file(
+                        input_file,
+                        tmp_file,
+                        file_format,  # ty:ignore[invalid-argument-type]
+                        remove_base64,
+                        strip_html_callouts,
+                        strip_html_div_tags,
+                        strip_html_escaped_backslashes,
+                        strip_html_style_blocks,
+                        convert_html_tables_to_markdown,
+                        strip_colab_dataframe_widgets,
+                        strip_html_script_tags,
+                        strip_html_button_tags,
+                        strip_html_svg_tags,
+                        normalize_dtype_label_html,
+                        remove_nbconvert_assets,
+                        nbconvert_template,
+                        template_dir_path,
+                    )
+                    text = tmp_file.read_text(encoding="utf-8")
+                    stamp = _submission_stamp(cache, raw_file)
+                    submitted = f", submitted: {stamp}" if stamp else ""
+                    parts.append(
+                        f"---\n<!--- file: {raw_file.name}{submitted} -->\n\n{text}"
+                    )
+                    output_file.write_text("\n".join(parts), encoding="utf-8")
+                    converted += 1
+                    print(f"[processed] {raw_file.name} -> {output_file.name}")
+                    if hook_runtime is not None:
+                        hook_runtime.run(
+                            "after_preprocess_file",
+                            {
+                                "assignment_config": str(assignment_config_path),
+                                "input_file": str(raw_file),
+                                "output_file": str(output_file),
+                                "input_format": file_format,
+                                "success": True,
+                            },
+                        )
+                except Exception as exc:
+                    print(f"[error] Failed to process {raw_file.name}: {exc}")
+                    failed_count += 1
+                    if hook_runtime is not None:
+                        hook_runtime.run(
+                            "after_preprocess_file",
+                            {
+                                "assignment_config": str(assignment_config_path),
+                                "input_file": str(raw_file),
+                                "output_file": str(output_file),
+                                "input_format": file_format,
+                                "success": False,
+                                "error": str(exc),
+                            },
+                        )
+                finally:
+                    if tmp_file is not None:
+                        tmp_file.unlink(missing_ok=True)
+            if converted:
+                processed_count += 1
 
     if hook_runtime is not None:
         hook_runtime.run(

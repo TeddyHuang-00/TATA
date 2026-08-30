@@ -1,7 +1,7 @@
 # TATA 设计稿 v1.1 — 05 · Settings（S5）
 
 > 职责：provider、Canvas、plagiarism 权重、路径与 schema 生成的集中配置编辑；**上下文选择器：Global / Course / Assignment 三级**（右上 Select）
-> v1.1 变更：写入目标由「根配置/作业配置」两层改为**三层**：global config（`data/config.toml`，可选，跨课程默认）、**course config**（`data/<course>/config.toml`：course_id/mode/`[[fetch.assignments]]`/[plagiarism] 覆盖）、assignment config（`data/<course>/<name>/config.toml`：`[grading]`/`[plagiarism]`/`[assignment]`/`[processing]`）；.env 仍全局
+> v1.1 变更：写入目标由「根配置/作业配置」两层改为**三层**：global config（`data/config.toml`，可选，跨课程默认）、**course config**（`data/<course>/config.toml`：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖）、assignment config（`data/<course>/<name>/config.toml`：`[grading]`/`[plagiarism]`/`[assignment]`/`[processing]`）；.env 仍全局
 > 上下文来源：`state.current_course` / `state.current_assignment`；从 S1 三层的 `cfg`/`g` 进入时预置（Global 视图 `g`→Global 上下文；Course 视图 `cfg`→Course 上下文；Assignment 视图 `e`→Assignment 上下文）
 > 保存逻辑：全屏右侧显示「将写入: 文件路径」；内容经 `load_assignment_file` 校验通过才落盘（pydantic 错误逐条展示）
 
@@ -50,7 +50,7 @@
 | 上下文 | 可编辑内容 | 写入目标 |
 |--------|-----------|---------|
 | **Global** | 环境 `.env`（BASE_URL/TOKEN）；provider 注册表（`config/provider.toml`）；global config 可选的跨课程默认（[plagiarism] 权重/阈值） | `.env` / `config/provider.toml` / `data/config.toml` |
-| **Course** | `[fetch]` course_id/mode、`[[fetch.assignments]]` 只读摘要、`[plagiarism]` course 级覆盖 | `data/<course>/config.toml` |
+| **Course** | `[fetch]` course_id、`[[fetch.assignments]]` 只读摘要、`[plagiarism]` course 级覆盖 | `data/<course>/config.toml` |
 | **Assignment** | `[grading]`（provider/rubric/prompt/parallel）、`[assignment]` 目录、`[processing]`、`[plagiarism]` | `data/<course>/<name>/config.toml` |
 
 > 未选作业时 Assignment 上下文禁用（只显示 Global/Course）——与 v1 行为一致但扩展为「未选课程」亦然。Course 上下文字段与 v1 根配置页相同（Canvas 页从「根配置」改名为「课程配置」）。
@@ -70,8 +70,8 @@
 |------|------|------|
 | BASE_URL | `Input` | `.env` |
 | TOKEN | `Input`(password) | `.env` |
-| course_id / mode | `Input`(数字) / `Select`(attach|text|auto) | course config `[fetch]` |
-| `[[fetch.assignments]]` 列表 | 只读摘要（`Static`，含 id+mode） | 该清单的增删挪到 S1·Course「导入作业」——本页只展示，避免双入口编辑 |
+| course_id | `Input`(数字) | course config `[fetch]` |
+| `[[fetch.assignments]]` 列表 | 只读摘要（`Static`，含 id） | 该清单的增删挪到 S1·Course「导入作业」——本页只展示，避免双入口编辑 |
 
 ### ③ Plagiarism（作业级 `[plagiarism]`）
 | 字段 | 控件 | 说明 |

@@ -79,8 +79,8 @@ _FIELD_SPECS: tuple[tuple[str, str], ...] = (
     ("assignment.reference_file", "str"),
 )
 
-# (fqid) Select fields: provider (assignment context) and fetch mode (course).
-_SELECT_SPECS: tuple[str, ...] = ("grading.provider", "fetch.mode")
+# (fqid) Select fields: provider (assignment context).
+_SELECT_SPECS: tuple[str, ...] = ("grading.provider",)
 
 # (fqid, label) Checkbox fields (design 05 §④ — the six common switches).
 _CHECKBOX_SPECS: tuple[tuple[str, str], ...] = (
@@ -263,7 +263,6 @@ class SettingsScreen(Vertical):
                     "course_id (Canvas course, numeric)",
                     self._input("fetch.course_id"),
                 )
-                yield _LField("fetch mode", self._select("fetch.mode"))
                 yield Button("Test Canvas connection", id="btn-test-canvas")
             with TabPane("Plagiarism", id="tab-plagiarism"):
                 yield _LField(
@@ -475,18 +474,14 @@ class SettingsScreen(Vertical):
         self._update_status()
 
     def _set_select_options(self, widget: Select, fqid: str, current: str) -> None:
-        if fqid == "grading.provider":
-            names = sorted(self._registry)
-            options = [(name, name) for name in names]
-            if current and current not in names:
-                options.append((f"{current} (not in registry)", current))
-            if not options:
-                options = [("(no available provider)", "")]
-        else:  # fetch.mode
-            modes = {"attach", "text", "auto"}
-            options = [(mode, mode) for mode in sorted(modes)]
-            if current and current not in modes:
-                options.append((current, current))
+        if fqid != "grading.provider":  # only provider is a Select field
+            return
+        names = sorted(self._registry)
+        options = [(name, name) for name in names]
+        if current and current not in names:
+            options.append((f"{current} (not in registry)", current))
+        if not options:
+            options = [("(no available provider)", "")]
         widget.set_options(options)
         values = {value for _, value in widget._options if value is not Select.NULL}
         if current in values:
@@ -577,7 +572,6 @@ class SettingsScreen(Vertical):
             if isinstance(assigns, list) and assigns:
                 entries = [
                     f"  {entry.get('id') or entry.get('assignment_id')}"
-                    + (f"  [{entry.get('mode')}]" if entry.get("mode") else "")
                     for entry in assigns
                     if isinstance(entry, dict)
                 ]

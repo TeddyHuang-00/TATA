@@ -133,9 +133,7 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
         modal = app.screen
         assert isinstance(modal, ImportAssignmentModal)
         await wait_for(pilot, lambda: modal.query_one(Select).value == 777)
-        # default mode = auto (third radio pressed); dir is the assignment id
-        mode_set = modal.query_one("#modal-mode")
-        assert mode_set.pressed_button.id == "mode-auto"  # type: ignore[union-attr]
+        # no mode radio set anymore — import fetches auto-collect-all
         await pilot.pause()
         await pilot.click("#import")
         await wait_for(pilot, lambda: bool(calls))
@@ -144,7 +142,6 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
         arg = calls[0]
         assert arg.course == 111111
         assert arg.assignment == 777
-        assert arg.mode == "auto"
         status = text(app.query_one("#dash-status", Static))
         assert "Done in" in status, status
     finally:

@@ -83,6 +83,22 @@ def count_files(dir_: Path, suffix: str | None = None) -> int:
     )
 
 
+def count_raw_items(dir_: Path) -> int:
+    """Top-level raw items: files + student subdirs, skipping dot-entries.
+
+    A multi-file student lands in raw/<uid>/ and counts as ONE submission
+    (fetch writes one item per student); raw counts must match the
+    per-student rows, not the per-file count.
+    """
+    if not dir_.is_dir():
+        return 0
+    return sum(
+        1
+        for p in dir_.iterdir()
+        if not p.name.startswith(".") and (p.is_file() or p.is_dir())
+    )
+
+
 def count_recursive(dir_: Path) -> int:
     if not dir_.is_dir():
         return 0
@@ -193,7 +209,7 @@ def scan_assignments(
         if not entry.is_dir() or not cfg.is_file():
             continue
         counts = Counts(
-            raw=count_files(entry / "raw"),
+            raw=count_raw_items(entry / "raw"),
             processed=count_files(entry / "processed", ".md"),
             graded=count_files(entry / "graded", ".json"),
             scored=count_recursive(entry / "scored"),

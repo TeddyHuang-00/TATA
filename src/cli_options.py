@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import (
     AliasChoices,
@@ -124,10 +124,6 @@ class FetchCliOptions(BaseModel):
 
     course: CliPositionalArg[int | None] = None
     assignment: CliPositionalArg[int | None] = None
-    mode: Literal["attach", "text", "auto"] = Field(
-        default="auto",
-        description="Submission type (default: auto-detect from Canvas).",
-    )
     config: Path | None = Field(
         default=None,
         validation_alias=AliasChoices("config", "c"),

@@ -97,7 +97,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 ## Layered Config
 
 Config is layered (three levels): the global base config `data/config.toml`
-holds defaults shared across courses (`[fetch]` course_id/mode, `[plagiarism]`
+holds defaults shared across courses (`[fetch]` course_id, `[plagiarism]`
 settings) but no assignment list; each course config
 `data/<course>/config.toml` holds course-level fetch state plus the course's
 assignment list (`[[fetch.assignments]]`); each
@@ -109,11 +109,18 @@ assignment list in the global file) still works as an abbreviation.
 
 The course `[[fetch.assignments]]` list drives batch fetch and the plagiarism
 aggregate: `fetch -c data/<course>/config.toml` fetches every listed entry in
-one shot (per-entry `mode` wins, falling back to the course `[fetch]` mode;
-fetch output dirs are always `<course dir>/<id>/raw`, derived from the entry
-id, never stored), and
+one shot (fetch auto-collects every submission type — body text plus
+attachments — for each listed entry; fetch output dirs are always
+`<course dir>/<id>/raw`, derived from the entry id, never stored), and
 `plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates
-exactly the listed assignments. The global config `data/config.toml` carries
+exactly the listed assignments.
+
+Fetch writes one raw item per student: a single-file submission stays flat
+at `raw/<file>`; a multi-file student (e.g. text-box answer plus an
+attachment) lands in `raw/<uid>/`. `preprocess` auto-detects the format of
+each file (ipynb/html/txt/md/docx) and merges a multi-file student into one
+`processed/<uid>.md` with per-file `<!--- file: <name>, submitted:
+<stamp> -->` headers; single-file students stay unchanged. The global config `data/config.toml` carries
 no assignment list: `plagiarism -c data/config.toml` falls back to the
 discovered course configs (`data/*/config.toml`) and `fetch --retry` scans
 the global plus every course config.
@@ -121,20 +128,17 @@ the global plus every course config.
 ```toml
 # data/config.toml (global base layer, gitignored)
 [fetch]
-course_id = 271218
-mode = "attach"   # defaults merged under each course config
+course_id = 271218   # defaults merged under each course config
 
 # data/271218/config.toml (course layer, gitignored)
 [fetch]
 course_id = 271218
-mode = "auto"     # default for entries without their own
 
 [[fetch.assignments]]
 id = 2978557
 
 [[fetch.assignments]]
 id = 2979509
-mode = "text"     # only when it differs from the course default
 
 # data/271218/2978557/config.toml (assignment layer; no [fetch] — the
 # assignment id comes from the numeric dir name)

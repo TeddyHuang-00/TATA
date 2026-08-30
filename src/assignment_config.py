@@ -152,11 +152,9 @@ class FetchAssignmentEntry(BaseModel):
 
     ``id`` (or legacy ``assignment_id``) is the Canvas assignment id; the
     fetch output dir is always the derived ``<course_dir>/<id>/raw``.
-    ``mode`` falls back to the course [fetch] mode when None.
     """
 
     id: int = Field(ge=1, validation_alias=AliasChoices("id", "assignment_id"))
-    mode: Literal["attach", "text", "auto"] | None = Field(default=None)
 
 
 class FetchSection(BaseModel):
@@ -166,7 +164,6 @@ class FetchSection(BaseModel):
     aggregate. Assignment identity is the dir name, not a [fetch] key."""
 
     course_id: int | None = Field(default=None, ge=1)
-    mode: Literal["attach", "text", "auto"] = Field(default="auto")
     assignments: list[FetchAssignmentEntry] = Field(default_factory=list)
 
 

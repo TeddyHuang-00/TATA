@@ -89,10 +89,10 @@
 
 | 动作 | 键 | 等价 CLI | 行为 |
 |------|----|---------|------|
-| 导入作业 | `c` | `fetch` 交互选择 | Modal 选 Canvas 作业 + mode → 单作业 fetch → 写 course config 的 `[[fetch.assignments]]`（`id` 条目） |
+| 导入作业 | `c` | `fetch` 交互选择 | Modal 选 Canvas 作业 → 单作业 fetch → 写 course config 的 `[[fetch.assignments]]`（`id` 条目） |
 | fetch 全部 | `F` | `fetch -c data/<course>/config.toml` | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」 |
 | 查重+聚合 | `p` | `plagiarism -c data/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏 |
-| 课程配置 | `cfg` | — | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/mode/`[[fetch.assignments]]`/[plagiarism] 覆盖） |
+| 课程配置 | `cfg` | — | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖） |
 
 > `[maybe]` 全局聚合（跨课程查重）v1 不做 —— 用户未要求，YAGNI；将来加就是 global 视图一个按钮。
 
@@ -122,7 +122,7 @@ Assignment 层新增职责（相对 v1 的 S2）：
 | `enter` | Global/Course | Drill down one level | Global→Course→Assignment; inside Assignment 'enter' unused (02 has no enter binding) |
 | `esc` / `backspace` | Course/Assignment | Drill up one level | Assignment→Course→Global; at Global top esc closes Modal or is ignored |
 | `c` | Global | Import course | Modal: pick Canvas course → create `data/<dir>/config.toml` → enter Course view |
-| `c` | Course | Import assignment | Modal: pick assignment + mode → fetch → append to course config (`id` entry) |
+| `c` | Course | Import assignment | Modal: pick assignment → fetch → append to course config (`id` entry) |
 | `F` | Course | Fetch all | Per-assignment cache skip (`.fetch-cache.json`) |
 | `p` | Course | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to S4 |
 | `cfg` | Course | Course config | Switch to S5 (context=Course) |
@@ -137,15 +137,15 @@ Assignment 层新增职责（相对 v1 的 S2）：
 ### 6.1 导入课程（Global 层入口，新）
 ```
 [c] → Modal「Import course from Canvas」: Select(list_courses)     # 后台线程预载
-    → 确认: 创建 data/<dir>/config.toml（[fetch].course_id=…, mode=attach）
+    → 确认: 创建 data/<dir>/config.toml（[fetch].course_id=…）
        <dir> 默认 = course_id（如 "271218"），Modal 内 Input 可自定义（唯一性校验：重名报错）
     → 进入 Course 视图（若该课程已有作业目录则扫描显示；否则空态提示 [c] 导入作业）
 ```
-> 目录创建只写一份最小 course config（course_id + mode）；作业清单 `[[fetch.assignments]]` 由后续「导入作业」累积。course config 是 gitignored（`data/*`），与 v1 根配置同语义。**目录名约定：默认 course_id（用户 2026-08-29 确认），可自定义；迁移后课程显示名 = 目录名（或在目录名后附 course_id）。**
+> 目录创建只写一份最小 course config（course_id）；作业清单 `[[fetch.assignments]]` 由后续「导入作业」累积。course config 是 gitignored（`data/*`），与 v1 根配置同语义。**目录名约定：默认 course_id（用户 2026-08-29 确认），可自定义；迁移后课程显示名 = 目录名（或在目录名后附 course_id）。**
 
 ### 6.2 导入作业 / fetch 全部 / 查重+聚合（course 内）
 ```
-Course 视图 [c] → Modal(Canvas 作业 Select + RadioSet(mode))
+Course 视图 [c] → Modal(Canvas 作业 Select)
     → 确认 → job: _run_fetch(单作业 FetchCliOptions) → remember_fetch 写 course config 清单
     → 完成 notify + 重扫
 Course 视图 [F] → Confirm Modal「Fetch course 6 assignments (126 submissions, cached skipped)」
@@ -215,9 +215,9 @@ rm -r data/0-10-* data/1-1-* data/1-6-* \
 
 ```
 data/
-├── config.toml              # GLOBAL（可选）：全局默认值（[plagiarism] 默认、fetch mode 默认）
+├── config.toml              # GLOBAL（可选）：全局默认值（[plagiarism] 默认）
 ├── ITCS5153/                # COURSE 目录（识别：含 config.toml 且子目录=作业）
-│   ├── config.toml          # COURSE 配置：course_id、mode、[[fetch.assignments]]、[plagiarism] 覆盖
+│   ├── config.toml          # COURSE 配置：course_id、[[fetch.assignments]]、[plagiarism] 覆盖
 │   └── 1-6-first-python/…   # ASSIGNMENT：grading/processing/hooks/scoring（覆盖 course）
 └── example/                 # 模板（保持 gitignored 例外）
 ```

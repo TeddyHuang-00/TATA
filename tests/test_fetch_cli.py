@@ -35,10 +35,9 @@ def _run_main(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_parses_full_options() -> None:
-    args = _parse("fetch", "111111", "222225", "--mode", "text")
+    args = _parse("fetch", "111111", "222225")
     assert args.course == 111111
     assert args.assignment == 222225
-    assert args.mode == "text"
     assert args.retry is False
     assert args.config is None
 
@@ -47,7 +46,6 @@ def test_defaults() -> None:
     args = _parse("fetch")
     assert args.course is None
     assert args.assignment is None
-    assert args.mode == "auto"
     assert args.retry is False
     assert args.config is None
 
@@ -78,11 +76,10 @@ def test_course_without_assignment_rejected(
     assert "must be given together" in capsys.readouterr().err
 
 
-def test_invalid_mode_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+def test_mode_no_longer_accepted(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
-        _parse("fetch", "1", "2", "--mode", "bogus")
+        _parse("fetch", "1", "2", "--mode", "text")
     assert excinfo.value.code == 2
-    assert "Input should be 'attach', 'text' or 'auto'" in capsys.readouterr().err
 
 
 def test_retry_allows_single_course_filter() -> None:
@@ -151,7 +148,7 @@ def test_grade_force_and_config() -> None:
     assert sub.force is True
 
 
-def test_fetch_entries_uses_list_id_and_mode(
+def test_fetch_entries_uses_list_ids(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -160,23 +157,22 @@ def test_fetch_entries_uses_list_id_and_mode(
 
     cfg = FetchSection.model_validate({
         "course_id": 111111,
-        "mode": "attach",
         "assignments": [
             {"id": 11},
-            {"id": 12, "mode": "text"},
+            {"id": 12},
         ],
     })
-    calls: list[tuple[int, int, str, str]] = []
+    calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
-        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
     cfg_path = tmp_path / "data" / "config.toml"
     main_mod._fetch_entries(object(), 111111, cfg_path, cfg)
     assert calls == [
-        (111111, 11, str((tmp_path / "data/11/raw").resolve()), "attach"),
-        (111111, 12, str((tmp_path / "data/12/raw").resolve()), "text"),
+        (111111, 11, str((tmp_path / "data/11/raw").resolve())),
+        (111111, 12, str((tmp_path / "data/12/raw").resolve())),
     ]
 
 
@@ -194,8 +190,7 @@ def test_retry_finds_course_config_list(
     course = tmp_path / "data" / "111111"
     (course / "222222").mkdir(parents=True)
     (course / "config.toml").write_text(
-        '[fetch]\ncourse_id = 111111\nmode = "attach"\n\n'
-        "[[fetch.assignments]]\nid = 222222\n",
+        "[fetch]\ncourse_id = 111111\n\n[[fetch.assignments]]\nid = 222222\n",
         encoding="utf-8",
     )
     (course / "222222" / "config.toml").write_text(
@@ -206,19 +201,17 @@ def test_retry_finds_course_config_list(
         encoding="utf-8",
     )
 
-    calls: list[tuple[int, int, str, str]] = []
+    calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "_repo_root", lambda: tmp_path)
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
     monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
-        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
     main_mod._retry_fetch(None, None)  # no SystemExit: configs were found
-    assert calls == [
-        (111111, 222222, str((course / "222222" / "raw").resolve()), "attach")
-    ]
+    assert calls == [(111111, 222222, str((course / "222222" / "raw").resolve()))]
 
 
 def test_run_fetch_course_config_positional_derives_aid_raw_out(
@@ -234,41 +227,37 @@ def test_run_fetch_course_config_positional_derives_aid_raw_out(
     cfg_path = course / "config.toml"
     cfg_path.write_text("[fetch]\ncourse_id = 111111\n", encoding="utf-8")
 
-    calls: list[tuple[int, int, str, str]] = []
+    calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
     monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
-        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
     main_mod._run_fetch(
         FetchCliOptions(course=111111, assignment=222333, config=cfg_path)
     )
-    assert calls == [
-        (111111, 222333, str((course / "222333" / "raw").resolve()), "auto")
-    ]
+    assert calls == [(111111, 222333, str((course / "222333" / "raw").resolve()))]
     # The fetch was remembered as a [[fetch.assignments]] entry (no [fetch].mode).
     fetch = tomllib.loads(cfg_path.read_text())["fetch"]
     assert fetch["course_id"] == 111111
     assert "mode" not in fetch
-    assert [(e["id"], e.get("mode")) for e in fetch["assignments"]] == [(222333, None)]
+    assert [e["id"] for e in fetch["assignments"]] == [222333]
 
 
-def test_run_fetch_assignment_config_honors_entry_mode(
+def test_run_fetch_assignment_config_uses_course_fetch_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A standalone fetch -c <assignment config> resolves the mode from the
-    course config's [[fetch.assignments]] entry when the CLI mode is auto."""
+    """A standalone fetch -c <assignment config> uses the course config
+    above it for course_id; the entry is remembered there (id only)."""
     import src.cli as main_mod
 
     course = tmp_path / "data" / "111111"
     (course / "222333").mkdir(parents=True)
     (course / "config.toml").write_text(
-        '[fetch]\ncourse_id = 111111\nmode = "attach"\n\n'
-        '[[fetch.assignments]]\nid = 222333\nmode = "text"\n',
-        encoding="utf-8",
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
     )
     (course / "222333" / "config.toml").write_text(
         "[grading]\n"
@@ -278,18 +267,20 @@ def test_run_fetch_assignment_config_honors_entry_mode(
         encoding="utf-8",
     )
 
-    calls: list[tuple[int, int, str, str]] = []
+    calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
     monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
-        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
     main_mod._run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
-    assert calls == [
-        (111111, 222333, str((course / "222333" / "raw").resolve()), "text")
-    ]
+    assert calls == [(111111, 222333, str((course / "222333" / "raw").resolve()))]
+    fetch = tomllib.loads((course / "config.toml").read_text())["fetch"]
+    assert fetch["course_id"] == 111111
+    assert "mode" not in fetch
+    assert [e["id"] for e in fetch["assignments"]] == [222333]
 
 
 def test_run_fetch_non_numeric_assignment_dir_exits(
@@ -317,18 +308,18 @@ def test_run_fetch_non_numeric_assignment_dir_exits(
     assert "not a numeric id" in str(exc.value)
 
 
-def test_remember_skips_mode_equal_to_course_default(
+def test_remember_never_writes_mode_key(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An entry fetched under the course-config default mode records no mode
-    key — the course [fetch].mode stays the source of truth."""
+    """An entry fetched under the course config records no mode key — the
+    [[fetch.assignments]] entry is id-only."""
     import src.cli as main_mod
 
     course = tmp_path / "data" / "111111"
     (course / "222333").mkdir(parents=True)
     (course / "config.toml").write_text(
-        '[fetch]\ncourse_id = 111111\nmode = "text"\n', encoding="utf-8"
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
     )
     (course / "222333" / "config.toml").write_text(
         "[grading]\n"
@@ -338,18 +329,16 @@ def test_remember_skips_mode_equal_to_course_default(
         encoding="utf-8",
     )
 
-    calls: list[tuple[int, int, str, str]] = []
+    calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
     monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
-        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
     main_mod._run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
-    assert calls == [
-        (111111, 222333, str((course / "222333" / "raw").resolve()), "text")
-    ]
+    assert calls == [(111111, 222333, str((course / "222333" / "raw").resolve()))]
     fetch = tomllib.loads((course / "config.toml").read_text())["fetch"]
-    assert fetch["mode"] == "text"
-    assert [(e["id"], e.get("mode")) for e in fetch["assignments"]] == [(222333, None)]
+    assert "mode" not in fetch
+    assert [e["id"] for e in fetch["assignments"]] == [222333]

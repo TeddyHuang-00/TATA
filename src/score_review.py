@@ -85,9 +85,10 @@ def _load_students(score_dir: Path) -> list[dict]:
 def base_uid(stem: str) -> str:
     """Canvas user id with a fetch suffix (_LATE_N or _N) stripped.
 
-    File stems carry the suffix (canvas_fetch._fetch_attachments /
-    _fetch_text), but alias.toml keys are the unsuffixed uid — so a stem
-    like ``301741_LATE_0`` must resolve to the ``301741`` alias.
+    File stems carry the suffix (canvas_fetch fetches bodies and
+    attachments as ``<uid>{_LATE_i|_i}``), but alias.toml keys are the
+    unsuffixed uid — so a stem like ``301741_LATE_0`` must resolve to the
+    ``301741`` alias.
     """
     return re.sub(r"_(?:LATE_)?\d+$", "", stem)
 
@@ -96,12 +97,42 @@ def find_raw_file(score_dir: Path, student_id: str) -> Path | None:
     """Locate the original submission for a student in a sibling raw/ dir.
 
     Graded JSON stem and raw file stem match (canvas user id, including
-    _LATE_N suffixes); any extension is acceptable.
+    _LATE_N suffixes); any extension is acceptable. Multi-file students
+    (auto-collect all) land in raw/<uid>/ folders — when the flat glob
+    finds nothing, fall back to a stem match inside raw/<uid>/ /
+    raw/<stem-without-suffix>/ (the folder name is the unsuffixed uid; a
+    suffixed stem strips the suffix). Single-file behavior is unchanged.
     """
     for raw_dir in (score_dir.parent / "raw", score_dir / "raw"):
         matches = sorted(raw_dir.glob(f"{student_id}.*"))
         if matches:
             return matches[0]
+    # Fallback: multi-file student -> raw/<uid>/<name> (folder per student).
+    base = re.sub(r"_(?:LATE_)?\d+$", "", student_id) or student_id
+    for raw_dir in (score_dir.parent / "raw", score_dir / "raw"):
+        folders = (raw_dir / base, raw_dir / student_id)
+        # Exact stem first (body member: <uid>.html / <uid>_LATE_0.html).
+        hits = sorted(
+            p
+            for folder in folders
+            for p in folder.rglob("*")
+            if p.is_file() and not p.name.startswith(".") and p.stem == student_id
+        )
+        if hits:
+            return hits[0]
+        # Then base-uid match (attachment members: <uid>_0.ipynb,
+        # <uid>_1.docx, <uid>_LATE_0.html ...). The folder name is the
+        # unsuffixed uid; the stem is the uid plus the fetch suffix.
+        hits = sorted(
+            p
+            for folder in folders
+            for p in folder.rglob("*")
+            if p.is_file()
+            and not p.name.startswith(".")
+            and re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == base
+        )
+        if hits:
+            return hits[0]
     return None
 
 

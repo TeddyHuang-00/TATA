@@ -37,7 +37,6 @@ GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndi
 
 COURSE_TOML = """[fetch]
 course_id = 111111
-mode = "attach"
 
 [[fetch.assignments]]
 id = 1001
@@ -113,10 +112,9 @@ def _check_dump_roundtrip() -> None:
     original = {
         "fetch": {
             "course_id": 111111,
-            "mode": "attach",
             "assignments": [
                 {"id": 1001},
-                {"id": 1002, "mode": "text"},
+                {"id": 1002},
             ],
         },
         "plagiarism": {
@@ -175,7 +173,6 @@ async def _check_course_only(root: Path) -> None:
         course_id = screen.query_one("#f-fetch-course_id", Input)
         assert not course_id.disabled
         assert course_id.value == "111111"
-        assert screen.query_one("#f-fetch-mode", Select).value == "attach"
         assert screen.query_one("#f-grading-rubric", Input).disabled
         assert screen.query_one("#f-assignment-raw_dir", Input).disabled
         assert not screen.query_one("#f-plagiarism-copydetect_weight", Input).disabled
@@ -266,7 +263,7 @@ async def _check_validation_reset(root: Path) -> None:
 
 
 async def _check_course_edit(root: Path) -> None:
-    """Course context: mode edit keeps course_id and [[fetch.assignments]]."""
+    """Course context: course_id edit keeps [[fetch.assignments]] intact."""
     state = _make_state(root, course=True, assignment=True)
     app = _SettingsTestApp(state)
     async with app.run_test(size=(120, 44)) as pilot:
@@ -274,13 +271,13 @@ async def _check_course_edit(root: Path) -> None:
         screen = app.query_one(SettingsScreen)
         screen.set_context("course")
         await pilot.pause()
-        screen.query_one("#f-fetch-mode", Select).value = "text"
+        screen.query_one("#f-fetch-course_id", Input).value = "222222"
         screen.action_save()
         await pilot.pause()
         course_cfg = root / _COURSE_CFG
         saved_course = tomllib.loads(course_cfg.read_text(encoding="utf-8"))
-        assert saved_course["fetch"]["mode"] == "text"
-        assert saved_course["fetch"]["course_id"] == 111111
+        assert saved_course["fetch"]["course_id"] == 222222
+        assert "mode" not in saved_course["fetch"], saved_course["fetch"]
         assert len(saved_course["fetch"]["assignments"]) == 1
         assert saved_course["fetch"]["assignments"][0]["id"] == 1001
         load_assignment_file(root / _ASSIGNMENT_CFG)  # still parses

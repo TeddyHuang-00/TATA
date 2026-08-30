@@ -19,7 +19,7 @@ from pathlib import Path
 
 from e2e_common import write_aliases, write_graded  # isort: skip - seeds repo-root sys.path before src imports
 from src.cli_options import ScoreReviewCliOptions
-from src.score_review import ScoreReviewScreen, Viewer
+from src.score_review import ScoreReviewScreen, Viewer, find_raw_file
 from textual.app import App, ComposeResult
 from textual.widgets import Select, Static
 
@@ -107,7 +107,32 @@ async def main() -> None:
             assert isinstance(viewer.screen, ScoreReviewScreen), type(viewer.screen)
             assert len(viewer.screen_stack) == stack_before
 
+        # 3. find_raw_file: folder members resolve by exact stem (body) or
+        # by base-uid match (attachment members <uid>_N / <uid>_LATE_N).
+        _check_find_raw_file(Path(tmp))
+
     print("review screen check OK")
+
+
+def _check_find_raw_file(tmp: Path) -> None:
+    """Folder members resolve by exact stem (body) or base-uid match."""
+    raw = tmp / "raw"
+    (raw / "20").mkdir(parents=True)
+    (raw / "20" / "20_0.ipynb").write_bytes(b"nb")
+    (raw / "20" / "20_1.docx").write_bytes(b"doc")
+    (raw / "30").mkdir(parents=True)
+    (raw / "30" / "30_LATE_0.html").write_bytes(b"<p>late</p>")
+    (raw / "30" / "30_0.ipynb").write_bytes(b"nb")
+    hit = find_raw_file(tmp, "20")
+    assert hit is not None
+    assert hit.name == "20_0.ipynb"
+    hit = find_raw_file(tmp, "30")
+    assert hit is not None
+    assert hit.name == "30_0.ipynb"
+    # a suffixed student id resolves to the late body by exact stem
+    hit = find_raw_file(tmp, "30_LATE_0")
+    assert hit is not None
+    assert hit.name == "30_LATE_0.html"
 
 
 if __name__ == "__main__":

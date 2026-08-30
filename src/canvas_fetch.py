@@ -1,22 +1,23 @@
 # Canvas submission fetch: attachment downloads and text-entry bodies.
-# Modes: attach (download attachment files), text (save submission body),
-# auto (detect from submissions: attachments present -> attach, else text).
+# Everything is collected per submission: non-empty bodies as <uid>.html and
+# every attachment as <uid>{_LATE_i|_i}.{ext}. One file -> flat out/<name>;
+# multi-file -> out/<uid>/<name>.
 from __future__ import annotations
 
 import json
 import operator
+import re
+import shutil
 import sys
 from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Literal
+from typing import Any
 
 import dotenv
 import tomlkit
 from canvasapi import Canvas
 
 from src.aliases import upsert_student_aliases
-
-FetchMode = Literal["attach", "text", "auto"]
 
 
 def load_env() -> tuple[str, str]:
@@ -47,85 +48,134 @@ def _submitter(sub: object) -> tuple[int, str, str, bool]:
     return uid, name, sortable, bool(getattr(sub, "late", False))
 
 
-def _fetch_attachments(subs: list[object], out: Path) -> list[dict]:
+def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-many-statements]
+    canvas: Canvas,
+    course_id: int,
+    assignment_id: int,
+    out: Path,
+) -> list[dict]:
+    """Fetch every submission of an assignment: non-empty text bodies as
+    ``<uid>{_LATE_0}.html`` plus each attachment as
+    ``<uid>{_LATE_i|_i}.{ext}``. A submission with a single file lands flat
+    in ``out/``; with more than one file it lands in ``out/<uid>/``. The
+    plain filename is the ``.fetch-cache.json`` key either way."""
+    course = canvas.get_course(course_id)
+    assignment = course.get_assignment(assignment_id)
+    out.mkdir(parents=True, exist_ok=True)
     cache_path = out / ".fetch-cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    subs = list(assignment.get_submissions(include=["user", "attachments"]))
     rows = []
+    flat_names: set[str] = set()
+    folder_names: set[str] = set()
+    flat_uids: set[int] = set()
+    folder_uids: set[int] = set()
     for sub in subs:
         uid, name, sortable, late = _submitter(sub)
-        atts = getattr(sub, "attachments", None) or []
-        for i, att in enumerate(atts):
+        entries: list[tuple[str, str, Any]] = []  # (filename, stamp, att|None)
+        body = getattr(sub, "body", "") or ""
+        if body:
+            suffix = "_LATE_0" if late else ""
+            entries.append((
+                f"{uid}{suffix}.html",
+                getattr(sub, "updated_at", "") or "",
+                None,
+            ))
+        for i, att in enumerate(getattr(sub, "attachments", None) or []):
             ext = att.filename.rsplit(".", 1)[-1]
-            suffix = f"_LATE_{i}" if late else (f"_{i}" if i else "")
-            dest = out / f"{uid}{suffix}.{ext}"
-            stamp = getattr(att, "updated_at", "") or ""
-            # Skip re-downloading when the file exists and the attachment is unchanged.
-            if dest.exists() and cache.get(dest.name) == stamp:
-                pass
+            if body and i == 0:
+                suffix = "_0"  # avoid clashing with the body html
+            elif late:
+                suffix = f"_LATE_{i}"
             else:
-                att.download(dest)
-                cache[dest.name] = stamp
-            rows.append({
-                "user_id": uid,
-                "user_name": name,
-                "sortable_name": sortable,
-                "file": dest.name,
-            })
-        if not atts:
+                suffix = f"_{i}" if i else ""
+            entries.append((
+                f"{uid}{suffix}.{ext}",
+                getattr(att, "updated_at", "") or "",
+                att,
+            ))
+        if not entries:
             rows.append({
                 "user_id": uid,
                 "user_name": name,
                 "sortable_name": sortable,
                 "file": "",
             })
-    cache_path.write_text(json.dumps(cache))
-    return rows
-
-
-def _fetch_text(subs: list[object], out: Path) -> list[dict]:
-    rows = []
-    for sub in subs:
-        uid, name, sortable, late = _submitter(sub)
-        body = getattr(sub, "body", "") or ""
-        if body:
-            suffix = "_LATE_0" if late else ""
-            dest = out / f"{uid}{suffix}.html"
-            dest.write_text(body, encoding="utf-8")
-            file = dest.name
+            continue
+        layout = (out / str(uid)) if len(entries) > 1 else out
+        layout.mkdir(parents=True, exist_ok=True)
+        if layout == out:
+            flat_uids.add(uid)
         else:
-            file = ""
+            folder_uids.add(uid)
+        (flat_names if layout == out else folder_names).update(
+            fname for fname, _, _ in entries
+        )
+        for fname, stamp, att in entries:
+            dest = layout / fname
+            # Skip re-downloading when the file exists and the item is unchanged.
+            if dest.exists() and cache.get(fname) == stamp:
+                pass
+            elif att is None:
+                dest.write_text(body, encoding="utf-8")
+                cache[fname] = stamp
+            else:
+                att.download(dest)
+                cache[fname] = stamp
         rows.append({
             "user_id": uid,
             "user_name": name,
             "sortable_name": sortable,
-            "file": file,
+            "file": entries[0][0],
         })
-    return rows
-
-
-def _resolve_mode(subs: list[object], mode: str) -> str:
-    if mode != "auto":
-        return mode
-    return "attach" if any(getattr(s, "attachments", None) for s in subs) else "text"
-
-
-def fetch_assignment(
-    canvas: Canvas,
-    course_id: int,
-    assignment_id: int,
-    out: Path,
-    mode: str = "auto",
-) -> list[dict]:
-    course = canvas.get_course(course_id)
-    assignment = course.get_assignment(assignment_id)
-    out.mkdir(parents=True, exist_ok=True)
-    subs = list(assignment.get_submissions(include=["user", "attachments"]))
-    mode_resolved = _resolve_mode(subs, mode)
-    rows = (
-        _fetch_attachments(subs, out)
-        if mode_resolved == "attach"
-        else _fetch_text(subs, out)
-    )
+    # Prune stale layout leftovers after the download loop (cache stamps
+    # are final). A flat file not produced flat this run is an obsolete
+    # copy: either the file moved into a per-student folder — keep the
+    # re-stamped plain-name key, the folder copy reuses it — or it is a
+    # truly deleted name — unlink it and drop its cache entry. Never drop
+    # a cache key for a name that IS part of this run's output.
+    produced = flat_names | folder_names
+    for p in out.iterdir():
+        if not p.is_file() or p.name.startswith(".") or p.name in flat_names:
+            continue
+        p.unlink()
+        if p.name not in produced:
+            cache.pop(p.name, None)
+    # Full folder cleanup. A top-level dir NOT produced this run is stale
+    # (2->0 unsubmit, folder->flat shrink): rmtree it and pop cache keys
+    # for its files (keys of names produced flat this run are re-used and
+    # survive). A produced dir keeps only the files produced this run
+    # (folder->folder rename: stale in-folder members are unlinked). A uid
+    # appearing in both layouts this run keeps its folder — a dir written
+    # this run is never rmtree'd (the folder wins).
+    produced_folders = {out / str(uid) for uid in folder_uids}
+    for d in out.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        files = [p for p in d.iterdir() if p.is_file()]
+        if d not in produced_folders:
+            for p in files:
+                if p.name not in produced:
+                    cache.pop(p.name, None)
+            shutil.rmtree(d)
+        else:
+            for p in files:
+                if p.name not in produced:
+                    p.unlink()
+                    cache.pop(p.name, None)
+    # Same uid in both layouts this run (duplicated submission entries):
+    # the folder is canonical — drop the flat copies (preprocess's
+    # mixed-layout guard skips them anyway) and their cache keys unless
+    # the folder carries the same name.
+    for uid in flat_uids & folder_uids:
+        for p in out.iterdir():
+            if not p.is_file() or p.name.startswith("."):
+                continue
+            if re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == str(uid):
+                p.unlink()
+                if p.name not in folder_names:
+                    cache.pop(p.name, None)
+    cache_path.write_text(json.dumps(cache))
     rows.sort(key=operator.itemgetter("sortable_name"))
     aliases = {
         r["user_id"]: (
@@ -140,7 +190,7 @@ def fetch_assignment(
     upsert_student_aliases(out.parent, aliases)
     alias_path = out.parent / "alias.toml"
     files = sum(1 for r in rows if r["file"])
-    print(f"{mode_resolved}: {files} submissions -> {out}/ ; alias -> {alias_path}")
+    print(f"auto: {files} submissions -> {out}/ ; alias -> {alias_path}")
     return rows
 
 
@@ -148,20 +198,18 @@ def remember_course_fetch(
     config_path: Path,
     *,
     course_id: int | None = None,
-    entry: tuple[int, str | None] | None = None,
+    assignment_id: int | None = None,
 ) -> None:
     """Upsert [fetch] memory into a course config.toml (field-level, never
     whole-block).
 
     Only [fetch].course_id is written when given; existing keys/tables —
     grading sections, a ``[[fetch.assignments]]`` list — are preserved.
-    ``[fetch].mode`` is NEVER written: the course mode is the user-set
-    default and per-assignment modes live on list entries (this is what
-    keeps an upload module from accidentally running under a global "text"
-    mode). ``entry=(aid, mode)`` appends ``{id = aid}`` — plus ``mode`` only
-    when it is not "auto" — to ``[[fetch.assignments]]`` (AOT), deduped by
-    id: an entry already present leaves the list untouched. The file is
-    created if missing.
+    ``[fetch].mode`` no longer exists: legacy ``mode`` keys in existing
+    configs are tolerated but never written. ``assignment_id`` appends
+    ``{id = aid}`` to ``[[fetch.assignments]]`` (AOT), deduped by id (a
+    legacy ``assignment_id`` key counts as the same id): an entry already
+    present leaves the list untouched. The file is created if missing.
     """
     if config_path.exists():
         try:
@@ -179,8 +227,7 @@ def remember_course_fetch(
         fetch = doc["fetch"]
     if course_id is not None:
         fetch["course_id"] = course_id
-    if entry is not None:
-        aid, mode = entry
+    if assignment_id is not None:
         aot = fetch.get("assignments")
         if not isinstance(aot, list):
             aot = tomlkit.aot()
@@ -191,10 +238,8 @@ def remember_course_fetch(
             else None
             for e in aot
         }
-        if aid not in existing_ids:
+        if assignment_id not in existing_ids:
             item = tomlkit.table()
-            item["id"] = aid
-            if mode is not None and mode != "auto":
-                item["mode"] = mode
+            item["id"] = assignment_id
             aot.append(item)
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")

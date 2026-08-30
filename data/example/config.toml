@@ -8,7 +8,9 @@
 
 # [fetch] settings live in the course config (data/<course>/config.toml:
 # [fetch] course_id + [[fetch.assignments]] id entries); assignment configs
-# carry no [fetch] — identity is the numeric dir name.
+# carry no [fetch] — identity is the numeric dir name. Fetch auto-collects
+# every submission type per student: a multi-file student lands in
+# raw/<uid>/, a single-file submission stays flat at raw/<name>.
 
 [grading]
 rubric = "rubrics/example_rubric.toml"
