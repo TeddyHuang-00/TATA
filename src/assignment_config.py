@@ -359,6 +359,20 @@ def _load_toml(config_path: Path) -> dict:
         raise ValueError(msg) from exc
 
 
+def load_root_section[T: BaseModel](path: Path, section: str, model: type[T]) -> T | None:
+    """Load one section of a config.toml into a pydantic model.
+
+    None when the file or the section is missing/empty; ValueError (with the
+    path) on bad TOML; model_validate errors propagate unchanged.
+    """
+    if not path.is_file():
+        return None
+    values = _load_toml(path).get(section)
+    if values is None or values == {}:
+        return None
+    return model.model_validate(values)
+
+
 def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
     """Load an assignment config layered over the course config and, when
     present, the global config above it (``data/config.toml``).

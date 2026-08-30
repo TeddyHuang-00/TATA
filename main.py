@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tomllib
 from pathlib import Path
 
 from canvasapi import Canvas
@@ -12,6 +11,7 @@ from src.assignment_config import (
     FetchSection,
     find_root_config,
     load_assignment_file,
+    load_root_section,
 )
 from src.canvas_fetch import (
     fetch_assignment,
@@ -65,9 +65,7 @@ def _format_job_summary(summary: dict) -> str:
 
 def _root_fetch(cfg_path: Path) -> FetchSection | None:
     """Fetch state from a course/global config (course-level keys only)."""
-    toml = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-    root_fetch = toml.get("fetch")
-    return FetchSection.model_validate(root_fetch) if root_fetch else None
+    return load_root_section(cfg_path, "fetch", FetchSection)
 
 
 def _is_container(cfg_path: Path | None) -> bool:

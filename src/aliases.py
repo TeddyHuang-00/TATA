@@ -31,6 +31,8 @@ from pathlib import Path
 
 import tomlkit
 
+from src.assignment_config import FetchSection, load_root_section
+
 SECTIONS = ("course", "assignment", "student")
 
 # roster.csv columns: user_id, user_name, sortable_name, file (file optional)
@@ -188,13 +190,12 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
 
 def _fetch_assignment_id(config_path: Path) -> int | None:
     try:
-        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        fetch = load_root_section(config_path, "fetch", FetchSection)
+    except (OSError, ValueError):
         return None
-    fetch = data.get("fetch", {})
-    if not isinstance(fetch, dict):
+    if fetch is None:
         return None
-    aid = fetch.get("assignment_id")
+    aid = fetch.assignment_id
     return aid if isinstance(aid, int) and not isinstance(aid, bool) else None
 
 

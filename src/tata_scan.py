@@ -13,11 +13,10 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.assignment_config import is_course_config
+from src.assignment_config import FetchSection, is_course_config, load_root_section
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
 # `display_threshold = 0.8`); NOT the aggregate z-score alpha — z-level flags
@@ -100,10 +99,12 @@ def _max_file_mtime(dir_: Path) -> float | None:
 def _fetch_id(config_path: Path, key: str) -> int | None:
     """Tolerant read of ``[fetch] <key>`` from a config path."""
     try:
-        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        fetch = load_root_section(config_path, "fetch", FetchSection)
+    except (OSError, ValueError):
         return None
-    value = (data.get("fetch") or {}).get(key)
+    if fetch is None:
+        return None
+    value = getattr(fetch, key, None)
     return value if isinstance(value, int) else None
 
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tomllib
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
@@ -21,6 +20,7 @@ from .assignment_config import (
     ensure_assignment_dirs,
     is_root_config,
     load_assignment_file,
+    load_root_section,
     resolve_assignment_paths,
 )
 from .cli_options import (
@@ -564,8 +564,7 @@ def detect_plagiarism(
     # source of truth for the course), else every assignment dir below.
     listed: list[Path] | None = None
     if is_root:
-        toml = tomllib.loads(resolved.read_text(encoding="utf-8"))
-        root_fetch = FetchSection.model_validate(toml.get("fetch", {}))
+        root_fetch = load_root_section(resolved, "fetch", FetchSection) or FetchSection()
         if root_fetch.assignments:
             listed = [
                 (resolved.parent / entry.out).parent for entry in root_fetch.assignments
@@ -600,8 +599,10 @@ def detect_plagiarism(
 
 
 def _root_plagiarism_section(root_config: Path) -> PlagiarismSection:
-    toml = tomllib.loads(root_config.read_text(encoding="utf-8"))
-    return PlagiarismSection.model_validate(toml.get("plagiarism", {}))
+    return (
+        load_root_section(root_config, "plagiarism", PlagiarismSection)
+        or PlagiarismSection()
+    )
 
 
 def main() -> None:
