@@ -51,7 +51,7 @@ from src.grading import grade_assignment
 from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
 from src.scoring import score_assignment
-from src.tata_scan import AssignmentInfo
+from src.tata_scan import AssignmentInfo, count_files, count_recursive
 
 if TYPE_CHECKING:
     from src.tata_app import AppState
@@ -168,25 +168,6 @@ def _pair_count(assignment_dir: Path) -> int:
 def _is_fetched(assignment_dir: Path) -> bool:
     """Fetch freshness = ``raw/.fetch-cache.json`` presence (design §5)."""
     return (assignment_dir / "raw" / ".fetch-cache.json").is_file()
-
-
-def _count_files(dir_: Path, suffix: str | None = None) -> int:
-    """Direct files in ``dir_``, skipping dotfiles ('.fetch-cache.json')."""
-    if not dir_.is_dir():
-        return 0
-    return sum(
-        1
-        for p in dir_.iterdir()
-        if p.is_file()
-        and not p.name.startswith(".")
-        and (suffix is None or p.suffix == suffix)
-    )
-
-
-def _count_recursive(dir_: Path) -> int:
-    if not dir_.is_dir():
-        return 0
-    return sum(1 for p in dir_.rglob("*") if p.is_file() and not p.name.startswith("."))
 
 
 def _pair_label(a: AssignmentInfo) -> str:
@@ -825,11 +806,11 @@ class AssignmentScreen(Vertical):
             return 0
         a_dir = info.config_path.parent
         if stage == "preprocess":
-            return _count_files(a_dir / "processed", ".md")
+            return count_files(a_dir / "processed", ".md")
         if stage == "grade":
             return _checkpoint_done(a_dir)
         if stage == "score":
-            return _count_recursive(a_dir / "scored")
+            return count_recursive(a_dir / "scored")
         return 0
 
     def _job_done(self, summary: dict | None) -> None:

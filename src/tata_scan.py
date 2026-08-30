@@ -62,7 +62,7 @@ class CourseInfo:
     last_run: float | None = None
 
 
-def _count_files(dir_: Path, suffix: str | None = None) -> int:
+def count_files(dir_: Path, suffix: str | None = None) -> int:
     """Direct files in ``dir_``, skipping dotfiles ('.fetch-cache.json')."""
     if not dir_.is_dir():
         return 0
@@ -75,7 +75,7 @@ def _count_files(dir_: Path, suffix: str | None = None) -> int:
     )
 
 
-def _count_files_recursive(dir_: Path) -> int:
+def count_recursive(dir_: Path) -> int:
     if not dir_.is_dir():
         return 0
     return sum(
@@ -166,10 +166,10 @@ def scan_assignments(course_dir: Path) -> list[AssignmentInfo]:
         if not entry.is_dir() or not cfg.is_file():
             continue
         counts = Counts(
-            raw=_count_files(entry / "raw"),
-            processed=_count_files(entry / "processed", ".md"),
-            graded=_count_files(entry / "graded", ".json"),
-            scored=_count_files_recursive(entry / "scored"),
+            raw=count_files(entry / "raw"),
+            processed=count_files(entry / "processed", ".md"),
+            graded=count_files(entry / "graded", ".json"),
+            scored=count_recursive(entry / "scored"),
         )
         mtimes: dict[str, float] = {}
         for stage in ("raw", "processed", "graded", "scored"):
