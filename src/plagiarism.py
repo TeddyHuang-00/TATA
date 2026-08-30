@@ -33,8 +33,8 @@ from .hooks_runtime import HookRuntime
 from .plagiarism_aggregate import (
     DEFAULT_PAIRS_GLOB,
     BuildConfig,
-    _build_payload,
-    _to_text,
+    build_payload,
+    to_text,
 )
 
 MIN_TEXT_CHARS = 20
@@ -486,7 +486,7 @@ def _aggregate_report(
             for d in assignment_dirs
             for p in (d / "plagiarism").glob("all_pairs.json")
         ]
-    payload = _build_payload(
+    payload = build_payload(
         BuildConfig(
             assignments_root=assignments_root,
             pairs_glob=DEFAULT_PAIRS_GLOB,
@@ -497,7 +497,7 @@ def _aggregate_report(
             pair_data_files=pair_files,
         )
     )
-    report = _to_text(payload)
+    report = to_text(payload)
     if output is None:
         print(report)
         return

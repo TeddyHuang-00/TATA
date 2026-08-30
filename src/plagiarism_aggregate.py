@@ -526,7 +526,7 @@ def _assemble_pair_statistics(
 ]:
     """Shared pair pipeline core: records -> best scores -> z-scores -> ranking.
 
-    Both the CLI report (``_build_payload``) and the TUI pane rows
+    Both the CLI report (``build_payload``) and the TUI pane rows
     (``aggregate_pair_rows``) funnel through here; the row assembly lives
     exactly once.
     """
@@ -565,7 +565,9 @@ def aggregate_pair_rows(
 ) -> list[dict]:
     """Ranked pair rows (combined Stouffer Z) for one course.
 
-    Same assembly as the CLI report; shared with the TUI pane.
+    Shares ``_assemble_pair_statistics`` with the CLI report path, which
+    consumes the same statistics as dataclasses via ``build_payload``; here
+    they are returned as ranked row dicts for the TUI pane.
     """
     config = BuildConfig(
         assignments_root=course_dir,
@@ -592,7 +594,7 @@ def aggregate_pair_rows(
     ]
 
 
-def _build_payload(config: BuildConfig) -> AggregatePayload:
+def build_payload(config: BuildConfig) -> AggregatePayload:
     (
         pair_data_files,
         pair_data_parsed,
@@ -636,7 +638,7 @@ def _build_payload(config: BuildConfig) -> AggregatePayload:
     )
 
 
-def _to_text(payload: AggregatePayload) -> str:
+def to_text(payload: AggregatePayload) -> str:
     lines: list[str] = []
     lines.extend([
         "Plagiarism Cross-Assignment Aggregate Report (Robust Mode)",
