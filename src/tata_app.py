@@ -44,7 +44,7 @@ from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
 from src.plagiarism import detect_plagiarism
 from src.score_review import ScoreReviewScreen
-from src.tata_alias import assignment_display_name
+from src.tata_alias import assignment_display_name, course_display_name
 from src.tata_plagiarism import PlagiarismScreen
 from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
 from src.tata_settings import SettingsScreen
@@ -202,7 +202,6 @@ class DashboardScreen(Vertical):
         topbar = self.query_one("#topbar", Static)
         empty = self.query_one("#dash-empty", Static)
         workspace = self.query_one(AssignmentScreen)
-        status = self.query_one("#dash-status", Static)
 
         table.clear(columns=True)
         self._rows = []
@@ -215,8 +214,7 @@ class DashboardScreen(Vertical):
         if state.dashboard_level == "global":
             topbar.update(
                 f"[b]TATA[/b] · Dashboard [Global]   {canvas}   "
-                f"Courses: {len(state.courses)}   "
-                "enter=Course view  c=Import  g=Config  r=Rescan  q=Quit"
+                f"Courses: {len(state.courses)}"
             )
             breadcrumb.update("Global")
             table.add_columns(
@@ -231,7 +229,7 @@ class DashboardScreen(Vertical):
             )
             for i, c in enumerate(state.courses):
                 table.add_row(
-                    c.dir_name,
+                    course_display_name(state.assignments_dir, c.dir_name, c.course_id),
                     str(c.assignment_count),
                     str(c.counts.raw),
                     str(c.counts.processed),
@@ -249,17 +247,20 @@ class DashboardScreen(Vertical):
                 workspace,
             )
         elif state.dashboard_level == "course":
+            course = state.current_course
+            assert course is not None  # course level implies a selected course
+            course_name = course_display_name(
+                state.assignments_dir, course.dir_name, course.course_id
+            )
             topbar.update(
-                f"[b]TATA[/b] · Dashboard [Course: {state.current_course.dir_name}] "
-                f"   {canvas}   enter=Assignment  esc=Global  c=Import  F=Fetch-all  "
-                "p=Plagiarism  s=Review  o=Config  1-5=Filter  r=Rescan  q=Quit"
+                f"[b]TATA[/b] · Dashboard [Course: {course_name}]   {canvas}"
                 + (
                     f"   Filter: {_FILTER_LABELS[self._filter]}"
                     if self._filter is not None
                     else ""
                 )
             )
-            breadcrumb.update(f"Global / [b]{state.current_course.dir_name}[/b]")
+            breadcrumb.update(f"Global / [b]{course_name}[/b]")
             table.add_columns(
                 "Assignment",
                 "ID",
@@ -273,7 +274,12 @@ class DashboardScreen(Vertical):
             shown = _filter_assignments(state.assignments, self._filter)
             for i, a in enumerate(shown):
                 table.add_row(
-                    a.dir_name,
+                    assignment_display_name(
+                        state.assignments_dir,
+                        course.dir_name,
+                        a.dir_name,
+                        a.assignment_id,
+                    ),
                     str(a.assignment_id or "-"),
                     str(a.counts.raw),
                     str(a.counts.processed),
@@ -293,33 +299,31 @@ class DashboardScreen(Vertical):
                 workspace,
             )
         else:  # assignment — T4b workspace
+            a = state.current_assignment
+            assert a is not None  # assignment level implies a selected assignment
+            course = state.current_course
+            course_dir_name = course.dir_name if course is not None else ""
+            a_name = assignment_display_name(
+                state.assignments_dir, course_dir_name, a.dir_name, a.assignment_id
+            )
+            course_name = (
+                course_display_name(
+                    state.assignments_dir, course.dir_name, course.course_id
+                )
+                if course is not None
+                else ""
+            )
             topbar.update(
-                f"[b]TATA[/b] · Dashboard [Assignment: {state.current_assignment.dir_name}]"
-                f"   {canvas}   esc=Back to course  q=Quit"
+                f"[b]TATA[/b] · Dashboard [Assignment: {a_name}]   {canvas}"
             )
             breadcrumb.update(
-                f"Global / {state.current_course.dir_name} / "
-                f"[b]{state.current_assignment.dir_name}[/b]"
+                f"Global / {course_name} / [b]{a_name}[/b]"
             )
             table.display = False
             empty.display = False
             workspace.display = True
             workspace.open_assignment()
 
-        if state.dashboard_level == "global":
-            status.update(
-                "enter=Course  c=Import  g=Config  r=Rescan  q=Quit"
-            )
-        elif state.dashboard_level == "course":
-            status.update(
-                "enter=Assignment  esc=Global  c=Import  F=Fetch-all  "
-                "p=Plagiarism+Aggregate  s=Score review  o=Config  "
-                "1-5=Filter  r=Rescan  q=Quit"
-            )
-        else:
-            status.update(
-                "enter=Drill down   esc/backspace=Up one level   r=Rescan   q=Quit"
-            )
         # Fetch-all progress panel: live during the run and after completion;
         # hidden on any level/navigation change (course level only). A new
         # non-fetch-all job also clears _fetch_progress in _start_job.
@@ -1023,7 +1027,10 @@ class TataApp(App[None]):
 
     TITLE = "TATA Workbench"
     CSS_PATH = "tata_app.tcss"
-    BINDINGS: ClassVar = [Binding("q", "quit", "Quit")]
+    BINDINGS: ClassVar = [
+        Binding("q", "quit", "Quit"),
+        Binding("?", "show_help_panel", "Keys"),
+    ]
 
     def __init__(self, root_dir: Path | None = None) -> None:
         super().__init__()

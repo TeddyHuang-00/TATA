@@ -65,16 +65,16 @@ AGGREGATE_JSON = {
     "flagged_pairs": 1,
     "pairs": [
         {
-            "student_a": "annie(id:1001)",
-            "student_b": "bob(id:1002)",
+            "student_a": "1001",
+            "student_b": "1002",
             "raw_similarity_pct": 88.4,
             "z_score": 5.21,
             "one_sided_p_value": 0.0002,
             "shared_assignments": 1,
         },
         {
-            "student_a": "carol(id:1003)",
-            "student_b": "dave(id:1004)",
+            "student_a": "1003",
+            "student_b": "1004",
             "raw_similarity_pct": 75.0,
             "z_score": 3.4,
             "one_sided_p_value": 0.02,  # z>=3 but not under alpha -> "? watch"
@@ -116,6 +116,24 @@ def _make_fixture(assignments_dir: Path) -> None:
     (course_dir / "plagiarism").mkdir()
     (course_dir / "plagiarism" / "aggregate.json").write_text(
         json.dumps(AGGREGATE_JSON, indent=2), encoding="utf-8"
+    )
+    # alias.toml chain for display names:
+    # global [student] only (overridden by course), course [course]/[assignment],
+    # assignment-level [student] for the pairs file stems + a course-student
+    # override (later files win -> "Carol, Z").
+    (assignments_dir / "alias.toml").write_text(
+        '[student]\n"1001" = "Global Alice"\n', encoding="utf-8"
+    )
+    (course_dir / "alias.toml").write_text(
+        '[course]\n"271218" = "My Course"\n'
+        '[assignment]\n"1001" = "First Assignment"\n'
+        '[student]\n"1001" = "Alice, A"\n"1002" = "Bob, B"\n'
+        '"1003" = "Carol, C"\n"1004" = "Dave, D"\n',
+        encoding="utf-8",
+    )
+    (a_dir / "alias.toml").write_text(
+        '[student]\n"a1b" = "Alice A"\n"a1c" = "Bob B"\n"1003" = "Carol, Z"\n',
+        encoding="utf-8",
     )
 
 
@@ -175,9 +193,10 @@ def _check_pairs_pane(screen: PlagiarismScreen) -> None:
     assert table.row_count == 2, table.row_count
     labels = [str(c.label) for c in table.columns.values()]
     assert labels == ["File A", "File B", "sim %", "overlap", "diff", "Flag"], labels
-    # sorted by sim desc: 91.2 first, threshold 90% from the config override
-    assert _cell(table, 0, 0) == ASSIGNMENT + "b.md", _cell(table, 0, 0)
-    assert _cell(table, 0, 1) == ASSIGNMENT + "c.md", _cell(table, 0, 1)
+    # sorted by sim desc: 91.2 first, threshold 90% from the config override;
+    # file stems (student uids) resolve to [student] aliases
+    assert _cell(table, 0, 0) == "Alice A", _cell(table, 0, 0)
+    assert _cell(table, 0, 1) == "Bob B", _cell(table, 0, 1)
     assert _cell(table, 0, 2) == "91.2", _cell(table, 0, 2)
     assert _cell(table, 0, 3) == "3", _cell(table, 0, 3)  # line-set length
     assert _cell(table, 0, 4) == "+1.2", _cell(table, 0, 4)
@@ -185,8 +204,11 @@ def _check_pairs_pane(screen: PlagiarismScreen) -> None:
     assert _cell(table, 1, 5) == "-", _cell(table, 1, 5)
     assert _cell(table, 1, 2) == "65.5", _cell(table, 1, 2)
     assert _cell(table, 1, 4) == "-24.5", _cell(table, 1, 4)
+    # unaliased stem falls back to the raw stem
+    assert _cell(table, 1, 0) == "a1d", _cell(table, 1, 0)
+    assert _cell(table, 1, 1) == "a1e", _cell(table, 1, 1)
     topbar = str(screen.query_one("#plag-topbar", Static).content)
-    assert f"{COURSE} / {ASSIGNMENT}" in topbar, topbar
+    assert "My Course / First Assignment" in topbar, topbar
     assert "pairs 2" in topbar, topbar
     assert "display threshold 90%" in topbar, topbar
     status = str(screen.query_one("#plag-status", Static).content)
@@ -203,11 +225,16 @@ async def _check_aggregate_pane(screen: PlagiarismScreen, pilot: Pilot) -> None:
     table = screen.query_one("#agg-table", DataTable)
     assert table.display, "aggregate table should be visible"
     assert table.row_count == 2, table.row_count
-    assert _cell(table, 0, 0) == "annie(id:1001)", _cell(table, 0, 0)
+    # course-scoped student names: course alias beats global; assignment-level
+    # override wins for 1003 ("Carol, Z")
+    assert _cell(table, 0, 0) == "Alice, A", _cell(table, 0, 0)
+    assert _cell(table, 0, 1) == "Bob, B", _cell(table, 0, 1)
     assert _cell(table, 0, 2) == "88.4", _cell(table, 0, 2)
     assert _cell(table, 0, 3) == "5.21", _cell(table, 0, 3)
     assert _cell(table, 0, 4) == "0.0002", _cell(table, 0, 4)
     assert _cell(table, 0, 5) == "FLAG", _cell(table, 0, 5)
+    assert _cell(table, 1, 0) == "Carol, Z", _cell(table, 1, 0)
+    assert _cell(table, 1, 1) == "Dave, D", _cell(table, 1, 1)
     assert _cell(table, 1, 5) == "? watch", _cell(table, 1, 5)
     assert _cell(table, 1, 3) == "3.40", _cell(table, 1, 3)
     # back to pairs
@@ -224,6 +251,7 @@ async def _check_compare_modal(screen: PlagiarismScreen, pilot: Pilot, app: Tata
     await pilot.pause()
     assert isinstance(app.screen, CompareModal), type(app.screen)
     title = str(app.screen.query_one(".modal-title", Static).content)  # type: ignore[union-attr]
+    assert "Compare: Alice A ↔ Bob B" in title, title
     assert "max_sim 91.2%" in title, title
     assert "token_overlap 3" in title, title
     assert "FLAG" in title, title

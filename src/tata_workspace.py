@@ -50,6 +50,7 @@ from src.grading import grade_assignment
 from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
 from src.scoring import score_assignment
+from src.tata_alias import assignment_display_name
 from src.tata_scan import AssignmentInfo
 
 if TYPE_CHECKING:
@@ -308,32 +309,6 @@ class ConfirmationModal(ModalScreen[str | None]):
         self.dismiss(None if event.button.id == "cancel" else event.button.id)
 
 
-class HelpModal(ModalScreen[None]):
-    """Static list of workspace bindings (design 99 §3.5, cheap version)."""
-
-    BINDINGS: ClassVar = [Binding("escape", "close", "Close", show=False)]
-
-    def __init__(self, bindings: list[Binding]) -> None:
-        super().__init__()
-        self._text = "\n".join(
-            f"{b.key_display or b.key:<7}{b.description}" for b in bindings
-        )
-
-    def action_close(self) -> None:
-        self.dismiss()
-
-    @override
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="confirm-modal"):
-            yield Static("[b]Assignment workspace — keys[/b]", classes="modal-title")
-            yield Static(self._text)
-            with Horizontal(classes="modal-actions"):
-                yield Button("Close", id="close")
-
-    def on_button_pressed(self, _event: Button.Pressed) -> None:
-        self.dismiss()
-
-
 # ---------- the workspace ----------
 
 
@@ -359,7 +334,6 @@ class AssignmentScreen(Vertical):
         Binding("e", "edit_config", "Edit config"),
         Binding("i", "toggle_incr", "Incremental"),
         Binding("F", "toggle_config", "Config panel"),
-        Binding("?", "help", "Help"),
     ]
 
     def __init__(self, state: AppState) -> None:
@@ -495,9 +469,10 @@ class AssignmentScreen(Vertical):
         color = _BADGE_COLOR[key]
         badge = f"[{color}]{_STATE_LABELS[key]}[/{color}]"
         self.query_one("#ws-topbar", Static).update(
-            f"Pipeline · [b]{escape(a.dir_name)}[/b]  ·  ID {a.assignment_id or '-'}"
+            f"Pipeline · [b]{escape(assignment_display_name(self.state.assignments_dir, self.state.current_course.dir_name if self.state.current_course is not None else '', a.dir_name, a.assignment_id))}[/b]"
+            f"  ·  ID {a.assignment_id or '-'}"
             f"  ·  {badge}  ·  last run {_fmt_last_run(a.last_run)}"
-            "   [i]Incremental  esc=Back to course"
+            "   [i]Incremental"
         )
 
     def _render_buttons(self) -> None:
@@ -753,9 +728,6 @@ class AssignmentScreen(Vertical):
                         break
         self.render_all()
         self.app.notify("Rescan complete", severity="information")
-
-    def action_help(self) -> None:
-        self.app.push_screen(HelpModal(list(self.BINDINGS)))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dispatch stage buttons / cancel to the matching action."""

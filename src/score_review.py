@@ -14,6 +14,7 @@ from pydantic_settings import CliApp
 from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import (
@@ -335,14 +336,13 @@ class ScoreReviewScreen(Screen):
             select.value = self.index
 
         lines = []
-        for pos, item in enumerate(self.visible_criteria(s), 1):
+        for item in self.visible_criteria(s):
             rating = item["rating"] or "(empty)"
             cls = RATING_CLASS.get(rating.lower(), "rating-other")
             lines.append(
                 f"[b][reverse]{escape(item['criterion'])}[/][/b]  "
                 f"[{cls}]rating: {escape(rating)}[/]"
-                f"  [dim](press {pos} to copy)[/]\n"
-                f"{escape(item['comment'])}\n"
+                f"  {escape(item['comment'])}\n"
             )
         listing.update(
             "\n".join(lines)
@@ -470,6 +470,8 @@ class Viewer(App):
     """
 
     TITLE = "Score Review"
+
+    BINDINGS: ClassVar = [Binding("?", "show_help_panel", "Keys")]
 
     def __init__(self, args: ScoreReviewCliOptions) -> None:
         super().__init__()

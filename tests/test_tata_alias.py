@@ -5,6 +5,7 @@ from pathlib import Path
 from src.tata_alias import (
     assignment_display_name,
     course_display_name,
+    course_student_display_name,
     load_alias_chain,
     load_alias_file,
     lookup,
@@ -74,6 +75,19 @@ def test_display_names_and_fallbacks(tmp_path: Path) -> None:
     # student: alias wins; fallback = uid
     assert student_display_name(assignments, "271218", "a1", "2") == "Course Two"
     assert student_display_name(assignments, "271218", "a1", "nobody") == "nobody"
+
+
+def test_course_student_display_name(tmp_path: Path) -> None:
+    assignments = _write_chain(tmp_path)
+    # global + course + assignment-level [student] tables all merge
+    assert course_student_display_name(assignments, "271218", "1") == "Global One"
+    assert course_student_display_name(assignments, "271218", "2") == "Course Two"
+    assert course_student_display_name(assignments, "271218", "3") == "Local Three"
+    # fallback = user_id
+    assert course_student_display_name(assignments, "271218", "nobody") == "nobody"
+    # missing course -> only global is in scope
+    assert course_student_display_name(assignments, "no-course", "1") == "Global One"
+    assert course_student_display_name(assignments, "no-course", "nobody") == "nobody"
 
 
 def test_tolerant_load_missing_and_corrupt(tmp_path: Path) -> None:

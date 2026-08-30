@@ -123,6 +123,31 @@ def student_display_name(
     return lookup(aliases, "student", user_id) or user_id
 
 
+def course_student_display_name(
+    assignments_dir: Path, course_dir_name: str, user_id: str
+) -> str:
+    """Course-scoped student name: global + course + every assignment-level
+    [student] table of the course (later files win; child dirs in sorted
+    order), or ``user_id`` itself when unaliased.
+
+    Used by course-level surfaces (aggregate table) where a student appears
+    across assignments without one assignment's alias.toml in scope.
+    """
+    paths = [
+        assignments_dir / "alias.toml",
+        assignments_dir / course_dir_name / "alias.toml",
+    ]
+    course_dir = assignments_dir / course_dir_name
+    if course_dir.is_dir():
+        paths.extend(
+            course_dir / child.name / "alias.toml"
+            for child in sorted(course_dir.iterdir())
+            if child.is_dir()
+        )
+    aliases = load_alias_chain(paths)
+    return lookup(aliases, "student", user_id) or user_id
+
+
 # -- field-level TOML patching (mirrors canvas_fetch's [fetch] patching) ----
 
 def _section_bounds(lines: list[str], table: str) -> tuple[int, int] | None:

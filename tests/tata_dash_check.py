@@ -71,6 +71,19 @@ def _make_course(assignments_dir: Path, *, graded: bool = True) -> None:
         ),
         encoding="utf-8",
     )
+    # alias.toml display names: course dir aliases itself + both assignments
+    (course_dir / "alias.toml").write_text(
+        '[course]\n"271218" = "My Course"\n'
+        '[assignment]\n"1001" = "My Alias"\n"1002" = "Second Alias"\n',
+        encoding="utf-8",
+    )
+
+
+def _cell(table: DataTable, row: int, col: int) -> object:
+    from textual.coordinate import Coordinate
+
+    cell = table.get_cell_at(Coordinate(row, col))
+    return cell.plain if hasattr(cell, "plain") else str(cell)
 
 
 def _text(widget: Static) -> str:
@@ -161,7 +174,9 @@ async def _check_import_course_modal_with_env(
                 await _wait_for(
                     pilot, lambda: not isinstance(app.screen, ImportCourseModal)
                 )
-                dirs = sorted(p.name for p in (root / "assignments").iterdir())
+                dirs = sorted(
+                    p.name for p in (root / "assignments").iterdir() if p.is_dir()
+                )
                 assert dirs == [COURSE], dirs
                 assert app.state.dashboard_level == "global"
         finally:
@@ -315,6 +330,33 @@ async def _check_plagiarism_reload(pilot: Pilot, app: TataApp) -> None:
     await pilot.pause()
 
 
+async def _check_aliases(pilot: Pilot, app: TataApp) -> None:
+    """Alias display names: Global/Course tables + breadcrumb + ws topbar."""
+    app.switch_tab("tab-dashboard")
+    await pilot.pause()
+    table = app.query_one("#dashboard-table", DataTable)
+    table.focus()
+    await pilot.press("escape")
+    await pilot.pause()
+    assert app.state.dashboard_level == "global"
+    assert _cell(table, 0, 0) == "My Course", _cell(table, 0, 0)
+    await pilot.press("enter")
+    await pilot.pause()
+    assert app.state.dashboard_level == "course"
+    breadcrumb = _text(app.query_one("#breadcrumb", Static))
+    assert "My Course" in breadcrumb, breadcrumb
+    assert table.row_count == 2
+    assert _cell(table, 0, 0) == "My Alias", _cell(table, 0, 0)
+    assert _cell(table, 1, 0) == "Second Alias", _cell(table, 1, 0)
+    table.move_cursor(row=0)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+    assert app.state.dashboard_level == "assignment"
+    topbar = _text(app.query_one("#ws-topbar", Static))
+    assert "My Alias" in topbar, topbar
+
+
 async def main() -> None:
     # no-.env gate does not need .env; separate tmp to keep it clean
     await _check_import_course_gate_without_env()
@@ -353,6 +395,7 @@ async def main() -> None:
                 await _check_config_keys(pilot, app)
                 await _check_plagiarism_reload(pilot, app)
                 await _check_filter(pilot, app)
+                await _check_aliases(pilot, app)
         finally:
             tata_app_mod.list_assignments = orig_la
 

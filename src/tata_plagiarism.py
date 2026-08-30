@@ -56,8 +56,13 @@ from src.plagiarism_aggregate import (
     _load_assignment_records,
 )
 from src.score_review import _find_raw_file, _preview_content
+from src.tata_alias import (
+    assignment_display_name,
+    course_display_name,
+    course_student_display_name,
+    student_display_name,
+)
 from src.tata_workspace import (
-    HelpModal,
     _format_job_summary,
     _is_displayed,
     _run_stage_worker,
@@ -228,6 +233,22 @@ def _run_aggregate_job(config_path: Path) -> dict | None:
 # ---------- compare modal ----------
 
 
+def _pair_student_name(
+    state: AppState, file_name: str | None
+) -> str:
+    """Display name for one pair side: the file stem is the student uid."""
+    stem = Path(str(file_name)).stem
+    info = state.current_assignment
+    if info is None:
+        return stem
+    return student_display_name(
+        state.assignments_dir,
+        state.current_course.dir_name if state.current_course is not None else "",
+        info.dir_name,
+        stem,
+    )
+
+
 def _resolve_side(assignment_dir: Path, file_name: str) -> tuple[Path | None, Path | None]:
     """(raw, processed) for one compare side; code submissions carry a
     ``<assignment>__<stem>`` prefix handled by stripping segments."""
@@ -327,7 +348,6 @@ class PlagiarismScreen(Vertical):
         Binding("p", "run_detect", "Run detection"),
         Binding("a", "run_aggregate", "Run aggregation"),
         Binding("r", "reload", "Reload"),
-        Binding("?", "help", "Help"),
         Binding("escape", "go_dashboard", "Dashboard"),
     ]
 
@@ -349,8 +369,8 @@ class PlagiarismScreen(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(id="plag-topbar", markup=True)
         with Horizontal(id="plag-buttons"):
-            yield Button("Run detection [p]", id="plag-run")
-            yield Button("Run aggregate [a]", id="plag-aggregate")
+            yield Button("Run detection", id="plag-run")
+            yield Button("Run aggregate", id="plag-aggregate")
         with TabbedContent(id="plag-tabs", initial="pane-pairs"):
             with TabPane("Pairs", id="pane-pairs"):
                 yield DataTable(id="pairs-table", cursor_type="row", zebra_stripes=True)
@@ -449,17 +469,30 @@ class PlagiarismScreen(Vertical):
     def _render_topbar(self) -> None:
         state = self.state
         info = state.current_assignment
-        context = state.current_course.dir_name if state.current_course else "-"
+        course = state.current_course
+        context = (
+            course_display_name(
+                state.assignments_dir, course.dir_name, course.course_id
+            )
+            if course is not None
+            else "-"
+        )
         if info is not None:
-            context += f" / {info.dir_name}"
+            context += (
+                " / "
+                + assignment_display_name(
+                    state.assignments_dir,
+                    course.dir_name if course is not None else "",
+                    info.dir_name,
+                    info.assignment_id,
+                )
+            )
         n = len(self._pairs) if self._pairs is not None else 0
         top = f"Plagiarism · [b]{escape(context)}[/b]  ·  pairs {n}"
         if n > PAGE_ROWS:
             top += f" (top {PAGE_ROWS})"
         top += f"  ·  display threshold {self._threshold_pct:.0f}%"
-        self.query_one("#plag-topbar", Static).update(
-            top + "   [p]Run  [a]Aggregate  r=Reload"
-        )
+        self.query_one("#plag-topbar", Static).update(top)
 
     def _render_pairs(self) -> None:
         table = self.query_one("#pairs-table", DataTable)
@@ -499,8 +532,8 @@ class PlagiarismScreen(Vertical):
             sim = float(pair.get("max_similarity_pct") or 0.0)
             diff = sim - self._threshold_pct
             table.add_row(
-                Path(str(pair.get("test_file"))).name,
-                Path(str(pair.get("reference_file"))).name,
+                _pair_student_name(self.state, str(pair.get("test_file"))),
+                _pair_student_name(self.state, str(pair.get("reference_file"))),
                 f"{sim:.1f}",
                 _overlap_display(pair),
                 f"{diff:+.1f}",
@@ -536,6 +569,11 @@ class PlagiarismScreen(Vertical):
             return
         alpha = float(self._agg.get("alpha") or AGG_ALPHA_FALLBACK)
         table.add_columns("Student A", "Student B", "raw sim", "z", "p", "Flag")
+        course_dir_name = (
+            self.state.current_course.dir_name
+            if self.state.current_course is not None
+            else ""
+        )
         ranking = sorted(
             rows,
             key=lambda row: (-float(row.get("z_score") or 0.0),),
@@ -550,8 +588,16 @@ class PlagiarismScreen(Vertical):
             else:
                 flag = _DASH_TEXT
             table.add_row(
-                str(row.get("student_a") or "-"),
-                str(row.get("student_b") or "-"),
+                course_student_display_name(
+                    self.state.assignments_dir,
+                    course_dir_name,
+                    str(row.get("student_a") or "-"),
+                ),
+                course_student_display_name(
+                    self.state.assignments_dir,
+                    course_dir_name,
+                    str(row.get("student_b") or "-"),
+                ),
                 f"{float(row.get('raw_similarity_pct') or 0.0):.1f}",
                 f"{z:.2f}",
                 f"{p:.3g}",
@@ -621,9 +667,6 @@ class PlagiarismScreen(Vertical):
         self.reload_all()
         self.app.notify("Reloaded", severity="information")
 
-    def action_help(self) -> None:
-        self.app.push_screen(HelpModal(list(self.BINDINGS)))
-
     def action_go_dashboard(self) -> None:
         """esc: back to the Dashboard tab (no-op when not inside the shell)."""
         for tabbed in self.app.query(TabbedContent):
@@ -692,9 +735,11 @@ class PlagiarismScreen(Vertical):
         overlap_lines = {int(line) for line in overlap} if isinstance(overlap, list) else set()
         sim = float(pair.get("max_similarity_pct") or 0.0)
         flag_note = "  [red]FLAG[/red]" if sim >= self._threshold_pct else ""
+        test_name = _pair_student_name(self.state, str(pair.get("test_file")))
+        ref_name = _pair_student_name(self.state, str(pair.get("reference_file")))
         title = (
-            f"Compare: {Path(str(pair.get('test_file'))).name} ↔ "
-            f"{Path(str(pair.get('reference_file'))).name}   max_sim {sim:.1f}%"
+            f"Compare: {test_name} ↔ "
+            f"{ref_name}   max_sim {sim:.1f}%"
             f"   token_overlap {_overlap_display(pair)}{flag_note}"
         )
         left = _side_lines(
@@ -706,9 +751,9 @@ class PlagiarismScreen(Vertical):
         self.app.push_screen(
             CompareModal(
                 title,
-                Path(str(pair.get("test_file"))).name,
+                test_name,
                 left,
-                Path(str(pair.get("reference_file"))).name,
+                ref_name,
                 right,
             )
         )
@@ -763,8 +808,8 @@ class PlagiarismScreen(Vertical):
         self.query_one("#plag-run", Button).disabled = busy
         self.query_one("#plag-aggregate", Button).disabled = busy
         if not busy:
-            self.query_one("#plag-run", Button).label = "Run detection [p]"
-            self.query_one("#plag-aggregate", Button).label = "Run aggregate [a]"
+            self.query_one("#plag-run", Button).label = "Run detection"
+            self.query_one("#plag-aggregate", Button).label = "Run aggregate"
             return
         job = self._job
         cancel = self.query_one("#plag-cancel", Button)

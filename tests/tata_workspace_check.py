@@ -4,8 +4,8 @@ Drives the real DashboardScreen (App.run_test + Pilot) on a tmp course
 layout with a valid assignment config and a partial pipeline state. Covers:
 6 stage buttons + incremental subtitles, config panel, [i] summary, grade
 confirm modal (open/dismiss/confirm), a mocked stage job (worker thread ->
-queue -> RichLog -> rescan), cooperative cancel (x), help modal, esc back to
-Course. The stage function is monkeypatched with a stub — no real
+queue -> RichLog -> rescan), cooperative cancel (x), native '?' help panel,
+esc back to Course. The stage function is monkeypatched with a stub — no real
 grading/LLM call ever happens.
 
 Run: uv run tests/tata_workspace_check.py
@@ -150,13 +150,23 @@ async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
     await pilot.press("i")
 
 
+async def _wait_modal_focused(
+    app: TataApp, pilot: Pilot, button_id: str
+) -> None:
+    """Wait until the ConfirmationModal is up AND its first button is focused
+    (enter would otherwise be swallowed by the widget focused below)."""
+    await _wait_for(
+        pilot,
+        lambda: isinstance(app.screen, tw.ConfirmationModal)
+        and app.screen.query_one(f"Button#{button_id}").has_focus,
+    )
+
+
 async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
     """Open modal, dismiss with escape (no job), confirm with enter (job)."""
     ws = app.query_one(AssignmentScreen)
     await pilot.press("g")
-    await pilot.pause()
-    modal = ws.app.screen
-    assert isinstance(modal, tw.ConfirmationModal), modal
+    await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("escape")
     await _wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.ConfirmationModal))
     assert ws._job is None
@@ -175,14 +185,15 @@ async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
 
     tw.grade_assignment = fake_grade
     await pilot.press("g")
-    await pilot.pause()
-    await _wait_for(pilot, lambda: isinstance(ws.app.screen, tw.ConfirmationModal))
+    await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
-    await _wait_for(pilot, lambda: ws._job is not None)
+    # The job may start AND finish inside a single pilot.pause (the worker is
+    # a thread, so the running _job window is transient); assert the
+    # observable outcome instead — the job summary line in the log.
     log = ws.query_one("#richlog", RichLog)
     await _wait_for(
         pilot,
-        lambda: ws._job is None and any("[grading]" in str(line) for line in log.lines),
+        lambda: any("[grading]" in str(line) for line in log.lines),
     )
     lines = [str(line) for line in log.lines]
     assert any("[grading]" in line for line in lines), lines
@@ -204,8 +215,7 @@ async def _check_cancel(app: TataApp, pilot: Pilot) -> None:
 
     tw.grade_assignment = slow_grade
     await pilot.press("g")
-    await pilot.pause()
-    await _wait_for(pilot, lambda: isinstance(ws.app.screen, tw.ConfirmationModal))
+    await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
     await _wait_for(pilot, lambda: ws._job is not None)
     await pilot.press("x")
@@ -239,7 +249,7 @@ async def _check_button_click(app: TataApp, pilot: Pilot) -> None:
     await _wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.ConfirmationModal))
 
     await pilot.click("#stage-grade")
-    await _wait_for(pilot, lambda: isinstance(ws.app.screen, tw.ConfirmationModal))
+    await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
     await _wait_for(pilot, lambda: ws._job is not None)
     await pilot.click("#ws-cancel")
@@ -307,12 +317,17 @@ async def _check_fetch_gate(app: TataApp, pilot: Pilot) -> None:
 
 
 async def _check_help_and_back(app: TataApp, pilot: Pilot) -> None:
+    from textual.widgets import HelpPanel
+
     ws = app.query_one(AssignmentScreen)
     await pilot.press("?")
     await pilot.pause()
-    assert isinstance(ws.app.screen, tw.HelpModal)
-    await pilot.press("escape")
-    await _wait_for(pilot, lambda: not isinstance(ws.app.screen, tw.HelpModal))
+    assert app.screen.query(HelpPanel), "native HelpPanel not mounted"
+    assert not app.screen.query(".confirm-modal"), "no custom HelpModal expected"
+    # '?' is a no-op when the panel is already up (native behavior)
+    await pilot.press("?")
+    await pilot.pause()
+    assert app.screen.query(HelpPanel)
     ws.focus()
     await pilot.press("escape")
     await pilot.pause()

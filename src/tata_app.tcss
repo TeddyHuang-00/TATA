@@ -185,11 +185,13 @@ TabbedContent {
 /* ---- modal shell (used by later stages) ---- */
 ModalScreen {
     background: $background 60%;
+    align: center middle;
 }
 
 .confirm-modal {
     width: 92;
     max-height: 36;
+    height: auto;
     border: heavy $primary;
     background: $surface;
     padding: 1 2;
