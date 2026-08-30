@@ -263,10 +263,11 @@ class ScoreReviewScreen(Screen):
                 [
                     (f"{s['sortable_name']} ({s['student']})", i)
                     for i, s in enumerate(self.students)
-                ],
+                ]
+                or [("(none)", -1)],
                 id="student-select",
-                prompt="Jump to student",
-                allow_blank=True,
+                prompt="",
+                allow_blank=False,
             )
             yield Button("Next ▶", id="next-btn", flat=True)
         yield ProgressBar(id="progress", show_percentage=False, show_eta=False)
@@ -465,7 +466,13 @@ class ScoreReviewScreen(Screen):
             self._render_review()
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "student-select" and event.value is not None:
+        # Textual auto-picks options[0] at mount and posts real Changed events
+        # for it; blank selects deliver Select.NULL. Only accept in-range indices.
+        if (
+            event.select.id == "student-select"
+            and isinstance(event.value, int)
+            and 0 <= event.value < len(self.students)
+        ):
             self.index = event.value
             self._render_review()
 
