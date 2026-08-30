@@ -10,6 +10,7 @@ from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Literal
 
+import dotenv
 import tomlkit
 from canvasapi import Canvas
 
@@ -22,12 +23,9 @@ def load_env() -> tuple[str, str]:
     for d in [Path.cwd(), *Path.cwd().parents]:
         env = d / ".env"
         if env.exists():
-            vals = {}
-            for line in env.read_text().splitlines():
-                if "=" in line and not line.startswith("#"):
-                    k, v = line.split("=", 1)
-                    vals[k.strip()] = v.strip()
-            return vals["CANVAS_BASE_URL"], vals["CANVAS_ACCESS_TOKEN"]
+            vals = dotenv.dotenv_values(env, interpolate=False)
+            url, token = vals["CANVAS_BASE_URL"], vals["CANVAS_ACCESS_TOKEN"]
+            return url or "", token or ""
     sys.exit("No .env with CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN found")
 
 

@@ -17,6 +17,7 @@ from functools import partial
 from pathlib import Path
 from typing import ClassVar, Literal, override
 
+import dotenv
 import main as main_mod
 import tomlkit
 from canvasapi import Canvas
@@ -68,11 +69,10 @@ def _env_status(root_dir: Path) -> dict:
         env_path = d / ".env"
         if not env_path.is_file():
             continue
-        vals: dict[str, str] = {}
-        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, value = line.split("=", 1)
-                vals[key.strip()] = value.strip()
+        try:
+            vals = dotenv.dotenv_values(env_path, interpolate=False)
+        except UnicodeDecodeError:
+            continue
         if "CANVAS_BASE_URL" in vals and "CANVAS_ACCESS_TOKEN" in vals:
             return {
                 "has_env": True,
