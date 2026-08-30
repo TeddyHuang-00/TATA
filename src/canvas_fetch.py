@@ -89,7 +89,7 @@ def _fetch_text(subs: list[object], out: Path) -> list[dict]:
         body = getattr(sub, "body", "") or ""
         if body:
             suffix = "_LATE_0" if late else ""
-            dest = out / f"{uid}{suffix}.txt"
+            dest = out / f"{uid}{suffix}.html"
             dest.write_text(body, encoding="utf-8")
             file = dest.name
         else:

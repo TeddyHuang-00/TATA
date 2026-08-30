@@ -30,13 +30,13 @@ def _detect_input_format(file_path: Path) -> InputFormat:
     suffix = file_path.suffix.lower()
     if suffix == ".ipynb":
         return "ipynb"
-    if suffix == ".html":
+    if suffix in {".html", ".txt"}:  # Canvas text-entry bodies are saved as .txt but contain HTML
         return "html"
     if suffix == ".md":
         return "markdown"
     if suffix == ".docx":
         return "docx"
-    msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .md, .docx"
+    msg = f"Unsupported file extension: {suffix}. Supported: .ipynb, .html, .txt, .md, .docx"
     raise ValueError(msg)
 
 
@@ -513,12 +513,13 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
 
 def _glob_for_format(raw_dir: Path, input_format: InputFormat) -> list[Path]:
     pattern_map = {
-        "ipynb": "*.ipynb",
-        "html": "*.html",
-        "markdown": "*.md",
-        "docx": "*.docx",
+        "ipynb": ("*.ipynb",),
+        "html": ("*.html", "*.txt"),
+        "markdown": ("*.md",),
+        "docx": ("*.docx",),
     }
-    return sorted(raw_dir.glob(pattern_map[input_format]))
+    files = [p for pat in pattern_map[input_format] for p in raw_dir.glob(pat)]
+    return sorted(files)
 
 
 def _normalize_input_formats(
@@ -563,13 +564,13 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
         supported_files = [
             p
             for p in sorted(raw_dir.glob("*"))
-            if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".md", ".docx"}
+            if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".txt", ".md", ".docx"}
         ]
         if not supported_files:
             print(
                 "No supported files found in raw directory: "
                 f"{raw_dir}\n"
-                "Add student files to raw/ (supported: .ipynb, .html, .md), "
+                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx), "
                 "then run preprocess again."
             )
             return {

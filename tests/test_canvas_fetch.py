@@ -132,9 +132,9 @@ def test_text_mode_and_auto_detection(tmp_path: Path) -> None:
 
     fetch_assignment(canvas, 1, 2, out, mode="auto")  # auto -> text (no attachments)
 
-    assert (out / "100.txt").read_text() == "my answer"
-    assert (out / "200_LATE_0.txt").read_text() == "late answer"
-    assert not (out / "300.txt").exists()
+    assert (out / "100.html").read_text() == "my answer"
+    assert (out / "200_LATE_0.html").read_text() == "late answer"
+    assert not (out / "300.html").exists()
     assert set(_student_aliases(out)) == {"100", "200", "300"}
     assert not (out / ".fetch-cache.json").exists()
 
