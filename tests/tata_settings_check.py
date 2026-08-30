@@ -30,9 +30,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.assignment_config import load_assignment_file
+from src.config_edit import dump_toml
 from src.tata_app import AppState
 from src.tata_scan import scan_courses
-from src.tata_settings import SettingsScreen, _dump_toml
+from src.tata_settings import SettingsScreen
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
 from textual.widgets import Checkbox, Input, Select, Static, TabbedContent
@@ -154,7 +155,7 @@ def _check_dump_roundtrip() -> None:
         },
         "processing": {"remove_base64_images": True, "screenshot_pages": 2},
     }
-    parsed = tomllib.loads(_dump_toml(original))
+    parsed = tomllib.loads(dump_toml(original))
     assert parsed == original, parsed
 
 

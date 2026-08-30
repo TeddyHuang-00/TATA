@@ -24,14 +24,10 @@ import os
 import shlex
 import shutil
 import subprocess
-import tomllib
-from collections.abc import MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
-import tomlkit
 from canvasapi import Canvas
-from pydantic import ValidationError
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -47,15 +43,12 @@ from textual.widgets import (
 )
 
 from src.assignment_config import (
-    AssignmentFileConfig,
-    AssignmentSection,
     FetchSection,
-    GradingSection,
     PlagiarismSection,
-    ProcessingSection,
     load_assignment_file,
 )
 from src.canvas_fetch import list_courses, load_env
+from src.config_edit import edit_config, read_config, validate_config_edits
 from src.provider import ProviderInfo, get_providers
 
 if TYPE_CHECKING:
@@ -105,72 +98,6 @@ _EDITABLE: dict[str, frozenset[str]] = {
     "course": frozenset({"fetch", "plagiarism"}),
     "assignment": frozenset({"grading", "plagiarism", "assignment", "processing"}),
 }
-
-_SECTION_MODELS: dict[str, type] = {
-    "assignment": AssignmentSection,
-    "fetch": FetchSection,
-    "grading": GradingSection,
-    "processing": ProcessingSection,
-    "plagiarism": PlagiarismSection,
-}
-
-_WEIGHT_EPS = 1e-6  # tolerance for the copydetect+embedding sum check
-
-
-def _dump_toml(data: dict) -> str:
-    """Serialize ``data`` back to TOML via tomlkit.
-
-    ponytail: stdlib ``tomllib`` is read-only, so tomlkit does the
-    serialization for the shapes these configs contain (scalars, lists,
-    ``[table]`` / ``[[table]]`` nesting). None values are skipped (TOML has
-    no null).
-    """
-
-    def clean(value: object) -> object:
-        if isinstance(value, dict):
-            return {k: clean(v) for k, v in value.items() if v is not None}
-        if isinstance(value, list):
-            return [clean(v) for v in value if v is not None]
-        return value
-
-    return tomlkit.dumps(tomlkit.item(clean(data)))
-
-
-def _dump_edits(path: Path, edits: dict[str, dict[str, object]]) -> str:
-    """Overlay ``edits`` in place on the file's existing TOML document.
-
-    The original text is parsed, so comments, formatting and unknown keys
-    survive (the old ``_dump_toml`` rebuilt the whole file from the parsed
-    dict and destroyed user comments) — only the edited keys change. Missing
-    or unparseable files start from an empty document; None values are never
-    written.
-    """
-    try:
-        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
-    except (OSError, tomlkit.exceptions.ParseError):
-        doc = tomlkit.parse("")
-    for section, values in edits.items():
-        table = doc.get(section)
-        if not isinstance(table, MutableMapping):
-            doc[section] = tomlkit.table()
-            table = doc[section]
-        for key, value in values.items():
-            if value is None:
-                continue
-            table[key] = value
-    out = tomlkit.dumps(doc)
-    return out if out.endswith("\n") else out + "\n"
-
-
-def merge_edits(original: dict, edits: dict) -> dict:
-    """Overlay ``edits`` onto ``original`` per section-per-key."""
-    merged = dict(original)
-    for section, values in edits.items():
-        if isinstance(values, dict) and isinstance(merged.get(section), dict):
-            merged[section] = {**merged[section], **values}
-        else:
-            merged[section] = values
-    return merged
 
 
 def _field_widget_id(fqid: str) -> str:
@@ -456,12 +383,10 @@ class SettingsScreen(Vertical):
 
     @staticmethod
     def _read_raw(path: Path | None) -> dict:
-        if path is None or not path.is_file():
+        """Tolerant raw read: {} when missing/unparseable (see config_edit)."""
+        if path is None:
             return {}
-        try:
-            return tomllib.loads(path.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            return {}
+        return read_config(path)
 
     def _assignment_view(self) -> dict | None:
         """Layered merged view of the current assignment (None when broken)."""
@@ -732,76 +657,22 @@ class SettingsScreen(Vertical):
             edits.setdefault(section, {})[key] = value
         return edits, errors
 
-    @staticmethod
-    def _fmt_errors(exc: ValidationError) -> list[str]:
-        return [
-            f"{'.'.join(str(part) for part in e.get('loc', []))}: {e.get('msg')}"
-            for e in exc.errors()
-        ]
-
     def _validate(self, edits: dict[str, dict[str, object]]) -> list[str]:
-        """Validate edits against the pydantic models before writing.
+        """Validate edits before writing (rules live in :mod:`src.config_edit`).
 
         Assignment context validates the final layered merged view — identical
         to what ``load_assignment_file`` will parse after the write (per-key
         overlay is layer-commutative). Course/global edits validate their own
         edited sections plus the weight-sum rule (design 05 §③).
         """
-        if self._ctx == "assignment":
-            errors = self._validate_assignment_edit(edits)
-            plag = self._effective_plagiarism(edits)
-        else:
-            errors = self._validate_sections(edits)
-            # Edits only carry changed keys, so a one-key weight edit would
-            # dodge the sum rule; validate the effective layer (schema
-            # defaults + raw file + edits) like assignment context does.
-            plag = dict(self._layer_view().get("plagiarism") or {})
-            plag.update(edits.get("plagiarism") or {})
-        weight_error = self._weight_sum_error(plag)
-        if weight_error is not None:
-            errors.append(weight_error)
-        return errors
-
-    def _validate_assignment_edit(
-        self, edits: dict[str, dict[str, object]]
-    ) -> list[str]:
-        base = self._assignment_view()
-        if base is None:
-            return self._validate_sections(edits)
+        target = self._target_path()
+        if target is None:
+            return ["no target config for the current context"]
         try:
-            AssignmentFileConfig.model_validate(merge_edits(base, edits))
-        except ValidationError as exc:
-            return self._fmt_errors(exc)
+            validate_config_edits(target, edits)
+        except ValueError as exc:
+            return [str(exc)]
         return []
-
-    def _validate_sections(self, edits: dict[str, dict[str, object]]) -> list[str]:
-        errors: list[str] = []
-        for section, values in edits.items():
-            model = _SECTION_MODELS.get(section)
-            if model is None:
-                continue
-            try:
-                model.model_validate(values)
-            except ValidationError as exc:
-                errors.extend(self._fmt_errors(exc))
-        return errors
-
-    def _effective_plagiarism(self, edits: dict[str, dict[str, object]]) -> dict:
-        base = self._assignment_view()
-        if base is None:
-            return edits.get("plagiarism") or {}
-        merged = merge_edits(base, edits)
-        return merged.get("plagiarism") or {}
-
-    @staticmethod
-    def _weight_sum_error(plag: dict) -> str | None:
-        w1, w2 = plag.get("copydetect_weight"), plag.get("embedding_weight")
-        if not isinstance(w1, (int, float)) or not isinstance(w2, (int, float)):
-            return None
-        total = w1 + w2
-        if abs(total - 1.0) > _WEIGHT_EPS:
-            return f"plagiarism weights: sum {total:.2f} ≠ 1.00"
-        return None
 
     def action_save(self) -> None:
         edits, errors = self._collect_edits()
@@ -826,10 +697,8 @@ class SettingsScreen(Vertical):
         if problems:
             self._fail("Validation failed", "; ".join(problems))
             return
-        content = _dump_edits(target, edits)
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            edit_config(target, edits)
         except OSError as exc:
             self._fail("Write failed", str(exc))
             return

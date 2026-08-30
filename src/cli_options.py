@@ -183,6 +183,28 @@ class ScoreReviewCliOptions(BaseModel):
         return self
 
 
+class ConfigSetCliOptions(BaseModel):
+    """Set one config value (dotted ``section.key``), preserving comments.
+
+    Value is coerced TOML-style: true/false -> bool, int, float, else string.
+    The result is validated with the same pydantic models the settings screen
+    uses before anything is written (no write on failure).
+    """
+
+    config: Path = Field(
+        validation_alias=AliasChoices("config", "c"),
+        description="Path to config TOML to edit (created if missing).",
+    )
+    key: CliPositionalArg[str]
+    value: CliPositionalArg[str]
+
+
+class ConfigCliOptions(BaseModel):
+    """Config root: ``config set`` edits one dotted ``section.key`` value."""
+
+    set: CliSubCommand[ConfigSetCliOptions]
+
+
 class TataCli(CliOptions):
     """TATA CLI root: one subcommand per pipeline operation."""
 
@@ -197,6 +219,7 @@ class TataCli(CliOptions):
     schema_gen: CliSubCommand[SchemaCliOptions] = Field(alias="schema")
     fetch: CliSubCommand[FetchCliOptions]
     view: CliSubCommand[ScoreReviewCliOptions]
+    config: CliSubCommand[ConfigCliOptions]
 
 
 def parse_cli_args[TModel: CliOptions](

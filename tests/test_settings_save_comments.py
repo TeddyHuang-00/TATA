@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.tata_settings import _dump_edits
+from src.config_edit import edit_config
 
 CONFIG = (
     "[fetch]\n"
@@ -24,7 +24,7 @@ CONFIG = (
 def test_save_preserves_comments_and_unknown_keys(tmp_path: Path) -> None:
     cfg = tmp_path / "config.toml"
     cfg.write_text(CONFIG, encoding="utf-8")
-    cfg.write_text(_dump_edits(cfg, {"fetch": {"course_id": 999}}), encoding="utf-8")
+    edit_config(cfg, {"fetch": {"course_id": 999}})
     text = cfg.read_text(encoding="utf-8")
     assert "# keep this comment" in text  # comment survives the round-trip
     assert 'custom_field = "user made"' in text  # unknown key survives

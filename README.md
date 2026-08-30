@@ -79,6 +79,15 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    the alphas configured in the root config's `[plagiarism]` section.
    Data source is `plagiarism/all_pairs.json` (full pair export).
 
+9. Edit one config value from the CLI (optional; comments and unrelated keys
+   are preserved, and the result is validated against the same pydantic models
+   the settings screen uses before writing):
+
+   ```bash
+   uv run main.py config set -c data/my-assignment/config.toml grading.max_parallel_tasks 4
+   uv run main.py config set -c data/my-assignment/config.toml processing.remove_base64_images false
+   ```
+
 ## Layered Config
 
 Config is layered: the course-level root config `data/config.toml` holds

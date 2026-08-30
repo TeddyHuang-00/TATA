@@ -23,6 +23,8 @@ from src.canvas_fetch import (
 )
 from src.cli_options import (
     AnalyzeCliOptions,
+    ConfigCliOptions,
+    ConfigSetCliOptions,
     FetchCliOptions,
     GradeCliOptions,
     PlagiarismCliOptions,
@@ -33,6 +35,7 @@ from src.cli_options import (
     TataCli,
     parse_cli_args,
 )
+from src.config_edit import edit_config, validate_config_edits
 from src.grading import grade_assignment
 from src.plagiarism import detect_plagiarism
 from src.processing import preprocess_assignment
@@ -405,6 +408,40 @@ def _run_fetch(args: FetchCliOptions) -> None:
     _remember(out, cfg_path, course_id, assignment_id, mode)
 
 
+# --- config set subcommand ---
+
+
+def _coerce_config_value(raw: str) -> object:
+    """TOML-style coercion for ``config set`` values (tomlkit serializes)."""
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
+def _run_config_set(args: ConfigSetCliOptions) -> None:
+    """Edit one dotted ``section.key`` in a config.toml (validated, then write)."""
+    if args.key.count(".") != 1 or not all(args.key.split(".", 1)):
+        sys.exit(f"error: key must be section.key (exactly one dot): {args.key!r}")
+    section, key = args.key.split(".", 1)
+    edits = {section: {key: _coerce_config_value(args.value)}}
+    try:
+        validate_config_edits(args.config, edits)
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
+    edit_config(args.config, edits)
+    print(f"[config] wrote {section}.{key} in {args.config}")
+
+
 def main() -> None:
     cmd = parse_cli_args(TataCli)
     sub = get_subcommand(cmd, is_required=False)
@@ -421,6 +458,14 @@ def main() -> None:
 
     if isinstance(sub, FetchCliOptions):
         _run_fetch(sub)
+        return
+
+    if isinstance(sub, ConfigCliOptions):
+        if sub.set is None:
+            sys.exit(
+                "error: config requires a subcommand: config set -c PATH section.key VALUE"
+            )
+        _run_config_set(sub.set)
         return
 
     if isinstance(sub, ScoreReviewCliOptions):
