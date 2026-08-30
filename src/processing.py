@@ -213,7 +213,7 @@ def _normalize_dtype_label_html(content: str) -> str:
     )
 
 
-def _convert_ipynb_to_markdown(
+def convert_ipynb_to_markdown(
     input_path: Path,
     output_path: Path,
     *,
@@ -258,7 +258,7 @@ def _convert_ipynb_to_markdown(
         output_path.write_text(content, encoding="utf-8")
 
 
-def _convert_html_to_markdown(input_path: Path, output_path: Path) -> None:
+def convert_html_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert HTML to markdown using pandoc."""
     cmd = [
         "pandoc",
@@ -283,7 +283,7 @@ def _convert_markdown(input_path: Path, output_path: Path) -> None:
     shutil.copy2(input_path, output_path)
 
 
-def _convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
+def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert docx to markdown with system anydoc, falling back to markitdown."""
     if shutil.which("anydoc"):
         cmd = ["anydoc", str(input_path), "-o", str(output_path)]
@@ -468,18 +468,18 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
     """Process a single input file to markdown output."""
     # Convert based on format
     if input_format == "ipynb":
-        _convert_ipynb_to_markdown(
+        convert_ipynb_to_markdown(
             input_file,
             output_file,
             template_name=nbconvert_template,
             template_dir=nbconvert_template_dir,
         )
     elif input_format == "html":
-        _convert_html_to_markdown(input_file, output_file)
+        convert_html_to_markdown(input_file, output_file)
     elif input_format == "markdown":
         _convert_markdown(input_file, output_file)
     elif input_format == "docx":
-        _convert_docx_to_markdown(input_file, output_file)
+        convert_docx_to_markdown(input_file, output_file)
     else:
         msg = f"Unsupported input format: {input_format}"
         raise ValueError(msg)
@@ -687,7 +687,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             else:
                 input_file = raw_file
 
-            try:
+            try:  # ruff: ignore[too-many-statements-in-try-clause]
                 assert file_format in SUPPORTED_INPUT_FORMATS, (
                     f"Unsupported input format: {file_format}. "
                     f"Must be one of: {SUPPORTED_INPUT_FORMATS}"

@@ -52,10 +52,10 @@ from src.tata_settings import SettingsScreen
 from src.tata_workspace import (
     AssignmentScreen,
     ConfirmationModal,
-    _fmt_last_run,
-    _fmt_state,
-    _is_displayed,
-    _state_key,
+    fmt_last_run,
+    fmt_state,
+    is_displayed,
+    state_key,
 )
 
 
@@ -133,7 +133,7 @@ def _filter_assignments(
         return assignments
     if flt == "flagged":
         return [a for a in assignments if a.flagged_pairs]
-    return [a for a in assignments if _state_key(a) == flt]
+    return [a for a in assignments if state_key(a) == flt]
 
 
 class _FocusableStatic(Static):
@@ -236,7 +236,7 @@ class DashboardScreen(Vertical):
                     str(c.counts.graded),
                     _fmt_score(c.score_mean),
                     str(c.flagged_pairs),
-                    _fmt_last_run(c.last_run),
+                    fmt_last_run(c.last_run),
                     key=str(i),
                 )
                 self._rows.append(c)
@@ -287,8 +287,8 @@ class DashboardScreen(Vertical):
                     str(a.counts.processed),
                     str(a.counts.graded),
                     _fmt_score(a.score_summary),
-                    _fmt_state(a),
-                    _fmt_last_run(a.last_run),
+                    fmt_state(a),
+                    fmt_last_run(a.last_run),
                     key=str(i),
                 )
                 self._rows.append(a)
@@ -359,10 +359,10 @@ class DashboardScreen(Vertical):
 
     def _refocus(self) -> None:
         """Keep focus on a visible descendant so bindings keep firing."""
-        if not _is_displayed(self):
+        if not is_displayed(self):
             return  # dashboard tab hidden — never steal focus (F2)
         table = self.query_one("#dashboard-table", DataTable)
-        if _is_displayed(table):
+        if is_displayed(table):
             table.focus()
         elif self.state.dashboard_level == "assignment":
             self.query_one(AssignmentScreen).focus_stage()

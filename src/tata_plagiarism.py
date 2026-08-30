@@ -53,11 +53,11 @@ from src.aliases import (
 from src.assignment_config import load_assignment_file
 from src.plagiarism import detect_plagiarism
 from src.plagiarism_aggregate import aggregate_pair_rows
-from src.score_review import _base_uid, _find_raw_file, _preview_content
+from src.score_review import base_uid, find_raw_file, preview_content
 from src.tata_workspace import (
-    _format_job_summary,
-    _is_displayed,
-    _run_stage_worker,
+    format_job_summary,
+    is_displayed,
+    run_stage_worker,
 )
 
 if TYPE_CHECKING:
@@ -206,7 +206,7 @@ def _pair_student_name(
         state.assignments_dir,
         state.current_course.dir_name if state.current_course is not None else "",
         info.dir_name,
-        _base_uid(stem),
+        base_uid(stem),
     )
 
 
@@ -218,7 +218,7 @@ def _resolve_side(assignment_dir: Path, file_name: str) -> tuple[Path | None, Pa
     processed_dir = assignment_dir / "processed"
     for candidate in candidates:
         processed = processed_dir / f"{candidate}.md"
-        raw = _find_raw_file(processed_dir, candidate)
+        raw = find_raw_file(processed_dir, candidate)
         if raw is not None or processed.is_file():
             return raw, processed if processed.is_file() else None
     return None, None
@@ -229,7 +229,7 @@ def _side_lines(
 ) -> str:
     """Numbered file lines; lines in ``overlap_lines`` rendered red."""
     raw, processed = _resolve_side(assignment_dir, file_name)
-    result = _preview_content(raw, processed)
+    result = preview_content(raw, processed)
     if result is None:
         return f"[dim]{escape(file_name)}: file not found[/dim]"
     lines = result[1].splitlines()[:SIDE_MAX_LINES]
@@ -603,7 +603,7 @@ class PlagiarismScreen(Vertical):
         return pane.query(DataTable).first() if pane.query(DataTable) else None
 
     def _focus_active_table(self) -> None:
-        if not _is_displayed(self):
+        if not is_displayed(self):
             return  # plagiarism tab hidden — never steal focus (F2)
         table = self._active_table()
         if table is not None and table.display and table.row_count > 0:
@@ -761,7 +761,7 @@ class PlagiarismScreen(Vertical):
         self._render_busy()
         self.focus()
         self.run_worker(
-            partial(_run_stage_worker, job=self._job),
+            partial(run_stage_worker, job=self._job),
             thread=True,
             group="stage",
             exclusive=True,
@@ -812,7 +812,7 @@ class PlagiarismScreen(Vertical):
                 self._log_line("Job cancelled — progress saved")
                 self.app.notify("Cancelled", severity="information")
             else:
-                line = _format_job_summary(summary)
+                line = format_job_summary(summary)
                 if line:
                     self._log_line(line)
                 errors = int(summary.get("errors") or 0)

@@ -32,9 +32,9 @@ from textual_serve.server import Server
 from src.aliases import student_display_name
 from src.cli_options import ScoreReviewCliOptions
 from src.processing import (
-    _convert_docx_to_markdown,
-    _convert_html_to_markdown,
-    _convert_ipynb_to_markdown,
+    convert_docx_to_markdown,
+    convert_html_to_markdown,
+    convert_ipynb_to_markdown,
 )
 
 # Layout threshold: stack the panels below this width (Textual has no media
@@ -76,13 +76,13 @@ def _load_students(score_dir: Path) -> list[dict]:
                 "student": file.stem,
                 "criteria": _extract_criterion_feedback(payload),
                 "json": payload,
-                "raw_file": _find_raw_file(score_dir, file.stem),
+                "raw_file": find_raw_file(score_dir, file.stem),
                 "processed_file": _find_processed_file(score_dir, file.stem),
             })
     return students
 
 
-def _base_uid(stem: str) -> str:
+def base_uid(stem: str) -> str:
     """Canvas user id with a fetch suffix (_LATE_N or _N) stripped.
 
     File stems carry the suffix (canvas_fetch._fetch_attachments /
@@ -92,7 +92,7 @@ def _base_uid(stem: str) -> str:
     return re.sub(r"_(?:LATE_)?\d+$", "", stem)
 
 
-def _find_raw_file(score_dir: Path, student_id: str) -> Path | None:
+def find_raw_file(score_dir: Path, student_id: str) -> Path | None:
     """Locate the original submission for a student in a sibling raw/ dir.
 
     Graded JSON stem and raw file stem match (canvas user id, including
@@ -130,7 +130,7 @@ def _truncate(content: str) -> str:
     )
 
 
-def _convert_preview(raw: Path) -> tuple[str, str]:
+def convert_preview(raw: Path) -> tuple[str, str]:
     """Convert a raw submission to (kind, content).
 
     kind is "markdown" (feed the Markdown widget) or "text" (plain Static).
@@ -141,11 +141,11 @@ def _convert_preview(raw: Path) -> tuple[str, str]:
     if suffix in {".md", ".txt", ".text"}:
         return "text", _truncate(raw.read_text(encoding="utf-8", errors="replace"))
     if suffix == ".ipynb":
-        kind, converter = "markdown", _convert_ipynb_to_markdown
+        kind, converter = "markdown", convert_ipynb_to_markdown
     elif suffix == ".docx":
-        kind, converter = "text", _convert_docx_to_markdown
+        kind, converter = "text", convert_docx_to_markdown
     elif suffix == ".html":
-        kind, converter = "text", _convert_html_to_markdown
+        kind, converter = "text", convert_html_to_markdown
     else:
         return "text", f"Unsupported raw file type: {raw.name}"
     with tempfile.TemporaryDirectory() as tmp:
@@ -155,7 +155,7 @@ def _convert_preview(raw: Path) -> tuple[str, str]:
     return kind, _truncate(content)
 
 
-def _preview_content(
+def preview_content(
     raw: Path | None, processed: Path | None
 ) -> tuple[str, str] | None:
     """(kind, content) for a student's preview, or None if no file is known.
@@ -169,7 +169,7 @@ def _preview_content(
         )
         return kind, _truncate(processed.read_text(encoding="utf-8", errors="replace"))
     if raw is not None:
-        return _convert_preview(raw)
+        return convert_preview(raw)
     return None
 
 
@@ -242,7 +242,7 @@ class ScoreReviewScreen(Screen):
                 assignments_dir,
                 course_dir_name,
                 assignment_dir_name,
-                _base_uid(s["student"]),
+                base_uid(s["student"]),
             )
         # deterministic order: sortable name, then user id
         self.students.sort(key=lambda s: (s["sortable_name"].lower(), s["student"]))
@@ -411,7 +411,7 @@ class ScoreReviewScreen(Screen):
         self, raw: Path | None, processed: Path | None, student: str
     ) -> None:
         try:
-            result: tuple[str, str] | None = _preview_content(raw, processed)
+            result: tuple[str, str] | None = preview_content(raw, processed)
         except Exception as error:
             result = ("text", f"Preview failed:\n{error}")
         self.app.call_from_thread(self._on_preview_ready, student, result)

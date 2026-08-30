@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 
 # ---------- shared display helpers (also imported by tata_app) ----------
 
-def _is_displayed(widget: Widget) -> bool:
+def is_displayed(widget: Widget) -> bool:
     """True when the widget and every ancestor has display enabled, and the
     widget is on the app's active screen.
 
@@ -108,7 +108,7 @@ _STAGE_KEYS = (
 )
 
 
-def _state_key(a: AssignmentInfo) -> str:
+def state_key(a: AssignmentInfo) -> str:
     """Map an AssignmentInfo to a ``_STATE_LABELS`` key."""
     if a.flagged_pairs:
         return "flagged"
@@ -123,14 +123,14 @@ def _state_key(a: AssignmentInfo) -> str:
     return "done"
 
 
-def _fmt_state(a: AssignmentInfo) -> str:
+def fmt_state(a: AssignmentInfo) -> str:
     """Counts-based pipeline state label (design 99 §2 vocabulary)."""
     if a.flagged_pairs:
         return f"{_STATE_LABELS['flagged']} ({a.flagged_pairs})"
-    return _STATE_LABELS[_state_key(a)]
+    return _STATE_LABELS[state_key(a)]
 
 
-def _fmt_last_run(ts: float | None) -> str:
+def fmt_last_run(ts: float | None) -> str:
     if ts is None:
         return "Never"
     dt = datetime.fromtimestamp(ts, tz=UTC).astimezone()
@@ -215,7 +215,7 @@ def _run_fetch_job(config_path: Path) -> None:
     main._run_fetch(FetchCliOptions(config=config_path))
 
 
-def _format_job_summary(summary: dict) -> str:
+def format_job_summary(summary: dict) -> str:
     """Summary line shaped exactly like the CLI's (design 02 §6)."""
     return main._format_job_summary(summary)
 
@@ -446,13 +446,13 @@ class AssignmentScreen(Vertical):
     def _render_topbar(self) -> None:
         a = self._info
         assert a is not None
-        key = _state_key(a)
+        key = state_key(a)
         color = _BADGE_COLOR[key]
         badge = f"[{color}]{_STATE_LABELS[key]}[/{color}]"
         self.query_one("#ws-topbar", Static).update(
             f"Pipeline · [b]{escape(assignment_display_name(self.state.assignments_dir, self.state.current_course.dir_name if self.state.current_course is not None else '', a.dir_name, a.assignment_id))}[/b]"
             f"  ·  ID {a.assignment_id or '-'}"
-            f"  ·  {badge}  ·  last run {_fmt_last_run(a.last_run)}"
+            f"  ·  {badge}  ·  last run {fmt_last_run(a.last_run)}"
             "   [i]Incremental"
         )
 
@@ -760,7 +760,7 @@ class AssignmentScreen(Vertical):
         self._log_line(f"▶ {stage} started ({config_path.name})")
         self._render_busy()
         self.focus()  # keep bindings alive while the buttons are disabled
-        worker = partial(_run_stage_worker, job=self._job)
+        worker = partial(run_stage_worker, job=self._job)
         self.run_worker(worker, thread=True, group="stage", exclusive=True)
 
     def _tick(self) -> None:
@@ -824,7 +824,7 @@ class AssignmentScreen(Vertical):
         self._job = None
         self._render_busy()
         on_this_dir = self._info is not None and job.get("dir_name") == self._info.dir_name
-        if on_this_dir and _is_displayed(self):
+        if on_this_dir and is_displayed(self):
             self.focus_stage()
         if on_this_dir and summary:
             if summary.get("cancelled"):
@@ -833,7 +833,7 @@ class AssignmentScreen(Vertical):
                 )
                 self.app.notify("Cancelled — progress saved", severity="information")
             else:
-                line = _format_job_summary(summary)
+                line = format_job_summary(summary)
                 if line:
                     self._log_line(line)
                 errors = int(summary.get("errors") or 0)
@@ -875,7 +875,7 @@ class AssignmentScreen(Vertical):
         self.query_one("#richlog", RichLog).write(styled)
 
 
-def _run_stage_worker(job: dict) -> None:
+def run_stage_worker(job: dict) -> None:
     """Worker thread body for one stage job (design 99 §3.1).
 
     Reads a JobHandle dict; redirects the stage function's stdout/stderr into

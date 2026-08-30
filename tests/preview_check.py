@@ -17,6 +17,7 @@ import json
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,11 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.cli_options import ScoreReviewCliOptions
 from src.score_review import (
     Viewer,
-    _convert_preview,
-    _preview_content,
+    convert_preview,
+    preview_content,
 )
 from textual import events
 from textual.geometry import Size
+from textual.pilot import Pilot
 from textual.widgets import Markdown, Static
 
 
@@ -55,17 +57,20 @@ def _write_notebook(path: Path) -> None:
     path.write_text(json.dumps(nb), encoding="utf-8")
 
 
-async def _wait_for(pilot, predicate, timeout: float = 60.0) -> None:
+async def _wait_for(
+    pilot: Pilot, predicate: Callable[[], bool], timeout: float = 60.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         await pilot.pause()
         if predicate():
             return
         await asyncio.sleep(0.05)
-    raise AssertionError("timeout waiting for predicate")
+    msg = "timeout waiting for predicate"
+    raise AssertionError(msg)
 
 
-async def main() -> None:
+async def main() -> None:  # ruff: ignore[too-many-statements]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         graded = root / "graded"
@@ -90,31 +95,33 @@ async def main() -> None:
         )
 
         # preview content: processed first, raw conversion as fallback
-        result = _preview_content(raw / "100572.ipynb", processed / "100572.md")
+        result = preview_content(raw / "100572.ipynb", processed / "100572.md")
         assert result is not None
         kind, content = result
-        assert kind == "markdown" and "Processed Content" in content, (
-            kind,
-            content[:80],
-        )
-        result = _preview_content(raw / "201818.md", None)
+        assert kind == "markdown", (kind, content[:80])
+        assert "Processed Content" in content, (kind, content[:80])
+        result = preview_content(raw / "201818.md", None)
         assert result is not None
         kind, content = result
-        assert kind == "text" and content.startswith("# doc text"), kind
-        result = _preview_content(None, processed / "100572.md")
+        assert kind == "text", kind
+        assert content.startswith("# doc text"), kind
+        result = preview_content(None, processed / "100572.md")
         assert result is not None
         kind, _ = result
         assert kind == "text"
-        assert _preview_content(raw / "100572.ipynb", None) is not None
-        assert _preview_content(None, None) is None
+        assert preview_content(raw / "100572.ipynb", None) is not None
+        assert preview_content(None, None) is None
 
         # conversion dispatch (raw fallback): ipynb -> markdown; md -> text
-        kind, content = _convert_preview(raw / "100572.ipynb")
-        assert kind == "markdown" and "Preview Check" in content, (kind, content[:80])
-        kind, content = _convert_preview(raw / "201818.md")
-        assert kind == "text" and content.startswith("# doc text"), kind
-        kind, content = _convert_preview(raw / "unsupported.xyz")
-        assert kind == "text" and "Unsupported" in content, kind
+        kind, content = convert_preview(raw / "100572.ipynb")
+        assert kind == "markdown", (kind, content[:80])
+        assert "Preview Check" in content, (kind, content[:80])
+        kind, content = convert_preview(raw / "201818.md")
+        assert kind == "text", kind
+        assert content.startswith("# doc text"), kind
+        kind, content = convert_preview(raw / "unsupported.xyz")
+        assert kind == "text", kind
+        assert "Unsupported" in content, kind
 
         args = ScoreReviewCliOptions(score_dir=graded)
         app = Viewer(args)
@@ -131,13 +138,15 @@ async def main() -> None:
                     "Processed Content" in (getattr(md_view, "_markdown", "") or "")
                 ),
             )
-            assert md_view.display and not text_view.display, "ipynb markdown not shown"
+            assert md_view.display, "ipynb markdown not shown"
+            assert not text_view.display, "ipynb markdown not shown"
             assert "100572.ipynb" in panel.border_title
 
             # student 2: document (.md, no processed) -> Static text
             await pilot.click("#next-btn")
             await _wait_for(pilot, lambda: "# doc text" in text_view.content)
-            assert text_view.display and not md_view.display, "doc text not shown"
+            assert text_view.display, "doc text not shown"
+            assert not md_view.display, "doc text not shown"
 
             # layout: wide = split, narrow = stacked (resize lives on the screen)
             content_h = app.screen.query_one("#content-horizontal")
