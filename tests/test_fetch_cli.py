@@ -34,9 +34,9 @@ def _run_main(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_parses_full_options() -> None:
-    args = _parse("fetch", "271218", "2979509", "--mode", "text")
-    assert args.course == 271218
-    assert args.assignment == 2979509
+    args = _parse("fetch", "111111", "222225", "--mode", "text")
+    assert args.course == 111111
+    assert args.assignment == 222225
     assert args.mode == "text"
     assert args.retry is False
     assert args.out is None
@@ -70,7 +70,7 @@ def test_course_without_assignment_rejected(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as excinfo:
-        _parse("fetch", "271218")
+        _parse("fetch", "111111")
     assert excinfo.value.code == 2
     assert "must be given together" in capsys.readouterr().err
 
@@ -83,14 +83,14 @@ def test_invalid_mode_rejected(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_retry_allows_single_course_filter() -> None:
-    args = _parse("fetch", "--retry", "271218")
+    args = _parse("fetch", "--retry", "111111")
     assert args.retry is True
-    assert args.course == 271218
+    assert args.course == 111111
     assert args.assignment is None
 
 
 def test_main_fetch_course_without_assignment_exits_2() -> None:
-    proc = _run_main("fetch", "271218")
+    proc = _run_main("fetch", "111111")
     assert proc.returncode == 2
     assert "must be given together" in proc.stderr
 
@@ -157,7 +157,7 @@ def test_fetch_entries_uses_list_out_and_mode(
     from src.assignment_config import FetchSection
 
     cfg = FetchSection.model_validate({
-        "course_id": 271218,
+        "course_id": 111111,
         "mode": "attach",
         "assignments": [
             {"assignment_id": 11, "out": "a/raw"},
@@ -171,8 +171,8 @@ def test_fetch_entries_uses_list_out_and_mode(
         lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
     )
     cfg_path = tmp_path / "data" / "config.toml"
-    main_mod._fetch_entries(object(), 271218, cfg_path, cfg)
+    main_mod._fetch_entries(object(), 111111, cfg_path, cfg)
     assert calls == [
-        (271218, 11, str((tmp_path / "data/a/raw").resolve()), "attach"),
-        (271218, 12, str((tmp_path / "data/b/raw").resolve()), "text"),
+        (111111, 11, str((tmp_path / "data/a/raw").resolve()), "attach"),
+        (111111, 12, str((tmp_path / "data/b/raw").resolve()), "text"),
     ]

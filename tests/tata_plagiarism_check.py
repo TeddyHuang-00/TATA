@@ -88,7 +88,7 @@ def _make_fixture(assignments_dir: Path) -> None:
     course_dir = assignments_dir / COURSE
     course_dir.mkdir(parents=True)
     (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 271218\n", encoding="utf-8"
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
     )
     a_dir = course_dir / ASSIGNMENT
     for sub in ("raw", "processed", "plagiarism"):
@@ -125,7 +125,7 @@ def _make_fixture(assignments_dir: Path) -> None:
         '[student]\n"1001" = "Global Alice"\n', encoding="utf-8"
     )
     (course_dir / "alias.toml").write_text(
-        '[course]\n"271218" = "My Course"\n'
+        '[course]\n"111111" = "My Course"\n'
         '[assignment]\n"1001" = "First Assignment"\n'
         '[student]\n"1001" = "Alice, A"\n"1002" = "Bob, B"\n'
         '"1003" = "Carol, C"\n"1004" = "Dave, D"\n',
@@ -133,7 +133,7 @@ def _make_fixture(assignments_dir: Path) -> None:
     )
     (a_dir / "alias.toml").write_text(
         '[student]\n"a1b" = "Alice A"\n"a1c" = "Bob B"\n"1003" = "Carol, Z"\n'
-        '"301741" = "Aalla, Movin Reddy"\n',
+        '"333333" = "Doe, Jane"\n',
         encoding="utf-8",
     )
 
@@ -395,11 +395,11 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
 def _check_late_alias_resolution(app: TataApp) -> None:
     """_LATE_N / _N file stems resolve to the base-uid alias for pair names."""
     state = app.state
-    assert _pair_student_name(state, "301741_LATE_0.ipynb") == "Aalla, Movin Reddy"
-    assert _pair_student_name(state, "301741_0.ipynb") == "Aalla, Movin Reddy"
-    assert _pair_student_name(state, "301741_LATE_1.txt") == "Aalla, Movin Reddy"
+    assert _pair_student_name(state, "333333_LATE_0.ipynb") == "Doe, Jane"
+    assert _pair_student_name(state, "333333_0.ipynb") == "Doe, Jane"
+    assert _pair_student_name(state, "333333_LATE_1.txt") == "Doe, Jane"
     # unaliased stem falls back to the raw stem (unchanged)
-    assert _pair_student_name(state, "80123.ipynb") == "80123"
+    assert _pair_student_name(state, "999999.ipynb") == "999999"
 
 
 async def check_screen(app: TataApp, pilot: Pilot) -> None:

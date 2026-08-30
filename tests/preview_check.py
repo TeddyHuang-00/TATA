@@ -79,44 +79,44 @@ async def main() -> None:  # ruff: ignore[too-many-statements]
         graded.mkdir()
         raw.mkdir()
         processed.mkdir()
-        (graded / "100572.json").write_text(
+        (graded / "100001.json").write_text(
             json.dumps({"task1": {"rating": "correct", "feedback": "good work"}}),
             encoding="utf-8",
         )
-        (graded / "201818.json").write_text(
+        (graded / "100002.json").write_text(
             json.dumps({"task1": {"rating": "partial", "feedback": "meh"}}),
             encoding="utf-8",
         )
-        _write_notebook(raw / "100572.ipynb")
-        (raw / "201818.md").write_text("# doc text\nplain paragraph", encoding="utf-8")
-        # 100572's preprocess output exists -> must be preferred over raw
-        (processed / "100572.md").write_text(
-            "# Processed Content\nstudent 100572", encoding="utf-8"
+        _write_notebook(raw / "100001.ipynb")
+        (raw / "100002.md").write_text("# doc text\nplain paragraph", encoding="utf-8")
+        # 100001's preprocess output exists -> must be preferred over raw
+        (processed / "100001.md").write_text(
+            "# Processed Content\nstudent 100001", encoding="utf-8"
         )
 
         # preview content: processed first, raw conversion as fallback
-        result = preview_content(raw / "100572.ipynb", processed / "100572.md")
+        result = preview_content(raw / "100001.ipynb", processed / "100001.md")
         assert result is not None
         kind, content = result
         assert kind == "markdown", (kind, content[:80])
         assert "Processed Content" in content, (kind, content[:80])
-        result = preview_content(raw / "201818.md", None)
+        result = preview_content(raw / "100002.md", None)
         assert result is not None
         kind, content = result
         assert kind == "text", kind
         assert content.startswith("# doc text"), kind
-        result = preview_content(None, processed / "100572.md")
+        result = preview_content(None, processed / "100001.md")
         assert result is not None
         kind, _ = result
         assert kind == "text"
-        assert preview_content(raw / "100572.ipynb", None) is not None
+        assert preview_content(raw / "100001.ipynb", None) is not None
         assert preview_content(None, None) is None
 
         # conversion dispatch (raw fallback): ipynb -> markdown; md -> text
-        kind, content = convert_preview(raw / "100572.ipynb")
+        kind, content = convert_preview(raw / "100001.ipynb")
         assert kind == "markdown", (kind, content[:80])
         assert "Preview Check" in content, (kind, content[:80])
-        kind, content = convert_preview(raw / "201818.md")
+        kind, content = convert_preview(raw / "100002.md")
         assert kind == "text", kind
         assert content.startswith("# doc text"), kind
         kind, content = convert_preview(raw / "unsupported.xyz")
@@ -140,7 +140,7 @@ async def main() -> None:  # ruff: ignore[too-many-statements]
             )
             assert md_view.display, "ipynb markdown not shown"
             assert not text_view.display, "ipynb markdown not shown"
-            assert "100572.ipynb" in panel.border_title
+            assert "100001.ipynb" in panel.border_title
 
             # student 2: document (.md, no processed) -> Static text
             await pilot.click("#next-btn")

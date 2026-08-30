@@ -36,7 +36,7 @@ def test_layered_merge_root_defaults_assignment_overrides(tmp_path: Path) -> Non
     _write(
         tmp_path,
         "data/config.toml",
-        '[fetch]\ncourse_id = 271218\nmode = "attach"\n',
+        '[fetch]\ncourse_id = 111111\nmode = "attach"\n',
     )
     _write(
         tmp_path,
@@ -45,7 +45,7 @@ def test_layered_merge_root_defaults_assignment_overrides(tmp_path: Path) -> Non
     )
     cfg = load_assignment_file(tmp_path / "data" / "a" / "config.toml")
     assert cfg.fetch is not None
-    assert cfg.fetch.course_id == 271218
+    assert cfg.fetch.course_id == 111111
     assert cfg.fetch.assignment_id == 42
     assert cfg.fetch.mode == "attach"
 
@@ -58,7 +58,7 @@ def test_layered_merge_root_defaults_assignment_overrides(tmp_path: Path) -> Non
     cfg = load_assignment_file(tmp_path / "data" / "b" / "config.toml")
     assert cfg.fetch is not None
     assert cfg.fetch.mode == "text"
-    assert cfg.fetch.course_id == 271218
+    assert cfg.fetch.course_id == 111111
 
 
 def test_standalone_assignment_config_without_root(tmp_path: Path) -> None:
@@ -98,7 +98,7 @@ def test_root_fetch_assignments_list_parses_and_does_not_leak(
     _write(
         tmp_path,
         "data/config.toml",
-        '[fetch]\ncourse_id = 271218\nmode = "attach"\n'
+        '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
         '\n[[fetch.assignments]]\nassignment_id = 42\nout = "a/raw"\n'
         '\n[[fetch.assignments]]\nassignment_id = 43\nmode = "text"\nout = "b/raw"\n',
     )

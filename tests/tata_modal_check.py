@@ -33,7 +33,7 @@ def _make_course(assignments_dir: Path) -> None:
     course_dir = assignments_dir / COURSE
     course_dir.mkdir(parents=True)
     (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 271218\n"
+        "[fetch]\ncourse_id = 111111\n"
         '[[fetch.assignments]]\nassignment_id = 1001\nout = "a1/raw"\n',
         encoding="utf-8",
     )

@@ -35,17 +35,17 @@ class _Harness(App):
 
 
 def _make_graded(graded: Path) -> None:
-    (graded / "100572.json").write_text(
+    (graded / "100001.json").write_text(
         json.dumps({"task1": {"rating": "correct", "feedback": "good work"}}),
         encoding="utf-8",
     )
-    (graded / "201818.json").write_text(
+    (graded / "100002.json").write_text(
         json.dumps({"task1": {"rating": "partial", "feedback": "meh"}}),
         encoding="utf-8",
     )
     # late submission: fetch suffixes the stem (_LATE_0); the alias key is
-    # the base uid ("301741").
-    (graded / "301741_LATE_0.json").write_text(
+    # the base uid ("333333").
+    (graded / "333333_LATE_0.json").write_text(
         json.dumps({"task1": {"rating": "partial", "feedback": "late"}}),
         encoding="utf-8",
     )
@@ -58,8 +58,8 @@ async def main() -> None:
         _make_graded(graded)
         # Assignment-root alias.toml supplies display names (was roster.csv).
         (Path(tmp) / "alias.toml").write_text(
-            '[student]\n"100572" = "Aalla, A"\n"201818" = "Zed, Z"\n'
-            '"301741" = "Aalla, Movin Reddy"\n',
+            '[student]\n"100001" = "Doe, A"\n"100002" = "Zed, Z"\n'
+            '"333333" = "Doe, Jane"\n',
             encoding="utf-8",
         )
 
@@ -76,23 +76,23 @@ async def main() -> None:
             assert isinstance(app.screen, ScoreReviewScreen), type(app.screen)
             review = app.screen
             assert [s["student"] for s in review.students] == [
-                "100572",
-                "301741_LATE_0",
-                "201818",
+                "100001",
+                "333333_LATE_0",
+                "100002",
             ]
             assert [s["sortable_name"] for s in review.students] == [
-                "Aalla, A",
-                "Aalla, Movin Reddy",
+                "Doe, A",
+                "Doe, Jane",
                 "Zed, Z",
             ]
             # _LATE_N stem resolves to the base-uid alias, shown raw in the id
             late = next(
-                s for s in review.students if s["student"] == "301741_LATE_0"
+                s for s in review.students if s["student"] == "333333_LATE_0"
             )
-            assert late["sortable_name"] == "Aalla, Movin Reddy", late
+            assert late["sortable_name"] == "Doe, Jane", late
             select = review.query_one("#student-select", Select)
             prompts = [str(prompt) for prompt, _ in select._options]  # type: ignore[attr-defined]
-            assert "Aalla, Movin Reddy (301741_LATE_0)" in prompts, """
+            assert "Doe, Jane (333333_LATE_0)" in prompts, """
                 alias must render with the RAW stem in the id part
             """
             listing = review.query_one("#criteria-list", Static)

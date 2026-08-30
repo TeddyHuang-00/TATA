@@ -48,13 +48,13 @@ def _make_course(
         (a_dir / "config.toml").write_text(
             f"[fetch]\nassignment_id = {a_id}\n", encoding="utf-8"
         )
-        (a_dir / "raw" / "100572.ipynb").write_text("{}", encoding="utf-8")
-        (a_dir / "raw" / "201818.txt").write_text("hi", encoding="utf-8")
-        (a_dir / "processed" / "100572.md").write_text("# p", encoding="utf-8")
-        (a_dir / "graded" / "100572.json").write_text(
+        (a_dir / "raw" / "100001.ipynb").write_text("{}", encoding="utf-8")
+        (a_dir / "raw" / "100002.txt").write_text("hi", encoding="utf-8")
+        (a_dir / "processed" / "100001.md").write_text("# p", encoding="utf-8")
+        (a_dir / "graded" / "100001.json").write_text(
             json.dumps({"task1": {"rating": "correct"}}), encoding="utf-8"
         )
-        (a_dir / "scored" / "txt" / "100572.txt").write_text(
+        (a_dir / "scored" / "txt" / "100001.txt").write_text(
             "Total Score: 15.0/25.0", encoding="utf-8"
         )
 
@@ -81,7 +81,7 @@ def _check_scanner(assignments_dir: Path) -> None:
     courses = scan_courses(assignments_dir)
     assert [c.dir_name for c in courses] == [COURSE_A, COURSE_B], courses
     ca, _cb = courses
-    assert ca.course_id == 271218
+    assert ca.course_id == 111111
     assert ca.assignment_count == 2
     assert (ca.counts.raw, ca.counts.processed, ca.counts.graded, ca.counts.scored) == (
         4,
@@ -207,7 +207,7 @@ async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         assignments_dir = root / "data"
-        _make_course(assignments_dir, COURSE_A, 271218, {"a1": 1001, "a2": 1002})
+        _make_course(assignments_dir, COURSE_A, 111111, {"a1": 1001, "a2": 1002})
         _make_course(assignments_dir, COURSE_B, 999001, {"b1": 2001})
         # one flagged pair for a1's flagged_pairs
         pairs_path = assignments_dir / COURSE_A / "a1" / "plagiarism" / "all_pairs.json"

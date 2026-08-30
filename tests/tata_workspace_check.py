@@ -37,7 +37,7 @@ def _make_assignment(assignments_dir: Path) -> None:
     course_dir = assignments_dir / COURSE
     course_dir.mkdir(parents=True)
     (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 271218\n", encoding="utf-8"
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
     )
     a_dir = course_dir / "a1"
     for sub in ("raw", "processed", "graded", "scored", "logs", "plagiarism"):
@@ -50,19 +50,19 @@ def _make_assignment(assignments_dir: Path) -> None:
         "max_parallel_tasks = 4\n",
         encoding="utf-8",
     )
-    (a_dir / "raw" / "100572.ipynb").write_text("{}", encoding="utf-8")
-    (a_dir / "raw" / "201818.txt").write_text("hi", encoding="utf-8")
+    (a_dir / "raw" / "100001.ipynb").write_text("{}", encoding="utf-8")
+    (a_dir / "raw" / "100002.txt").write_text("hi", encoding="utf-8")
     (a_dir / "raw" / ".fetch-cache.json").write_text("{}", encoding="utf-8")
-    (a_dir / "processed" / "100572.md").write_text("# p", encoding="utf-8")
-    (a_dir / "processed" / "201818.md").write_text("# q", encoding="utf-8")
-    (a_dir / "graded" / "100572.json").write_text(
+    (a_dir / "processed" / "100001.md").write_text("# p", encoding="utf-8")
+    (a_dir / "processed" / "100002.md").write_text("# q", encoding="utf-8")
+    (a_dir / "graded" / "100001.json").write_text(
         json.dumps({"task1": {"rating": "correct"}}), encoding="utf-8"
     )
-    (a_dir / "scored" / "100572.txt").write_text(
+    (a_dir / "scored" / "100001.txt").write_text(
         "Total Score: 15.0/25.0", encoding="utf-8"
     )
     (a_dir / "logs" / "grading.checkpoint.json").write_text(
-        json.dumps({"done": ["100572"]}), encoding="utf-8"
+        json.dumps({"done": ["100001"]}), encoding="utf-8"
     )
     (a_dir / "plagiarism" / "all_pairs.json").write_text(
         json.dumps({
@@ -174,7 +174,7 @@ async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
     # slow stub so the check can observe the running JobHandle; no real grading
     def fake_grade(config_path: Path, *, force: bool = False) -> dict:
         time.sleep(0.4)
-        print("[done] 100572")
+        print("[done] 100001")
         return {
             "stage": "grading",
             "success": 1,

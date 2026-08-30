@@ -15,7 +15,7 @@ from src.config_edit import edit_config
 CONFIG = (
     "[fetch]\n"
     "# keep this comment\n"
-    "course_id = 271218\n"
+    "course_id = 111111\n"
     'mode = "attach"\n'
     'custom_field = "user made"\n'
 )

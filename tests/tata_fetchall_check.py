@@ -143,7 +143,7 @@ async def _check_fetch_all(root: Path) -> None:
             assert call.assignment == aid
             assert call.out == f"{aid}/raw", call.out
             assert call.mode == "auto", call.mode
-            assert call.course == 271218, call.course
+            assert call.course == 111111, call.course
             assert call.config == course.config_path
 
         text = _plain(panel)
@@ -216,20 +216,20 @@ async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _make_course(
-            root / "data", "c1-first", 271218, with_entries=True,
+            root / "data", "c1-first", 111111, with_entries=True,
             with_aliases=True,
         )
         await _check_fetch_all(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _make_course(
-            root / "data", "c1-first", 271218, with_entries=True,
+            root / "data", "c1-first", 111111, with_entries=True,
             with_aliases=True,
         )
         await _check_fetch_all_failure(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "data", "c1-first", 271218, with_entries=False)
+        _make_course(root / "data", "c1-first", 111111, with_entries=False)
         await _check_fetch_all_empty(root)
 
     print("tata_fetchall check OK")

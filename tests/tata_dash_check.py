@@ -45,7 +45,7 @@ def _make_course(assignments_dir: Path, *, graded: bool = True) -> None:
     course_dir = assignments_dir / COURSE
     course_dir.mkdir(parents=True)
     (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 271218\n", encoding="utf-8"
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
     )
     for name, aid in [("a1", 1001), ("a2", 1002)]:
         a_dir = course_dir / name
@@ -58,7 +58,7 @@ def _make_course(assignments_dir: Path, *, graded: bool = True) -> None:
         (a_dir / "raw" / "x.py").write_text("print(1)", encoding="utf-8")
         (a_dir / "processed" / "x.md").write_text("# x", encoding="utf-8")
         if graded and name == "a1":
-            (a_dir / "graded" / "100572.json").write_text(
+            (a_dir / "graded" / "100001.json").write_text(
                 json.dumps({"task1": {"rating": "correct"}}), encoding="utf-8"
             )
     pairs = course_dir / "a1" / "plagiarism"
@@ -74,7 +74,7 @@ def _make_course(assignments_dir: Path, *, graded: bool = True) -> None:
     )
     # alias.toml display names: course dir aliases itself + both assignments
     (course_dir / "alias.toml").write_text(
-        '[course]\n"271218" = "My Course"\n'
+        '[course]\n"111111" = "My Course"\n'
         '[assignment]\n"1001" = "My Alias"\n"1002" = "Second Alias"\n',
         encoding="utf-8",
     )
@@ -152,7 +152,7 @@ async def _check_import_course_modal_with_env(
         )
         orig_list_courses = tata_app_mod.list_courses
         monkeypatch(
-            tata_app_mod, "list_courses", lambda _canvas: [(271218, "c1-first"), (777, "hw-course")]
+            tata_app_mod, "list_courses", lambda _canvas: [(111111, "c1-first"), (777, "hw-course")]
         )
         try:
             app = TataApp(root_dir=root)
@@ -168,7 +168,7 @@ async def _check_import_course_modal_with_env(
                 assert isinstance(modal, ImportCourseModal)
                 # background worker populates the Select
                 await _wait_for(
-                    pilot, lambda: modal.query_one(Select).value == 271218
+                    pilot, lambda: modal.query_one(Select).value == 111111
                 )
                 # cancel: escape -> no new dirs
                 await pilot.press("escape")
@@ -208,7 +208,7 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
         await _wait_for(pilot, lambda: app.query_one(DashboardScreen)._job is None)
         assert len(calls) == 1
         arg = calls[0]
-        assert arg.course == 271218
+        assert arg.course == 111111
         assert arg.assignment == 777
         assert arg.out == "777/raw", arg.out
         assert arg.mode == "auto"
@@ -365,13 +365,13 @@ async def _check_alias_brackets() -> None:
         course_dir = root / "data" / COURSE
         (course_dir / "a1").mkdir(parents=True)
         (course_dir / "config.toml").write_text(
-            "[fetch]\ncourse_id = 271218\n", encoding="utf-8"
+            "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
         )
         (course_dir / "a1" / "config.toml").write_text(
             "[fetch]\nassignment_id = 1001\n", encoding="utf-8"
         )
         (course_dir / "alias.toml").write_text(
-            '[course]\n"271218" = "My Course [S]"\n'
+            '[course]\n"111111" = "My Course [S]"\n'
             '[assignment]\n"1001" = "Week [1]"\n',
             encoding="utf-8",
         )

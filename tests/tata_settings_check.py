@@ -41,7 +41,7 @@ from textual.widgets import Checkbox, Input, Select, Static, TabbedContent
 GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndisplay_threshold = 0.75\n"
 
 COURSE_TOML = """[fetch]
-course_id = 271218
+course_id = 111111
 mode = "attach"
 
 [[fetch.assignments]]
@@ -134,7 +134,7 @@ def _check_dump_roundtrip() -> None:
     """The custom TOML writer must round-trip the shapes our configs hold."""
     original = {
         "fetch": {
-            "course_id": 271218,
+            "course_id": 111111,
             "mode": "attach",
             "assignments": [
                 {"assignment_id": 1001, "out": "a1/raw"},
@@ -196,7 +196,7 @@ async def _check_course_only(root: Path) -> None:
         assert screen.current_context == "course"
         course_id = screen.query_one("#f-fetch-course_id", Input)
         assert not course_id.disabled
-        assert course_id.value == "271218"
+        assert course_id.value == "111111"
         assert screen.query_one("#f-fetch-mode", Select).value == "attach"
         assert screen.query_one("#f-grading-rubric", Input).disabled
         assert screen.query_one("#f-assignment-raw_dir", Input).disabled
@@ -302,7 +302,7 @@ async def _check_course_edit(root: Path) -> None:
         course_cfg = root / _COURSE_CFG
         saved_course = tomllib.loads(course_cfg.read_text(encoding="utf-8"))
         assert saved_course["fetch"]["mode"] == "text"
-        assert saved_course["fetch"]["course_id"] == 271218
+        assert saved_course["fetch"]["course_id"] == 111111
         assert len(saved_course["fetch"]["assignments"]) == 1
         assert saved_course["fetch"]["assignments"][0]["out"] == "a1/raw"
         load_assignment_file(root / _ASSIGNMENT_CFG)  # still parses
