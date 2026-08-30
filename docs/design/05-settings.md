@@ -71,7 +71,7 @@
 | BASE_URL | `Input` | `.env` |
 | TOKEN | `Input`(password) | `.env` |
 | course_id / mode | `Input`(数字) / `Select`(attach|text|auto) | course config `[fetch]` |
-| `[[fetch.assignments]]` 列表 | 只读摘要（`Static`，含 ID+out+mode） | 该清单的增删挪到 S1·Course「导入作业」——本页只展示，避免双入口编辑 |
+| `[[fetch.assignments]]` 列表 | 只读摘要（`Static`，含 id+mode） | 该清单的增删挪到 S1·Course「导入作业」——本页只展示，避免双入口编辑 |
 
 ### ③ Plagiarism（作业级 `[plagiarism]`）
 | 字段 | 控件 | 说明 |

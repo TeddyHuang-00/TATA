@@ -124,7 +124,6 @@ class FetchCliOptions(BaseModel):
 
     course: CliPositionalArg[int | None] = None
     assignment: CliPositionalArg[int | None] = None
-    out: str | None = Field(default=None, description="Output directory.")
     mode: Literal["attach", "text", "auto"] = Field(
         default="auto",
         description="Submission type (default: auto-detect from Canvas).",
@@ -132,8 +131,9 @@ class FetchCliOptions(BaseModel):
     config: Path | None = Field(
         default=None,
         validation_alias=AliasChoices("config", "c"),
-        description="Assignment config.toml holding [fetch] memory; "
-        "defaults to ./config.toml when run from an assignment dir.",
+        description="Course config.toml holding the [fetch] course_id and "
+        "assignment list; defaults to ./config.toml when run from an "
+        "assignment dir.",
     )
     retry: bool = Field(
         default=False,
@@ -150,9 +150,6 @@ class FetchCliOptions(BaseModel):
 
     @model_validator(mode="after")
     def _validate_fetch_args(self) -> FetchCliOptions:
-        if self.retry and self.out is not None:
-            msg = "--out is ignored with --retry; output dirs come from the configs."
-            raise ValueError(msg)
         # The together-check only applies to the non-retry path; in retry mode
         # a single positional acts as a course filter (original behavior).
         if not self.retry and (self.course is None) != (self.assignment is None):

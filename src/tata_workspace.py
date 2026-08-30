@@ -473,10 +473,10 @@ class AssignmentScreen(JobHost):
                     severity="error",
                 )
                 return
-            if cfg.fetch is None or cfg.fetch.assignment_id is None:
+            if cfg.fetch is None or cfg.fetch.course_id is None:
                 self.app.notify(
-                    "Assignment not configured for fetch (missing assignment_id) — "
-                    "add a [fetch] assignment_id to the config",
+                    "Course not configured for fetch — add a [fetch] course_id "
+                    "to the course config",
                     severity="error",
                 )
                 return

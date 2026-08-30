@@ -45,7 +45,8 @@ def _check_scanner(assignments_dir: Path) -> None:
     infos = scan_assignments(assignments_dir / COURSE_A)
     assert len(infos) == 2
     a1, a2 = infos
-    assert a1.assignment_id == 1001
+    # assignment_id comes from the numeric dir name; "a1" is not numeric
+    assert a1.assignment_id is None
     assert a1.counts.raw == 2
     assert a1.score_summary is not None
     assert abs(a1.score_summary - 60.0) < 1e-6

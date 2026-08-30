@@ -125,7 +125,6 @@ def test_code_detector_disables_autoopen(monkeypatch: pytest.MonkeyPatch) -> Non
             _minimal_notebook(), encoding="utf-8"
         )
         (root / "config.toml").write_text(
-            "[fetch]\nassignment_id = 1001\n"
             "[grading]\nrubric = 'rubrics/exam.toml'\n"
             "system_prompt = 'prompt/system.md'\n"
             "provider = 'deepseek'\n"

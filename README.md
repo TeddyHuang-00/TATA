@@ -109,7 +109,9 @@ assignment list in the global file) still works as an abbreviation.
 
 The course `[[fetch.assignments]]` list drives batch fetch and the plagiarism
 aggregate: `fetch -c data/<course>/config.toml` fetches every listed entry in
-one shot (per-entry `mode`/`out` win), and
+one shot (per-entry `mode` wins, falling back to the course `[fetch]` mode;
+fetch output dirs are always `<course dir>/<id>/raw`, derived from the entry
+id, never stored), and
 `plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates
 exactly the listed assignments. The global config `data/config.toml` carries
 no assignment list: `plagiarism -c data/config.toml` falls back to the
@@ -125,18 +127,20 @@ mode = "attach"   # defaults merged under each course config
 # data/271218/config.toml (course layer, gitignored)
 [fetch]
 course_id = 271218
-mode = "attach"   # default for entries without their own
+mode = "auto"     # default for entries without their own
 
 [[fetch.assignments]]
-assignment_id = 2978557
-out = "2978557/raw"  # fetch dir; assignment root = its parent
+id = 2978557
 
-# data/271218/2978557/config.toml (assignment layer)
+[[fetch.assignments]]
+id = 2979509
+mode = "text"     # only when it differs from the course default
+
+# data/271218/2978557/config.toml (assignment layer; no [fetch] — the
+# assignment id comes from the numeric dir name)
 [grading]
 rubric = "rubrics/0-10-first-colab.toml"
 ...
-[fetch]
-assignment_id = 2978557
 ```
 
 ## Documentation

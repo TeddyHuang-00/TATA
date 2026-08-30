@@ -144,21 +144,24 @@ def fetch_assignment(
     return rows
 
 
-def remember_fetch(
+def remember_course_fetch(
     config_path: Path,
     *,
     course_id: int | None = None,
-    assignment_id: int | None = None,
-    out_dir: str | None = None,
-    mode: str | None = None,
+    entry: tuple[int, str | None] | None = None,
 ) -> None:
-    """Upsert [fetch] memory into a config.toml (field-level, never whole-block).
+    """Upsert [fetch] memory into a course config.toml (field-level, never
+    whole-block).
 
-    Only provided fields are written, and only into the top-level [fetch]
-    table; everything else — grading sections, a ``[[fetch.assignments]]``
-    list — is preserved. Passing None leaves an existing value untouched; the
-    file is created if missing. Course-level state goes to the course config,
-    assignment-level state to the assignment config.
+    Only [fetch].course_id is written when given; existing keys/tables —
+    grading sections, a ``[[fetch.assignments]]`` list — are preserved.
+    ``[fetch].mode`` is NEVER written: the course mode is the user-set
+    default and per-assignment modes live on list entries (this is what
+    keeps an upload module from accidentally running under a global "text"
+    mode). ``entry=(aid, mode)`` appends ``{id = aid}`` — plus ``mode`` only
+    when it is not "auto" — to ``[[fetch.assignments]]`` (AOT), deduped by
+    id: an entry already present leaves the list untouched. The file is
+    created if missing.
     """
     if config_path.exists():
         try:
@@ -170,17 +173,28 @@ def remember_fetch(
             "# TATA config: add [grading] with rubric/system_prompt/provider.\n"
         )
 
-    # Defaults (mode=auto, out_dir=raw) stay omitted, as before.
     fetch = doc.get("fetch")
     if not isinstance(fetch, MutableMapping):
         doc["fetch"] = {}
         fetch = doc["fetch"]
     if course_id is not None:
         fetch["course_id"] = course_id
-    if assignment_id is not None:
-        fetch["assignment_id"] = assignment_id
-    if mode is not None and mode != "auto":
-        fetch["mode"] = mode
-    if out_dir is not None and out_dir != "raw":
-        fetch["out_dir"] = out_dir
+    if entry is not None:
+        aid, mode = entry
+        aot = fetch.get("assignments")
+        if not isinstance(aot, list):
+            aot = tomlkit.aot()
+            fetch["assignments"] = aot
+        existing_ids = {
+            e.get("id") or e.get("assignment_id")
+            if isinstance(e, MutableMapping)
+            else None
+            for e in aot
+        }
+        if aid not in existing_ids:
+            item = tomlkit.table()
+            item["id"] = aid
+            if mode is not None and mode != "auto":
+                item["mode"] = mode
+            aot.append(item)
     config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")

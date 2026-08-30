@@ -3,7 +3,7 @@
 Follows tests/tata_app_check.py: App.run_test() + Pilot on a tmp course
 layout, no pytest-asyncio. Skips real Canvas by monkeypatching
 main_mod._run_fetch with a recorder. Asserts: loader-driven target count,
-per-target sequential calls with entry.out (/raw) + mode fallback, live
+per-target sequential calls with entry id + mode fallback, live
 panel states (pending/running/done/failed), completion summary, no raw
 paths in the panel, and the empty-list notify path.
 
@@ -98,7 +98,7 @@ async def _check_fetch_all(root: Path) -> None:
         assert "○ 1002" in _plain(panel), _plain(panel)
         assert "Fetching 1/3" in text(status), text(status)
 
-        # Completion: all done, sequential per-target calls with entry.out.
+        # Completion: all done, sequential per-target calls with entry id.
         await wait_for(pilot, lambda: app.state.active_job is None)
         await pilot.pause()
         assert len(calls) == 3, calls
@@ -106,7 +106,6 @@ async def _check_fetch_all(root: Path) -> None:
         assert course is not None
         for call, aid in zip(calls, AIDS, strict=True):
             assert call.assignment == aid
-            assert call.out == f"{aid}/raw", call.out
             assert call.mode == "auto", call.mode
             assert call.course == 111111, call.course
             assert call.config == course.config_path

@@ -133,7 +133,8 @@ def _make_course_tree(tmp_path: Path) -> Path:
     course = tmp_path / "data" / "111111"
     (course / "assignment-one" / "raw").mkdir(parents=True)
     (course / "assignment-one" / "config.toml").write_text(
-        '[fetch]\nassignment_id = 222222\nmode = "text"\n', encoding="utf-8"
+        "[grading]\nrubric = 'x.toml'\nsystem_prompt = 'p.md'\nprovider = 'x'\n",
+        encoding="utf-8",
     )
     (course / "assignment-one" / "roster.csv").write_text(
         "user_id,user_name,sortable_name,file\n"
@@ -142,9 +143,7 @@ def _make_course_tree(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (course / "config.toml").write_text(
-        "[fetch]\ncourse_id = 111111\n"
-        "[[fetch.assignments]]\nassignment_id = 222222\n"
-        'out = "assignment-one/raw"\n',
+        "[fetch]\ncourse_id = 111111\n[[fetch.assignments]]\nid = 222222\n",
         encoding="utf-8",
     )
     return course
@@ -153,29 +152,29 @@ def _make_course_tree(tmp_path: Path) -> Path:
 def test_migrate_dry_run_reports_only(tmp_path: Path) -> None:
     course = _make_course_tree(tmp_path)
     actions = migrate_course_to_ids(course, dry_run=True)
-    assert len(actions) == 4
+    assert len(actions) == 3
     assert any(
         "rename" in a and "assignment-one" in a and "222222" in a for a in actions
     )
-    assert any('patch "assignment-one/raw" -> "222222/raw"' in a for a in actions)
     assert any('"222222" = "assignment-one"' in a for a in actions)
     assert any("roster.csv" in a and "delete" in a for a in actions)
     # dry run changes nothing
     assert (course / "assignment-one").is_dir()
     assert (course / "assignment-one" / "roster.csv").is_file()
-    assert "222222/raw" not in (course / "config.toml").read_text()
+    assert "id = 222222" in (course / "config.toml").read_text()
 
 
 def test_migrate_ran_and_idempotent(tmp_path: Path) -> None:
     course = _make_course_tree(tmp_path)
     actions = migrate_course_to_ids(course)
-    assert len(actions) == 4
+    assert len(actions) == 3
     # rename happened
     assert not (course / "assignment-one").exists()
     assert (course / "222222").is_dir()
-    # out patched
+    # course config entry keeps the id-only shape (no out)
     config_text = (course / "config.toml").read_text()
-    assert 'out = "222222/raw"' in config_text
+    assert "id = 222222" in config_text
+    assert "out" not in config_text
     assert "assignment-one" not in config_text
     # course alias seeded with old dir name
     course_aliases = load_alias_file(course / "alias.toml")

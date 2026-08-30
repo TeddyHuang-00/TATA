@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,6 @@ def test_parses_full_options() -> None:
     assert args.assignment == 222225
     assert args.mode == "text"
     assert args.retry is False
-    assert args.out is None
     assert args.config is None
 
 
@@ -49,21 +49,24 @@ def test_defaults() -> None:
     assert args.assignment is None
     assert args.mode == "auto"
     assert args.retry is False
-    assert args.out is None
     assert args.config is None
 
 
-def test_out_and_config_strings() -> None:
-    args = _parse("fetch", "--out", "out", "--config", "pyproject.toml")
-    assert args.out == "out"
+def test_config_string() -> None:
+    args = _parse("fetch", "--config", "pyproject.toml")
     assert args.config == Path("pyproject.toml")
 
 
-def test_retry_with_out_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+def test_out_no_longer_accepted(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parse("fetch", "--out", "x")
+    assert excinfo.value.code == 2
+
+
+def test_retry_mode_ignored_with_out(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as excinfo:
         _parse("fetch", "--retry", "--out", "x")
     assert excinfo.value.code == 2
-    assert "ignored with --retry" in capsys.readouterr().err
 
 
 def test_course_without_assignment_rejected(
@@ -95,10 +98,9 @@ def test_main_fetch_course_without_assignment_exits_2() -> None:
     assert "must be given together" in proc.stderr
 
 
-def test_main_fetch_retry_with_out_exits_2() -> None:
-    proc = _run_main("fetch", "--retry", "--out", "x")
+def test_main_fetch_out_exits_2() -> None:
+    proc = _run_main("fetch", "--out", "x")
     assert proc.returncode == 2
-    assert "ignored with --retry" in proc.stderr
 
 
 def test_bare_env_vars_do_not_inject(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,7 +151,7 @@ def test_grade_force_and_config() -> None:
     assert sub.force is True
 
 
-def test_fetch_entries_uses_list_out_and_mode(
+def test_fetch_entries_uses_list_id_and_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -160,8 +162,8 @@ def test_fetch_entries_uses_list_out_and_mode(
         "course_id": 111111,
         "mode": "attach",
         "assignments": [
-            {"assignment_id": 11, "out": "a/raw"},
-            {"assignment_id": 12, "mode": "text", "out": "b/raw"},
+            {"id": 11},
+            {"id": 12, "mode": "text"},
         ],
     })
     calls: list[tuple[int, int, str, str]] = []
@@ -173,12 +175,12 @@ def test_fetch_entries_uses_list_out_and_mode(
     cfg_path = tmp_path / "data" / "config.toml"
     main_mod._fetch_entries(object(), 111111, cfg_path, cfg)
     assert calls == [
-        (111111, 11, str((tmp_path / "data/a/raw").resolve()), "attach"),
-        (111111, 12, str((tmp_path / "data/b/raw").resolve()), "text"),
+        (111111, 11, str((tmp_path / "data/11/raw").resolve()), "attach"),
+        (111111, 12, str((tmp_path / "data/12/raw").resolve()), "text"),
     ]
 
 
-def test_retry_finds_course_and_assignment_configs(
+def test_retry_finds_course_config_list(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -186,25 +188,21 @@ def test_retry_finds_course_and_assignment_configs(
 
     The retry scan is repo-root-relative (data/<course>/config.toml); with
     cli.py in src/ the old ``Path(__file__).parent`` resolved to src/ and the
-    scan always reported 'no assignment configs...'.
-    """
+    scan always reported 'no assignment configs...'."""
     import src.cli as main_mod
 
     course = tmp_path / "data" / "111111"
     (course / "222222").mkdir(parents=True)
     (course / "config.toml").write_text(
-        '[fetch]\ncourse_id = 111111\nmode = "attach"\n',
+        '[fetch]\ncourse_id = 111111\nmode = "attach"\n\n'
+        "[[fetch.assignments]]\nid = 222222\n",
         encoding="utf-8",
     )
     (course / "222222" / "config.toml").write_text(
         "[grading]\n"
         'rubric = "rubrics/a.toml"\n'
         'system_prompt = "prompt/system.md"\n'
-        'provider = "deepseek_chat_tool"\n'
-        "\n"
-        "[fetch]\n"
-        "course_id = 111111\n"
-        "assignment_id = 222222\n",
+        'provider = "deepseek_chat_tool"\n',
         encoding="utf-8",
     )
 
@@ -221,3 +219,137 @@ def test_retry_finds_course_and_assignment_configs(
     assert calls == [
         (111111, 222222, str((course / "222222" / "raw").resolve()), "attach")
     ]
+
+
+def test_run_fetch_course_config_positional_derives_aid_raw_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A course config + positional course/assignment derive the fetch out
+    dir as <course dir>/<aid>/raw (no stored out dir anymore)."""
+    import src.cli as main_mod
+
+    course = tmp_path / "data" / "111111"
+    course.mkdir(parents=True)
+    cfg_path = course / "config.toml"
+    cfg_path.write_text("[fetch]\ncourse_id = 111111\n", encoding="utf-8")
+
+    calls: list[tuple[int, int, str, str]] = []
+    monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
+    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_assignment",
+        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+    )
+    main_mod._run_fetch(
+        FetchCliOptions(course=111111, assignment=222333, config=cfg_path)
+    )
+    assert calls == [
+        (111111, 222333, str((course / "222333" / "raw").resolve()), "auto")
+    ]
+    # The fetch was remembered as a [[fetch.assignments]] entry (no [fetch].mode).
+    fetch = tomllib.loads(cfg_path.read_text())["fetch"]
+    assert fetch["course_id"] == 111111
+    assert "mode" not in fetch
+    assert [(e["id"], e.get("mode")) for e in fetch["assignments"]] == [(222333, None)]
+
+
+def test_run_fetch_assignment_config_honors_entry_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A standalone fetch -c <assignment config> resolves the mode from the
+    course config's [[fetch.assignments]] entry when the CLI mode is auto."""
+    import src.cli as main_mod
+
+    course = tmp_path / "data" / "111111"
+    (course / "222333").mkdir(parents=True)
+    (course / "config.toml").write_text(
+        '[fetch]\ncourse_id = 111111\nmode = "attach"\n\n'
+        '[[fetch.assignments]]\nid = 222333\nmode = "text"\n',
+        encoding="utf-8",
+    )
+    (course / "222333" / "config.toml").write_text(
+        "[grading]\n"
+        'rubric = "rubrics/a.toml"\n'
+        'system_prompt = "prompt/system.md"\n'
+        'provider = "deepseek_chat_tool"\n',
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[int, int, str, str]] = []
+    monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
+    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_assignment",
+        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+    )
+    main_mod._run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
+    assert calls == [
+        (111111, 222333, str((course / "222333" / "raw").resolve()), "text")
+    ]
+
+
+def test_run_fetch_non_numeric_assignment_dir_exits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An assignment config in a non-numeric dir with no --assignment exits
+    instead of falling into the interactive picker (TUI raw-mode trap)."""
+    import src.cli as main_mod
+
+    course = tmp_path / "data" / "111111"
+    (course / "alpha").mkdir(parents=True)
+    (course / "config.toml").write_text(
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
+    )
+    (course / "alpha" / "config.toml").write_text(
+        "[grading]\n"
+        'rubric = "rubrics/a.toml"\n'
+        'system_prompt = "prompt/system.md"\n'
+        'provider = "deepseek_chat_tool"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as exc:
+        main_mod._run_fetch(FetchCliOptions(config=course / "alpha" / "config.toml"))
+    assert "not a numeric id" in str(exc.value)
+
+
+def test_remember_skips_mode_equal_to_course_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An entry fetched under the course-config default mode records no mode
+    key — the course [fetch].mode stays the source of truth."""
+    import src.cli as main_mod
+
+    course = tmp_path / "data" / "111111"
+    (course / "222333").mkdir(parents=True)
+    (course / "config.toml").write_text(
+        '[fetch]\ncourse_id = 111111\nmode = "text"\n', encoding="utf-8"
+    )
+    (course / "222333" / "config.toml").write_text(
+        "[grading]\n"
+        'rubric = "rubrics/a.toml"\n'
+        'system_prompt = "prompt/system.md"\n'
+        'provider = "deepseek_chat_tool"\n',
+        encoding="utf-8",
+    )
+
+    calls: list[tuple[int, int, str, str]] = []
+    monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
+    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_assignment",
+        lambda canvas, cid, aid, out, mode: calls.append((cid, aid, str(out), mode)),
+    )
+    main_mod._run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
+    assert calls == [
+        (111111, 222333, str((course / "222333" / "raw").resolve()), "text")
+    ]
+    fetch = tomllib.loads((course / "config.toml").read_text())["fetch"]
+    assert fetch["mode"] == "text"
+    assert [(e["id"], e.get("mode")) for e in fetch["assignments"]] == [(222333, None)]

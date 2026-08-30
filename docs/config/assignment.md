@@ -19,19 +19,21 @@ in the global file) still works as an abbreviation.
   (`course_id`, shared `mode`) and `[plagiarism]` course-wide knobs (blend
   weights, aggregate alphas). It has no `[grading]` and no assignment list.
 - Course layer (`data/<course>/config.toml`, gitignored): course `[fetch]`
-  state plus the course's assignment list (`[[fetch.assignments]]`:
-  `assignment_id`, optional `mode` override, `out` = fetch output dir
-  relative to the course config).
+  state (`course_id`, `mode`) plus the course's assignment list
+  (`[[fetch.assignments]]`: `id`, optional `mode` override; the fetch output
+  dir is always `<course dir>/<id>/raw` — derived, never stored).
 - Assignment layer: everything else (grading, processing, hooks, scoring),
-  plus overrides (`assignment_id`, `mode = "text"` when it differs from the
-  course default, `template_file`, ...).
-- Standalone assignment configs without a global/course config work exactly
-  as before.
+  plus overrides (`mode = "text"` when it differs from the course default,
+  `template_file`, ...). No `[fetch]` here — the assignment identity is the
+  numeric dir name.
+- Standalone assignment configs without a global/course config still fetch:
+  the assignment resolves via `--course`/`--assignment` or interactively.
+  Nothing is remembered — fetch memory is written only into a course config.
 
 The course list is the course's source of truth: `main.py fetch -c data/<course>/config.toml` fetches every listed entry in one shot (per-entry
-mode/out win), `fetch --retry` replays it, and `main.py plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
+mode wins, falling back to the course mode), `fetch --retry` replays it, and `main.py plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
 assignments. `main.py fetch` also writes course-level state to the course
-config and assignment-level state to the assignment config automatically.
+config automatically.
 With `-c data/config.toml` (no assignment list) plagiarism falls back to the
 discovered course configs (`data/*/config.toml`).
 
@@ -40,12 +42,11 @@ Example course config:
 ```toml
 [fetch]
 course_id = 271218
-mode = "attach"   # default for entries without their own
+mode = "auto"     # default for entries without their own
 
 [[fetch.assignments]]
-assignment_id = 2979511
-mode = "text"              # optional; falls back to the course mode
-out = "2979511/raw"        # fetch dir; assignment root = its parent
+id = 2979511
+mode = "text"     # optional; falls back to the course mode
 ```
 
 ## Where this file sits in the workflow
@@ -85,14 +86,9 @@ graded_dir = "graded"
 logs_dir = "logs"
 reference_file = "reference.md"
 
-[fetch]
-# Canvas memory for `main.py fetch`; course-level keys (course_id, shared
-# mode) live in the course config (data/<course>/config.toml). Only override
-# what differs from the course default; the course config's
-# [[fetch.assignments]] list drives batch fetch and the plagiarism aggregate.
-assignment_id = 2979509
-# mode = "text"     # only when it differs from the course [fetch] mode
-# out_dir = "raw"   # only when it differs from the default
+# [fetch] is course-config-only (data/<course>/config.toml: course_id +
+# [[fetch.assignments]] id entries). Assignment configs carry no [fetch];
+# the assignment id comes from the numeric dir name.
 
 [processing]
 # Optional: one value or a list from: ipynb, html, markdown

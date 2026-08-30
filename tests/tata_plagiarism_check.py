@@ -124,13 +124,11 @@ def _make_fixture(assignments_dir: Path) -> None:
         "[fetch]\ncourse_id = 111111\n[plagiarism]\ndisplay_threshold = 0.9\n",
         encoding="utf-8",
     )
-    for name, aid in ((A1, 1001), (A2, 1002)):
+    for name in (A1, A2):
         a_dir = course_dir / name
         for sub in ("raw", "processed", "plagiarism"):
             (a_dir / sub).mkdir(parents=True)
-        (a_dir / "config.toml").write_text(
-            f"[fetch]\nassignment_id = {aid}\n", encoding="utf-8"
-        )
+        (a_dir / "config.toml").write_text("", encoding="utf-8")
     _write_pairs(course_dir / A1, PAIRS_A1)
     _write_pairs(course_dir / A2, PAIRS_A2)
     (course_dir / A1 / "processed" / f"{A1}b.md").write_text(
@@ -156,7 +154,7 @@ def _make_fixture(assignments_dir: Path) -> None:
     write_aliases(
         course_dir / "alias.toml",
         course_alias="My Course",
-        assignment_alias={"1001": "First Assignment", "1002": "Second Assignment"},
+        assignment_alias={"a1": "First Assignment", "a2": "Second Assignment"},
         students={
             "1001": "Alice, A",
             "1002": "Bob, B",

@@ -224,28 +224,28 @@ async def _check_editor_warning(app: TataApp, pilot: Pilot) -> None:
 
 
 async def _check_fetch_gate(app: TataApp, pilot: Pilot) -> None:
-    """F1: fetch with no assignment_id -> error notify, no job started."""
+    """F1: fetch with no course [fetch] course_id -> error notify, no job."""
     ws = app.query_one(AssignmentScreen)
     cfg_path = ws._info.config_path
+    course_cfg = cfg_path.parent.parent / "config.toml"
     original = cfg_path.read_text(encoding="utf-8")
+    original_course = course_cfg.read_text(encoding="utf-8")
     notices, orig_notify = spy_notify(app)
     try:
-        cfg_path.write_text(
-            "[grading]\n"
-            "rubric = 'rubrics/exam.toml'\n"
-            "system_prompt = 'prompt/system.md'\n"
-            "provider = 'deepseek'\n"
-            "max_parallel_tasks = 4\n",
-            encoding="utf-8",
-        )
+        cfg_path.write_text(ASSIGNMENT_CFG, encoding="utf-8")
+        # No [fetch] in ANY layer -> merged fetch section is empty.
+        course_cfg.write_text("", encoding="utf-8")
         await pilot.press("f")
         await pilot.pause()
         assert ws._job is None, ws._job
-        assert any("assignment_id" in msg for msg, _sev in notices), notices
+        assert any("Course not configured for fetch" in msg for msg, _sev in notices), (
+            notices
+        )
         assert any(sev == "error" for _msg, sev in notices), notices
         assert not any("started" in msg for msg, _sev in notices), notices
     finally:
         cfg_path.write_text(original, encoding="utf-8")
+        course_cfg.write_text(original_course, encoding="utf-8")
         app.notify = orig_notify
 
 

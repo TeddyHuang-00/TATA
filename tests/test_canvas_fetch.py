@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 from src.aliases import load_alias_file
-from src.canvas_fetch import fetch_assignment, remember_fetch
+from src.canvas_fetch import fetch_assignment, remember_course_fetch
 
 
 class StubAtt:
@@ -185,29 +186,58 @@ def test_upsert_preserves_manual_overrides_and_tables(tmp_path: Path) -> None:
     assert "Manual, Override" in text
 
 
-def test_remember_fetch_append_and_replace(tmp_path: Path) -> None:
+def test_remember_course_fetch_appends_entry_and_dedupes(tmp_path: Path) -> None:
     cfg = tmp_path / "config.toml"
     cfg.write_text('[grading]\nrubric = "x.toml"\n')
-    remember_fetch(cfg, course_id=1, assignment_id=2)
+    remember_course_fetch(cfg, course_id=1, entry=(2, None))
     text = cfg.read_text()
     assert "[fetch]" in text
     assert "course_id = 1" in text
-    # Defaults are omitted: mode=auto, out_dir=raw.
-    assert "mode =" not in text
-    assert "out_dir" not in text
+    assert "mode" not in text  # never writes [fetch].mode
+    assert "assignment_id" not in text
+    assert tomllib.loads(text)["fetch"]["assignments"] == [{"id": 2}]
 
-    remember_fetch(cfg, course_id=3, assignment_id=4, out_dir="data", mode="text")
+    # course_id replaced; the same assignment id is NOT appended twice and
+    # an existing entry stays untouched (even with a different mode).
+    remember_course_fetch(cfg, course_id=3, entry=(2, "text"))
     text = cfg.read_text()
-    assert 'mode = "text"' in text
-    assert 'out_dir = "data"' in text
-    assert text.count("[fetch]") == 1
+    data = tomllib.loads(text)
+    assert data["fetch"]["course_id"] == 3
+    assert [(e["id"], e.get("mode")) for e in data["fetch"]["assignments"]] == [
+        (2, None)
+    ]
     assert "[grading]" in text  # other sections untouched
 
+    # A new id appends; mode written only when != "auto".
+    remember_course_fetch(cfg, entry=(4, "text"))
+    remember_course_fetch(cfg, entry=(5, "auto"))
+    data = tomllib.loads(cfg.read_text())
+    assert [(e["id"], e.get("mode")) for e in data["fetch"]["assignments"]] == [
+        (2, None),
+        (4, "text"),
+        (5, None),
+    ]
 
-def test_remember_fetch_creates_missing_config(tmp_path: Path) -> None:
+
+def test_remember_course_fetch_never_touches_course_mode(tmp_path: Path) -> None:
     cfg = tmp_path / "config.toml"
-    remember_fetch(cfg, assignment_id=42)
+    cfg.write_text(
+        '[fetch]\ncourse_id = 9\nmode = "text"\n\n[[fetch.assignments]]\nid = 1\n',
+        encoding="utf-8",
+    )
+    remember_course_fetch(cfg, course_id=1, entry=(2, "attach"))
+    data = tomllib.loads(cfg.read_text())
+    assert data["fetch"]["mode"] == "text"  # user-set default untouched
+    assert [(e["id"], e.get("mode")) for e in data["fetch"]["assignments"]] == [
+        (1, None),
+        (2, "attach"),
+    ]
+
+
+def test_remember_course_fetch_creates_missing_config(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.toml"
+    remember_course_fetch(cfg, course_id=42)
     text = cfg.read_text()
     assert "[fetch]" in text
-    assert "assignment_id = 42" in text
-    assert "course_id" not in text
+    assert "course_id = 42" in text
+    assert "assignments" not in text  # no entry given -> no list created

@@ -34,41 +34,37 @@ def test_layered_merge_root_defaults_assignment_overrides(
         "data/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n',
     )
-    write_tree(
-        tmp_path,
-        "data/a/config.toml",
-        grading_config + "[fetch]\nassignment_id = 42\n",
-    )
+    write_tree(tmp_path, "data/a/config.toml", grading_config)
     cfg = load_assignment_file(tmp_path / "data" / "a" / "config.toml")
     assert cfg.fetch is not None
     assert cfg.fetch.course_id == 111111
-    assert cfg.fetch.assignment_id == 42
     assert cfg.fetch.mode == "attach"
+    # Assignment identity is the dir name, not a [fetch] key; the course
+    # assignment list stays out of merged assignment configs.
+    assert not cfg.fetch.assignments
 
-    # Assignment value wins per key.
+    # Per-assignment modes live on [[fetch.assignments]] entries of the
+    # course config (an entry's mode overrides the course default).
     write_tree(
         tmp_path,
-        "data/b/config.toml",
-        grading_config + '[fetch]\nassignment_id = 43\nmode = "text"\n',
+        "data/config.toml",
+        '[fetch]\ncourse_id = 111111\nmode = "attach"\n\n'
+        '[[fetch.assignments]]\nid = 43\nmode = "text"\n',
     )
-    cfg = load_assignment_file(tmp_path / "data" / "b" / "config.toml")
+    cfg = load_assignment_file(tmp_path / "data" / "a" / "config.toml")
     assert cfg.fetch is not None
-    assert cfg.fetch.mode == "text"
-    assert cfg.fetch.course_id == 111111
+    assert cfg.fetch.mode == "attach"  # course default unchanged
+    assert cfg.fetch.assignments == []  # list stripped from merged configs
 
 
 def test_standalone_assignment_config_without_root(
     tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
 ) -> None:
-    write_tree(
-        tmp_path,
-        "data/a/config.toml",
-        grading_config + "[fetch]\ncourse_id = 7\nassignment_id = 9\n",
-    )
+    write_tree(tmp_path, "data/a/config.toml", grading_config)
     cfg = load_assignment_file(tmp_path / "data" / "a" / "config.toml")
-    assert cfg.fetch is not None
-    assert cfg.fetch.course_id == 7
-    assert cfg.fetch.assignment_id == 9
+    # Assignment configs carry no [fetch] anymore; without a course config
+    # there is no fetch state at all.
+    assert cfg.fetch is None
 
 
 def test_root_config_plagiarism_defaults_merge(
@@ -101,19 +97,15 @@ def test_root_fetch_assignments_list_parses_and_does_not_leak(
         tmp_path,
         "data/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 42\nout = "a/raw"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 43\nmode = "text"\nout = "b/raw"\n',
+        "\n[[fetch.assignments]]\nid = 42\n"
+        '\n[[fetch.assignments]]\nid = 43\nmode = "text"\n',
     )
-    write_tree(
-        tmp_path,
-        "data/a/config.toml",
-        grading_config + "[fetch]\nassignment_id = 42\n",
-    )
+    write_tree(tmp_path, "data/a/config.toml", grading_config)
     root = tmp_path / "data" / "config.toml"
     fetch = FetchSection.model_validate(tomllib.loads(root.read_text())["fetch"])
-    assert [(e.assignment_id, e.mode, e.out) for e in fetch.assignments] == [
-        (42, None, "a/raw"),
-        (43, "text", "b/raw"),
+    assert [(e.id, e.mode) for e in fetch.assignments] == [
+        (42, None),
+        (43, "text"),
     ]
 
     # The root's assignment list is course-level orchestration; merged

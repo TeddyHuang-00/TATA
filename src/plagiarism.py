@@ -586,7 +586,7 @@ def detect_plagiarism(
         )
         if root_fetch.assignments:
             listed = [
-                (resolved.parent / entry.out).parent for entry in root_fetch.assignments
+                resolved.parent / str(entry.id) for entry in root_fetch.assignments
             ]
 
     if is_root:

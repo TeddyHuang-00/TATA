@@ -54,7 +54,7 @@ def _fix(root: Path, *, env: bool = False) -> None:
     write_aliases(
         root / "data" / COURSE / "alias.toml",
         course_alias="My Course",
-        assignment_alias={"1001": "My Alias", "1002": "Second Alias"},
+        assignment_alias={"a1": "My Alias", "a2": "Second Alias"},
     )
 
 
@@ -133,7 +133,7 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
         modal = app.screen
         assert isinstance(modal, ImportAssignmentModal)
         await wait_for(pilot, lambda: modal.query_one(Select).value == 777)
-        # default mode = auto (third radio pressed), out defaults to the id
+        # default mode = auto (third radio pressed); dir is the assignment id
         mode_set = modal.query_one("#modal-mode")
         assert mode_set.pressed_button.id == "mode-auto"  # type: ignore[union-attr]
         await pilot.pause()
@@ -144,7 +144,6 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
         arg = calls[0]
         assert arg.course == 111111
         assert arg.assignment == 777
-        assert arg.out == "777/raw", arg.out
         assert arg.mode == "auto"
         status = text(app.query_one("#dash-status", Static))
         assert "Done in" in status, status
@@ -303,11 +302,9 @@ async def _check_alias_brackets() -> None:
         (course_dir / "config.toml").write_text(
             "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
         )
-        (course_dir / "a1" / "config.toml").write_text(
-            "[fetch]\nassignment_id = 1001\n", encoding="utf-8"
-        )
+        (course_dir / "a1" / "config.toml").write_text("", encoding="utf-8")
         (course_dir / "alias.toml").write_text(
-            '[course]\n"111111" = "My Course [S]"\n[assignment]\n"1001" = "Week [1]"\n',
+            '[course]\n"111111" = "My Course [S]"\n[assignment]\n"a1" = "Week [1]"\n',
             encoding="utf-8",
         )
         app = TataApp(root_dir=root)

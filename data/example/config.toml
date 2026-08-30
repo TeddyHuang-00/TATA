@@ -6,13 +6,9 @@
 # reference_file = "reference.md"  # OPTIONAL — omit for rubric-only grading
 # Uncomment the section above to customize assignment paths and reference.
 
-# [fetch]  # canvas memory for `main.py fetch` (single-assignment fetches).
-# Course-level state (course_id, shared mode) lives in data/config.toml
-# (root layer); the root's [[fetch.assignments]] list drives batch fetch and
-# the plagiarism aggregate. Only override here what differs from the root:
-# assignment_id = 2979509
-# mode = "text"     # only when it differs from the root [fetch] mode
-# out_dir = "raw"   # only when it differs from the default
+# [fetch] settings live in the course config (data/<course>/config.toml:
+# [fetch] course_id + [[fetch.assignments]] id entries); assignment configs
+# carry no [fetch] — identity is the numeric dir name.
 
 [grading]
 rubric = "rubrics/example_rubric.toml"

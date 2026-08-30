@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 
 InputFormat = Literal["ipynb", "html", "markdown", "docx"]
 ScoreReportDetail = Literal["full", "slim"]
@@ -148,33 +148,26 @@ class ScoringSection(BaseModel):
 
 
 class FetchAssignmentEntry(BaseModel):
-    """One assignment in the root config's [[fetch.assignments]] list.
+    """One assignment in a course config's [[fetch.assignments]] list.
 
-    ``out`` is the fetch output dir (raw submissions), relative to the root
-    config; the assignment root (config.toml, alias.toml, plagiarism/) is
-    its parent. ``mode`` falls back to the root [fetch] mode.
+    ``id`` (or legacy ``assignment_id``) is the Canvas assignment id; the
+    fetch output dir is always the derived ``<course_dir>/<id>/raw``.
+    ``mode`` falls back to the course [fetch] mode when None.
     """
 
-    assignment_id: int = Field(ge=1)
+    id: int = Field(ge=1, validation_alias=AliasChoices("id", "assignment_id"))
     mode: Literal["attach", "text", "auto"] | None = Field(default=None)
-    out: str = Field(min_length=1)
 
 
 class FetchSection(BaseModel):
-    """Fetch memory, possibly split across layers: the root config holds
-    course-level keys, the assignment config the assignment-level ones; the
-    layered load merges them into a complete section. The root config may
-    additionally carry an explicit assignment list ([[fetch.assignments]])
-    that drives both fetch and the plagiarism aggregate."""
+    """Fetch memory as a course config's [[fetch]] table (merged from the
+    global layer when present): course-level keys plus an explicit assignment
+    list ([[fetch.assignments]]) that drives both fetch and the plagiarism
+    aggregate. Assignment identity is the dir name, not a [fetch] key."""
 
     course_id: int | None = Field(default=None, ge=1)
-    assignment_id: int | None = Field(default=None, ge=1)
     mode: Literal["attach", "text", "auto"] = Field(default="auto")
-    out_dir: str = Field(default="raw")
     assignments: list[FetchAssignmentEntry] = Field(default_factory=list)
-
-    def resolve_out_dir(self, base_dir: Path) -> Path:
-        return (base_dir / self.out_dir).resolve()
 
 
 class PlagiarismSection(BaseModel):

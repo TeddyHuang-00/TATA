@@ -57,10 +57,12 @@ def make_course(
 ) -> None:
     """One course in ``assignments_dir`` with the TUI check fixture layout.
 
-    ``assignments`` maps dir name -> fetch assignment_id (default {"a1": 1001}).
-    ``entries`` adds ``[[fetch.assignments]]`` rows (out = "<name>/raw") to the
-    course config. ``assignment_cfg`` is appended to each assignment
-    config.toml (e.g. a ``[grading]`` section). ``graded`` is "first" or "all"
+    ``assignments`` maps dir name -> fetch assignment id (default {"a1": 1001}).
+    ``entries`` adds ``[[fetch.assignments]]`` rows (``id`` entries; fetch
+    output dir is derived as ``<dir>/<aid>/raw``, never stored).
+    ``assignment_cfg`` is appended to each assignment config.toml (e.g. a
+    ``[grading]`` section; assignment configs carry no ``[fetch]`` — fetch
+    settings live in the course config). ``graded`` is "first" or "all"
     (writes graded/100001.json). ``processed`` lists the processed/*.md stems
     (default ["100001"]). ``scored``/``fetch_cache``/``logs`` add the
     scored/txt, raw/.fetch-cache.json and logs/checkpoint files. ``pairs`` is
@@ -72,10 +74,7 @@ def make_course(
     course_dir = assignments_dir / course
     course_dir.mkdir(parents=True)
     entries_txt = (
-        "".join(
-            f'[[fetch.assignments]]\nassignment_id = {aid}\nout = "{name}/raw"\n'
-            for name, aid in assignments.items()
-        )
+        "".join(f"[[fetch.assignments]]\nid = {aid}\n" for aid in assignments.values())
         if entries
         else ""
     )
@@ -83,7 +82,7 @@ def make_course(
         f"[fetch]\ncourse_id = {course_id}\n" + entries_txt, encoding="utf-8"
     )
     first = next(iter(assignments))
-    for name, aid in assignments.items():
+    for name in assignments:
         a_dir = course_dir / name
         for sub in ("raw", "processed", "graded"):
             (a_dir / sub).mkdir(parents=True)
@@ -91,9 +90,7 @@ def make_course(
             (a_dir / "scored" / "txt").mkdir(parents=True)
         if logs:
             (a_dir / "logs").mkdir(parents=True)
-        (a_dir / "config.toml").write_text(
-            f"[fetch]\nassignment_id = {aid}\n" + assignment_cfg, encoding="utf-8"
-        )
+        (a_dir / "config.toml").write_text(assignment_cfg, encoding="utf-8")
         (a_dir / "raw" / "100001.ipynb").write_text("{}", encoding="utf-8")
         (a_dir / "raw" / "100002.txt").write_text("hi", encoding="utf-8")
         for stem in processed or ["100001"]:

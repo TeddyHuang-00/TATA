@@ -14,7 +14,7 @@ from src.assignment_config import (
     is_root_config,
     load_assignment_file,
 )
-from src.canvas_fetch import remember_fetch
+from src.canvas_fetch import remember_course_fetch
 from src.cli import _classify_config, _fetch_course, _load_config, _remember
 
 
@@ -38,7 +38,7 @@ def _write_three_level(
     assignment_cfg = write_tree(
         tmp_path,
         "data/111111/hw1/config.toml",
-        grading_config + "[fetch]\nassignment_id = 42\n",
+        grading_config,
     )
     return global_cfg, course_cfg, assignment_cfg
 
@@ -131,25 +131,23 @@ def test_three_layer_fetch_assignments_do_not_leak(
     write_tree(
         tmp_path,
         "data/config.toml",
-        "[fetch]\ncourse_id = 111111\n"
-        '\n[[fetch.assignments]]\nassignment_id = 99\nout = "other/raw"\n',
+        "[fetch]\ncourse_id = 111111\n\n[[fetch.assignments]]\nid = 99\n",
     )
     course_cfg = write_tree(
         tmp_path,
         "data/111111/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw2/raw"\n',
+        "\n[[fetch.assignments]]\nid = 43\n",
     )
     assignment_cfg = write_tree(
         tmp_path,
         "data/111111/hw1/config.toml",
-        grading_config + "[fetch]\nassignment_id = 42\n",
+        grading_config,
     )
 
     cfg = load_assignment_file(assignment_cfg)
     assert cfg.fetch is not None
     assert cfg.fetch.course_id == 111111
-    assert cfg.fetch.assignment_id == 42
     assert cfg.fetch.mode == "attach"
     assert cfg.fetch.assignments == []
 
@@ -157,9 +155,7 @@ def test_three_layer_fetch_assignments_do_not_leak(
     course_fetch = FetchSection.model_validate(
         tomllib.loads(course_cfg.read_text())["fetch"]
     )
-    assert [(e.assignment_id, e.out) for e in course_fetch.assignments] == [
-        (43, "hw2/raw")
-    ]
+    assert [(e.id, e.mode) for e in course_fetch.assignments] == [(43, None)]
 
 
 def test_remember_container_writes_own_config(
@@ -172,26 +168,29 @@ def test_remember_container_writes_own_config(
         tmp_path,
         "data/111111/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw2/raw"\n',
+        "\n[[fetch.assignments]]\nid = 43\n",
     )
     write_tree(tmp_path, "data/111111/hw1/config.toml", grading_config)
     out = tmp_path / "data" / "111111" / "hw1" / "raw"
     out.mkdir(parents=True)
 
-    _remember(out, course_cfg, 111111, 42, "attach")
+    _remember(course_cfg, 111111, 42, "attach")
 
     course_fetch = tomllib.loads(course_cfg.read_text())["fetch"]
     assert course_fetch["course_id"] == 111111
-    assert course_fetch["mode"] == "attach"
-    # The course's [[fetch.assignments]] list was not wiped by the write.
-    assert [(e["assignment_id"], e["out"]) for e in course_fetch["assignments"]] == [
-        (43, "hw2/raw")
+    assert course_fetch["mode"] == "attach"  # user-set default untouched
+    # [[fetch.assignments]] was not wiped by the write; the fetched entry
+    # was appended with no mode — it equals the course default [fetch].mode.
+    assert [(e["id"], e.get("mode")) for e in course_fetch["assignments"]] == [
+        (43, None),
+        (42, None),
     ]
-    assignment_fetch = tomllib.loads((out.parent / "config.toml").read_text())["fetch"]
-    assert assignment_fetch["assignment_id"] == 42
+    # The assignment config was never written.
+    assignment_data = tomllib.loads((out.parent / "config.toml").read_text())
+    assert "fetch" not in assignment_data
 
 
-def test_remember_fetch_upsert_preserves_assignments(
+def test_remember_course_fetch_upsert_preserves_assignments(
     tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
 ) -> None:
     """Upsert: only provided fields change; existing keys and the
@@ -200,17 +199,16 @@ def test_remember_fetch_upsert_preserves_assignments(
         tmp_path,
         "data/111111/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw2/raw"\n',
+        "\n[[fetch.assignments]]\nid = 43\n",
     )
 
-    remember_fetch(cfg, course_id=999)
+    remember_course_fetch(cfg, course_id=999)
 
     fetch = tomllib.loads(cfg.read_text())["fetch"]
     assert fetch["course_id"] == 999
     assert fetch["mode"] == "attach"  # untouched field preserved
-    assert [(e["assignment_id"], e["out"]) for e in fetch["assignments"]] == [
-        (43, "hw2/raw")
-    ]
+    assert "mode" not in (fetch["assignments"][0])  # no per-entry mode written
+    assert [e["id"] for e in fetch["assignments"]] == [43]
 
 
 def test_nested_config_does_not_break_container_detection(
@@ -233,7 +231,7 @@ def test_nested_config_does_not_break_container_detection(
     assignment_cfg = write_tree(
         tmp_path,
         "data/111111/a/config.toml",
-        grading_config + "[fetch]\nassignment_id = 42\n",
+        grading_config,
     )
     write_tree(tmp_path, "data/111111/a/solutions/config.toml", grading_config)
 
@@ -254,7 +252,7 @@ def test_nested_config_does_not_break_container_detection(
     # The assignment (even with its nested config) still loads as an assignment.
     cfg = load_assignment_file(assignment_cfg)
     assert cfg.fetch is not None
-    assert cfg.fetch.assignment_id == 42
+    assert cfg.fetch.course_id == 111111
 
 
 def test_load_config_fresh_course_self_evidence(
@@ -269,7 +267,7 @@ def test_load_config_fresh_course_self_evidence(
         tmp_path,
         "data/111111/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw1/raw"\n',
+        "\n[[fetch.assignments]]\nid = 43\n",
     )
     for detect in (is_root_config, is_course_config, is_global_config):
         assert not detect(course_cfg)
@@ -278,7 +276,7 @@ def test_load_config_fresh_course_self_evidence(
     assert path == course_cfg
     assert fetch is not None
     assert fetch.course_id == 111111
-    assert [(e.assignment_id, e.out) for e in fetch.assignments] == [(43, "hw1/raw")]
+    assert [(e.id, e.mode) for e in fetch.assignments] == [(43, None)]
 
 
 def test_remember_nested_assignment_no_container_pollution(
@@ -298,21 +296,22 @@ def test_remember_nested_assignment_no_container_pollution(
     assignment_cfg = write_tree(
         tmp_path,
         "data/111111/a/config.toml",
-        grading_config + "[fetch]\nassignment_id = 7\n",
+        grading_config,
     )
     write_tree(tmp_path, "data/111111/a/solutions/config.toml", grading_config)
     out = tmp_path / "data" / "111111" / "a" / "raw"
     out.mkdir(parents=True)
 
-    _remember(out, assignment_cfg, 111111, 42, "attach")
+    _remember(assignment_cfg, 111111, 42, "attach")
 
-    assignment_fetch = tomllib.loads(assignment_cfg.read_text())["fetch"]
-    assert assignment_fetch["assignment_id"] == 42
-    assert "course_id" not in assignment_fetch
-    assert "mode" not in assignment_fetch
+    assignment_data = tomllib.loads(assignment_cfg.read_text())
+    assert "fetch" not in assignment_data  # assignment config never written
     course_fetch = tomllib.loads(course_cfg.read_text())["fetch"]
     assert course_fetch["course_id"] == 111111
-    assert course_fetch["mode"] == "attach"
+    assert "mode" not in course_fetch  # never writes [fetch].mode
+    assert [(e["id"], e.get("mode")) for e in course_fetch["assignments"]] == [
+        (42, "attach")
+    ]
 
 
 def test_retry_fetch_dedups_shared_assignment(
@@ -327,14 +326,12 @@ def test_retry_fetch_dedups_shared_assignment(
     global_cfg = write_tree(
         tmp_path,
         "data/config.toml",
-        "[fetch]\ncourse_id = 111111\n"
-        '\n[[fetch.assignments]]\nassignment_id = 9901\nout = "hw1/raw"\n',
+        "[fetch]\ncourse_id = 111111\n\n[[fetch.assignments]]\nid = 9901\n",
     )
     course_cfg = write_tree(
         tmp_path,
         "data/111111/config.toml",
-        "[fetch]\ncourse_id = 111111\n"
-        '\n[[fetch.assignments]]\nassignment_id = 9901\nout = "hw1/raw"\n',
+        "[fetch]\ncourse_id = 111111\n\n[[fetch.assignments]]\nid = 9901\n",
     )
     seen: set[tuple[int, int]] = set()
     with mock.patch("src.cli.fetch_assignment") as mock_fetch:
@@ -359,23 +356,24 @@ def test_container_bad_toml_raises_guidance_not_bare_decode(
     assert "Tip: start from data/example/config.toml" in str(excinfo.value)
 
 
-def test_remember_fetch_inline_comment_table_header(
+def test_remember_course_fetch_inline_comment_table_header(
     tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
 ) -> None:
     """MINOR-3: '[fetch] # ...' with an inline comment must still be
-    recognized as the [fetch] table header; before the fix remember_fetch
-    appended a second [fetch] block and produced invalid TOML."""
+    recognized as the [fetch] table header; before the fix
+    remember_course_fetch appended a second [fetch] block and produced
+    invalid TOML."""
     cfg = write_tree(
         tmp_path,
         "data/111111/config.toml",
         "[fetch] # fetch state\ncourse_id = 1\n",
     )
-    remember_fetch(cfg, assignment_id=2)
+    remember_course_fetch(cfg, course_id=1, entry=(2, None))
     text = cfg.read_text(encoding="utf-8")
     assert text.count("[fetch]") == 1
     data = tomllib.loads(text)  # must parse
     assert data["fetch"]["course_id"] == 1
-    assert data["fetch"]["assignment_id"] == 2
+    assert data["fetch"]["assignments"][0]["id"] == 2
 
 
 def test_find_global_config_repo_root_poison_rejected(
@@ -433,22 +431,24 @@ def test_remember_fresh_course_container(
         tmp_path,
         "data/111111/config.toml",
         '[fetch]\ncourse_id = 111111\nmode = "attach"\n'
-        '\n[[fetch.assignments]]\nassignment_id = 43\nout = "hw1/raw"\n',
+        "\n[[fetch.assignments]]\nid = 43\n",
     )
     out = tmp_path / "data" / "111111" / "hw1" / "raw"
     out.mkdir(parents=True)
 
-    _remember(out, course_cfg, 111111, 42, "attach")
+    _remember(course_cfg, 111111, 42, "attach")
 
     course_fetch = tomllib.loads(course_cfg.read_text())["fetch"]
     assert course_fetch["course_id"] == 111111
-    assert course_fetch["mode"] == "attach"
+    assert course_fetch["mode"] == "attach"  # untouched user default
     assert "assignment_id" not in course_fetch
-    assert [(e["assignment_id"], e["out"]) for e in course_fetch["assignments"]] == [
-        (43, "hw1/raw")
+    # Entry mode equals the course default -> no per-entry mode recorded.
+    assert [(e["id"], e.get("mode")) for e in course_fetch["assignments"]] == [
+        (43, None),
+        (42, None),
     ]
-    assignment_fetch = tomllib.loads((out.parent / "config.toml").read_text())["fetch"]
-    assert assignment_fetch["assignment_id"] == 42
+    # Nothing is written to the (missing) assignment config.
+    assert not (out.parent / "config.toml").exists()
     # No shared global config was created (the old bug climbed to it).
     assert not (tmp_path / "data" / "config.toml").exists()
 
@@ -480,12 +480,13 @@ def test_load_config_container_without_fetch(
     assignment = write_tree(
         tmp_path,
         "data/111111/hw1/config.toml",
-        grading_config + "[fetch]\nassignment_id = 42\n",
+        grading_config,
     )
     path2, fetch2 = _load_config(assignment)
     assert path2 == assignment.resolve()
-    assert fetch2 is not None
-    assert fetch2.assignment_id == 42
+    # Assignment configs carry no [fetch] anymore; without a course config
+    # there is no fetch state.
+    assert fetch2 is None
 
     bad = write_tree(
         tmp_path,

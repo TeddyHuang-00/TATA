@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from src.canvas_fetch import (
     list_assignments,
     list_courses,
     load_env,
-    remember_fetch,
+    remember_course_fetch,
 )
 from src.cli_options import (
     AnalyzeCliOptions,
@@ -116,68 +115,63 @@ def _load_config(
     return None, None
 
 
-def _resolve_out(
-    out_arg: str | None, cfg: FetchSection | None, cfg_path: Path | None
-) -> Path:
-    out_str = (
-        out_arg if out_arg is not None else (cfg.out_dir if cfg is not None else "raw")
-    )
-    return (
-        (cfg_path.parent / out_str).resolve()
-        if cfg_path is not None
-        else Path(out_str).resolve()
-    )
+def _entry_mode(
+    cfg_path: Path | None, cfg: FetchSection | None, aid: int
+) -> str | None:
+    """Per-entry mode from the course config's [[fetch.assignments]] list.
+
+    ``cfg`` carries the list when the config is a container; when it is an
+    assignment config the list was stripped by ``load_assignment_file``, so
+    climb to the course config above it. None when the entry (or any course
+    config) is absent — callers fall back to the course mode.
+    """
+    entries = cfg.assignments if cfg is not None else []
+    if not entries and cfg_path is not None and not _is_container(cfg_path):
+        course_cfg = find_root_config(cfg_path)
+        if course_cfg is not None:
+            course_fetch = load_root_section(course_cfg, "fetch", FetchSection)
+            entries = course_fetch.assignments if course_fetch is not None else []
+    for entry in entries:
+        if entry.id == aid:
+            return entry.mode
+    return None
 
 
 def _remember(
-    out: Path,
     cfg_path: Path | None,
     course_id: int,
     assignment_id: int,
     mode: str,
 ) -> None:
-    """Persist fetch state: course-level keys in the course config.toml,
-    assignment-level keys in the assignment config.toml. A container config
-    (course/global) writes course-level keys to itself and assignment-level
-    keys to the assignment config next to the output dir. Without a course
-    config everything goes into the assignment config."""
+    """Persist fetch state into the course config only: a container config
+    (course/global) is its own course config, anything else climbs to the
+    course config above it. Without a course config nothing is written —
+    the fetch was ad-hoc and a hint points where the [[fetch.assignments]]
+    entry would go. Never writes assignment configs or [fetch].mode."""
+    course_cfg = None
     if cfg_path is not None:
         cfg_path = cfg_path.resolve()
-        # Container config (course/global): its own [fetch] is the course-level
-        # memory — never climb up. find_root_config from a course config would
-        # land on the global (or another course's) config and misdirect keys,
-        # and the old whole-block remember_fetch would wipe the course's own
-        # course_id/mode/[[fetch.assignments]].
-        if _is_container(cfg_path):
-            remember_fetch(cfg_path, course_id=course_id, mode=mode)
-            assignment_cfg = out.parent / "config.toml"
-            remember_fetch(
-                assignment_cfg,
-                assignment_id=assignment_id,
-                out_dir=os.path.relpath(out, assignment_cfg.parent),
-            )
-            print(f"[fetch] remembered in {cfg_path} and {assignment_cfg}")
-            return
-    assignment_cfg = cfg_path if cfg_path is not None else out.parent / "config.toml"
-    course_cfg = find_root_config(assignment_cfg)
-
+        course_cfg = cfg_path if _is_container(cfg_path) else find_root_config(cfg_path)
     if course_cfg is not None:
-        remember_fetch(course_cfg, course_id=course_id, mode=mode)
-        remember_fetch(
-            assignment_cfg,
-            assignment_id=assignment_id,
-            out_dir=os.path.relpath(out, assignment_cfg.parent),
-        )
-        print(f"[fetch] remembered in {course_cfg} and {assignment_cfg}")
-    else:
-        remember_fetch(
-            assignment_cfg,
+        # Don't bake the course-default mode into the entry: an entry whose
+        # mode equals the course config's [fetch].mode records no mode, so
+        # later fetches keep following the course default (mode != course
+        # mode or no course config -> record per the old rule).
+        course_fetch = load_root_section(course_cfg, "fetch", FetchSection)
+        entry_mode = mode
+        if course_fetch is not None and course_fetch.mode == mode:
+            entry_mode = None
+        remember_course_fetch(
+            course_cfg,
             course_id=course_id,
-            assignment_id=assignment_id,
-            out_dir=os.path.relpath(out, assignment_cfg.parent),
-            mode=mode,
+            entry=(assignment_id, entry_mode),
         )
-        print(f"[fetch] remembered in {assignment_cfg}")
+        print(f"[fetch] remembered in {course_cfg}")
+    else:
+        print(
+            "[fetch] not remembered: no course config found — add "
+            "[[fetch.assignments]] to data/<course>/config.toml"
+        )
 
 
 def _fetch_entries(  # ruff: ignore[too-many-arguments]
@@ -194,22 +188,21 @@ def _fetch_entries(  # ruff: ignore[too-many-arguments]
     (course_id, assignment_id) is skipped — global and course configs may
     both carry the same assignment in a mixed tree."""
     for entry in cfg.assignments:
-        if assignment_filter is not None and entry.assignment_id != assignment_filter:
+        if assignment_filter is not None and entry.id != assignment_filter:
             continue
         if seen is not None:
-            key = (course_id, entry.assignment_id)
+            key = (course_id, entry.id)
             if key in seen:
                 print(
-                    f"[fetch] skip {entry.assignment_id} "
-                    f"(already fetched by course {course_id})"
+                    f"[fetch] skip {entry.id} (already fetched by course {course_id})"
                 )
                 continue
             seen.add(key)
-        out = (cfg_path.parent / entry.out).resolve()
+        out = (cfg_path.parent / str(entry.id) / "raw").resolve()
         fetch_assignment(
             canvas,
             course_id,
-            entry.assignment_id,
+            entry.id,
             out,
             entry.mode or cfg.mode,
         )
@@ -264,46 +257,16 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
         if _fetch_course(canvas, config_path, course_filter, assignment_filter, seen):
             fetched_any = True
     if fetched_any:
-        # Course-level lists are the source of truth; the fallback only serves
-        # a legacy two-level tree without a root (course) list.
+        # Course-level lists are the source of truth.
         return
-
-    # Fallback: per-assignment configs recorded before the course-level list
-    # existed — legacy two-level layout (data/*/config.toml) and
-    # three-level (data/*/*/config.toml).
-    targets = []
-    seen_paths: set[Path] = set()
-    for raw_path in sorted([
-        *root.glob("data/*/config.toml"),
-        *root.glob("data/*/*/config.toml"),
-    ]):
-        config_path = raw_path.resolve()
-        if config_path in seen_paths:
-            continue
-        seen_paths.add(config_path)
-        try:
-            cfg = load_assignment_file(config_path).fetch
-        except (ValueError, FileNotFoundError):
-            continue
-        if cfg is None or cfg.course_id is None or cfg.assignment_id is None:
-            continue
-        if course_filter is not None and cfg.course_id != course_filter:
-            continue
-        if assignment_filter is not None and cfg.assignment_id != assignment_filter:
-            continue
-        targets.append((config_path, cfg))
-    if not targets:
-        sys.exit(
-            "no assignment configs with a [fetch] section matched; "
-            "add [[fetch.assignments]] entries to a course config "
-            "(data/<course>/config.toml)"
-        )
-    for config_path, cfg in targets:
-        out = cfg.resolve_out_dir(config_path.parent)
-        fetch_assignment(canvas, cfg.course_id, cfg.assignment_id, out, cfg.mode)
+    sys.exit(
+        "no course configs with a [[fetch.assignments]] list matched; "
+        "add [[fetch.assignments]] entries to a course config "
+        "(data/<course>/config.toml)"
+    )
 
 
-def _pick_interactive(out_default: Path, mode: str) -> None:
+def _pick_interactive(mode: str) -> None:
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
 
@@ -316,9 +279,9 @@ def _pick_interactive(out_default: Path, mode: str) -> None:
     course_id = _ask_choice(courses, "course")
     assignments = list_assignments(canvas, course_id)
     assignment_id = _ask_choice(assignments, "assignment")
-    out = Path(input(f"Output dir [{out_default}]: ") or out_default).resolve()
+    out = (Path.cwd() / str(assignment_id) / "raw").resolve()
     fetch_assignment(canvas, course_id, assignment_id, out, mode)
-    _remember(out, None, course_id, assignment_id, mode)
+    _remember(None, course_id, assignment_id, mode)
 
 
 def _ask_choice(items: list[tuple[int, str]], title: str) -> int:
@@ -346,7 +309,7 @@ def _ask_number(prompt: str, count: int, default: int) -> int:
         print(f"Enter a number between 1 and {count}.")
 
 
-def _run_fetch(args: FetchCliOptions) -> None:
+def _run_fetch(args: FetchCliOptions) -> None:  # ruff: ignore[PLR0912]
     if args.retry:
         _retry_fetch(args.course, args.assignment)
         return
@@ -361,9 +324,9 @@ def _run_fetch(args: FetchCliOptions) -> None:
         and cfg.course_id is not None
         and cfg.assignments
     ):
-        if args.out is not None or args.mode != "auto":
+        if args.mode != "auto":
             print(
-                "warning: --out/--mode are ignored with a root "
+                "warning: --mode is ignored with a root "
                 "[[fetch.assignments]] list; each entry defines its own",
                 file=sys.stderr,
             )
@@ -373,42 +336,58 @@ def _run_fetch(args: FetchCliOptions) -> None:
         _fetch_entries(canvas, cfg.course_id, cfg_path, cfg)
         return
 
-    if args.course is not None or args.assignment is not None:
-        course_id: int = args.course
-        assignment_id: int = args.assignment
-    elif (
-        cfg is not None and cfg.course_id is not None and cfg.assignment_id is not None
-    ):
-        course_id = cfg.course_id
-        assignment_id = cfg.assignment_id
-    elif cfg is not None and cfg.course_id is not None:
-        # Course known from the root config; pick the assignment interactively.
+    course_id = (
+        args.course
+        if args.course is not None
+        else (cfg.course_id if cfg is not None else None)
+    )
+    if course_id is None:
+        _pick_interactive(args.mode)
+        return
+
+    # The out dir for a single fetch: assignment config -> <dir>/raw;
+    # course config (or no config) -> <course (cwd)>/<aid>/raw.
+    is_container = cfg_path is not None and _is_container(cfg_path)
+
+    # Assignment id: positional > numeric assignment dir name > interactive.
+    # Interactive only with no config or a container (course/global) config —
+    # an assignment config with a non-numeric dir name has no id to derive,
+    # and reading the terminal hangs under the TUI worker.
+    if args.assignment is not None:
+        assignment_id = args.assignment
+    elif cfg_path is not None and not is_container and cfg_path.parent.name.isdigit():
+        assignment_id = int(cfg_path.parent.name)
+    elif cfg_path is None or is_container:
         base_url, token = load_env()
         canvas = Canvas(base_url, token)
-        assignments = list_assignments(canvas, cfg.course_id)
+        assignments = list_assignments(canvas, course_id)
         if not sys.stdin.isatty():
             _print_options("assignments", assignments)
             sys.exit("provide --assignment, or run in a terminal to pick interactively")
-        course_id = cfg.course_id
         assignment_id = _ask_choice(assignments, "assignment")
-        assert cfg_path is not None  # cfg non-None implies a config was found
-        if args.out is None:
-            out = (cfg_path.parent / str(assignment_id) / "raw").resolve()
-        else:
-            out = Path(args.out).resolve()
     else:
-        _pick_interactive(_resolve_out(args.out, None, None), args.mode)
-        return
+        sys.exit(
+            "assignment dir name is not a numeric id — pass "
+            "--course/--assignment (or migrate dirs to assignment ids "
+            "with python -m src.aliases migrate <course_dir>)"
+        )
 
-    out = _resolve_out(args.out, cfg, cfg_path)
-    mode = (
-        args.mode if args.mode != "auto" else (cfg.mode if cfg is not None else "auto")
-    )
+    if cfg_path is None:
+        out = (Path.cwd() / str(assignment_id) / "raw").resolve()
+    elif is_container:
+        out = (cfg_path.parent / str(assignment_id) / "raw").resolve()
+    else:
+        out = (cfg_path.parent / "raw").resolve()
+    mode = args.mode
+    if mode == "auto":
+        mode = _entry_mode(cfg_path, cfg, assignment_id) or (
+            cfg.mode if cfg is not None else "auto"
+        )
 
     base_url, token = load_env()
     canvas = Canvas(base_url, token)
     fetch_assignment(canvas, course_id, assignment_id, out, mode)
-    _remember(out, cfg_path, course_id, assignment_id, mode)
+    _remember(cfg_path, course_id, assignment_id, mode)
 
 
 # --- config set subcommand ---

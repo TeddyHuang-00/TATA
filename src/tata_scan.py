@@ -210,7 +210,7 @@ def scan_assignments(
             AssignmentInfo(
                 dir_name=entry.name,
                 config_path=cfg,
-                assignment_id=_fetch_id(cfg, "assignment_id"),
+                assignment_id=(int(entry.name) if entry.name.isdecimal() else None),
                 counts=counts,
                 stage_mtime=mtimes,
                 last_run=max(mtimes.values()) if mtimes else None,

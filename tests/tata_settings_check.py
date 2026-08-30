@@ -40,8 +40,7 @@ course_id = 111111
 mode = "attach"
 
 [[fetch.assignments]]
-assignment_id = 1001
-out = "a1/raw"
+id = 1001
 """
 
 ASSIGNMENT_TOML = """[grading]
@@ -49,9 +48,6 @@ rubric = "rubrics/a1.toml"
 system_prompt = "prompt/system.md"
 provider = "ollama"
 max_parallel_tasks = 4
-
-[fetch]
-assignment_id = 1001
 
 [assignment]
 raw_dir = "incoming"
@@ -119,8 +115,8 @@ def _check_dump_roundtrip() -> None:
             "course_id": 111111,
             "mode": "attach",
             "assignments": [
-                {"assignment_id": 1001, "out": "a1/raw"},
-                {"assignment_id": 1002, "mode": "text", "out": "b1/raw"},
+                {"id": 1001},
+                {"id": 1002, "mode": "text"},
             ],
         },
         "plagiarism": {
@@ -183,7 +179,7 @@ async def _check_course_only(root: Path) -> None:
         assert screen.query_one("#f-grading-rubric", Input).disabled
         assert screen.query_one("#f-assignment-raw_dir", Input).disabled
         assert not screen.query_one("#f-plagiarism-copydetect_weight", Input).disabled
-        assert "a1/raw" in str(screen.query_one("#canvas-fetch-list", Static).content)
+        assert "1001" in str(screen.query_one("#canvas-fetch-list", Static).content)
 
 
 async def _check_assignment_load_and_save(root: Path) -> None:
@@ -286,7 +282,7 @@ async def _check_course_edit(root: Path) -> None:
         assert saved_course["fetch"]["mode"] == "text"
         assert saved_course["fetch"]["course_id"] == 111111
         assert len(saved_course["fetch"]["assignments"]) == 1
-        assert saved_course["fetch"]["assignments"][0]["out"] == "a1/raw"
+        assert saved_course["fetch"]["assignments"][0]["id"] == 1001
         load_assignment_file(root / _ASSIGNMENT_CFG)  # still parses
 
 

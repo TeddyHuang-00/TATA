@@ -500,14 +500,10 @@ class DashboardScreen(Vertical):
         if not isinstance(value, tuple):
             return
         try:
-            aid, out, mode = value  # type: ignore[misc]
+            aid, mode = value  # type: ignore[misc]
         except (TypeError, ValueError):
             return
-        if (
-            not isinstance(aid, int)
-            or not isinstance(out, str)
-            or not isinstance(mode, str)
-        ):
+        if not isinstance(aid, int) or not isinstance(mode, str):
             return
         course = self.state.current_course
         if course is None or course.course_id is None:
@@ -517,19 +513,18 @@ class DashboardScreen(Vertical):
         )  # type: ignore[assignment]
         self._start_job(
             "fetch",
-            partial(self._fetch_one, course, aid, out, mode_val),
+            partial(self._fetch_one, course, aid, mode_val),
             after=self._rescan_course,
         )
 
     @staticmethod
     def _fetch_one(
-        course: CourseInfo, aid: int, out: str, mode: Literal["attach", "text", "auto"]
+        course: CourseInfo, aid: int, mode: Literal["attach", "text", "auto"]
     ) -> None:
         main_mod._run_fetch(
             FetchCliOptions(
                 course=course.course_id,
                 assignment=aid,
-                out=f"{out}/raw",
                 config=course.config_path,
                 mode=mode,
             )
@@ -537,8 +532,8 @@ class DashboardScreen(Vertical):
         # M3: record the assignment in the course config's [[fetch.assignments]]
         # so fetch-all (F) picks it up later. CLI's _remember does not maintain
         # that list; a plain append lands in [fetch] (TOML table headers are
-        # absolute). Dedup on assignment_id; skip when the config is unreadable
-        # — the fetch itself already succeeded.
+        # absolute). Dedup on id (legacy assignment_id key also accepted);
+        # skip when the config is unreadable — the fetch already succeeded.
         cfg_path = course.config_path
         try:
             doc = tomlkit.parse(cfg_path.read_text(encoding="utf-8"))
@@ -549,19 +544,21 @@ class DashboardScreen(Vertical):
             fetch.get("assignments") if isinstance(fetch, MutableMapping) else None
         )
         if isinstance(entries, list) and any(
-            isinstance(e, dict) and e.get("assignment_id") == aid for e in entries
+            isinstance(e, dict)
+            and (e.get("id") == aid or e.get("assignment_id") == aid)
+            for e in entries
         ):
             return
+        entry: dict[str, object] = {"id": aid}
+        if mode != "auto":
+            entry["mode"] = mode
         if isinstance(fetch, MutableMapping):
             if "assignments" not in fetch:
                 fetch["assignments"] = tomlkit.aot()
-            fetch["assignments"].append({"assignment_id": aid, "out": f"{out}/raw"})
+            fetch["assignments"].append(entry)
         else:
             doc["fetch"] = {"assignments": tomlkit.aot()}
-            doc["fetch"]["assignments"].append({
-                "assignment_id": aid,
-                "out": f"{out}/raw",
-            })
+            doc["fetch"]["assignments"].append(entry)
         cfg_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
     def _rescan_course(self) -> None:
@@ -598,8 +595,9 @@ class DashboardScreen(Vertical):
         """Course [fetch] section via ``src/cli.py``'s loader (empty list -> None).
 
         Mirrors the CLI's root-config model exactly: ``[[fetch.assignments]]``
-        entries with ``out`` (already '<aid>/raw') and ``mode`` falling back to
-        the root [fetch] mode.
+        entries carry ``id`` with an optional ``mode`` falling back to the
+        course [fetch] mode; the fetch output dir is derived
+        (``<course dir>/<id>/raw``), not stored.
         """
         try:
             cfg = main_mod._root_fetch(course.config_path)
@@ -618,13 +616,13 @@ class DashboardScreen(Vertical):
             return
         targets: list[dict] = []
         for entry in cfg.assignments:
-            # Alias-aware label; the out path's parent dir names the
-            # assignment (e.g. '2978557') — raw paths are never shown.
+            # Alias-aware label; the assignment id names the dir (e.g.
+            # '2978557') — raw paths are never shown.
             label = assignment_display_name(
                 self.state.assignments_dir,
                 course.dir_name,
-                Path(entry.out).parent.name or str(entry.assignment_id),
-                entry.assignment_id,
+                str(entry.id),
+                entry.id,
             )
             targets.append({
                 "label": label,
@@ -647,8 +645,7 @@ class DashboardScreen(Vertical):
                     main_mod._run_fetch(
                         FetchCliOptions(
                             course=course_id,
-                            assignment=entry.assignment_id,
-                            out=entry.out,  # entry.out already ends in '/raw'
+                            assignment=entry.id,
                             config=config_path,
                             mode=entry.mode or cfg.mode,
                         )
@@ -974,16 +971,13 @@ class ImportCourseModal(_ImportBase):
 
 
 class ImportAssignmentModal(_ImportBase):
-    """Import an assignment: Canvas assignment + out dir + fetch mode; fetch job after."""
+    """Import an assignment: Canvas assignment + fetch mode; fetch job after."""
 
     @override
     def compose(self) -> ComposeResult:
         with Vertical(classes="confirm-modal"):
             yield Static("[b]Import assignment from Canvas[/b]")
             yield Select([("Loading…", -1)], id="modal-assignment", allow_blank=False)
-            yield Input(
-                placeholder="Output dir (default: assignment id)", id="modal-out"
-            )
             yield RadioSet(
                 RadioButton("attach", id="mode-attach"),
                 RadioButton("text", id="mode-text"),
@@ -1024,10 +1018,6 @@ class ImportAssignmentModal(_ImportBase):
         select.set_options([(f"{aid} — {name}", aid) for aid, name in self._items])
         select.value = self._items[0][0]
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "modal-assignment" and event.value not in {None, -1}:
-            self.query_one("#modal-out", Input).value = str(event.value)
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss(None)
@@ -1040,7 +1030,6 @@ class ImportAssignmentModal(_ImportBase):
             self.app.notify("No assignment selected", severity="error")
             return
         aid = select.value
-        out = self.query_one("#modal-out", Input).value.strip() or str(aid)
         mode_set: RadioSet = self.query_one("#modal-mode", RadioSet)
         pressed = mode_set.pressed_button
         mode: Literal["attach", "text", "auto"] = (
@@ -1053,10 +1042,10 @@ class ImportAssignmentModal(_ImportBase):
             self.app.notify("No course selected", severity="error")
             return
         course_dir = self.state.assignments_dir / course.dir_name
-        if (course_dir / out).exists():
-            self.app.notify(f"Directory already exists: {out}", severity="error")
+        if (course_dir / str(aid)).exists():
+            self.app.notify(f"Already imported: {aid}", severity="error")
             return
-        self.dismiss((aid, out, mode))
+        self.dismiss((aid, mode))
 
 
 class TataApp(App[None]):

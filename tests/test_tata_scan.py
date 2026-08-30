@@ -99,6 +99,20 @@ def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> No
     assert courses[0].flagged_pairs == 1  # flags use the 80.0 default
 
 
+def test_assignment_id_from_numeric_dir_name(tmp_path: Path) -> None:
+    """Assignment identity = the numeric dir name; non-numeric dirs -> None."""
+    from src.tata_scan import scan_assignments
+
+    course = tmp_path / "data" / "111111"
+    for name in ("222222", "legacy-name"):
+        (course / name).mkdir(parents=True)
+        (course / name / "config.toml").write_text("", encoding="utf-8")
+    infos = scan_assignments(course)
+    by_name = {i.dir_name: i.assignment_id for i in infos}
+    assert by_name["222222"] == 222222
+    assert by_name["legacy-name"] is None
+
+
 def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     """MINOR-7: a .env missing either key must not short-circuit the walk."""
     from src.tata_app import _env_status

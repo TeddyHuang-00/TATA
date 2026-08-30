@@ -33,8 +33,6 @@ from pathlib import Path
 
 import tomlkit
 
-from src.assignment_config import FetchSection, load_root_section
-
 SECTIONS = ("course", "assignment", "student")
 
 # roster.csv columns: user_id, user_name, sortable_name, file (file optional)
@@ -120,10 +118,12 @@ def assignment_display_name(
     aliases = load_alias_chain(
         _section_paths(assignments_dir, course_dir_name, dir_name)
     )
-    if assignment_id is not None:
-        name = lookup(aliases, "assignment", str(assignment_id))
-        if name:
-            return name
+    # Alias key: the assignment identity is the dir name (id-keyed aliases
+    # only resolve when the dir name is numeric — the post-cleanup layout).
+    key = str(assignment_id) if assignment_id is not None else dir_name
+    name = lookup(aliases, "assignment", key)
+    if name:
+        return name
     return dir_name
 
 
@@ -203,10 +203,10 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
 # -- one-time migration: dir names -> assignment ids -----------------------
 
 
-def _patch_out_entries(doc: tomlkit.TOMLDocument, old: str, new: str) -> bool:
-    """Rewrite ``[[fetch.assignments]]`` ``out`` values naming ``old`` to
-    ``new`` (both the bare dir and ``<old>/raw`` shapes the old str.replace
-    covered); returns True when anything changed."""
+def _normalize_entries(doc: tomlkit.TOMLDocument) -> bool:
+    """Rewrite ``[[fetch.assignments]]`` entries to the id-only shape:
+    ``assignment_id`` -> ``id``, ``out`` dropped. Returns True when anything
+    changed."""
     fetch = doc.get("fetch")
     if not isinstance(fetch, MutableMapping):
         return False
@@ -217,25 +217,40 @@ def _patch_out_entries(doc: tomlkit.TOMLDocument, old: str, new: str) -> bool:
     for entry in entries:
         if not isinstance(entry, MutableMapping):
             continue
-        out = entry.get("out")
-        if out == old:
-            entry["out"] = new
+        if "assignment_id" in entry:
+            entry["id"] = entry.pop("assignment_id")
             changed = True
-        elif out == f"{old}/raw":
-            entry["out"] = f"{new}/raw"
+        if "out" in entry:
+            del entry["out"]
             changed = True
     return changed
 
 
-def _fetch_assignment_id(config_path: Path) -> int | None:
+def _course_entries(course_config: Path) -> tuple[list[int], bool]:
+    """(sorted ids, needs normalization) of a course config's
+    ``[[fetch.assignments]]`` list; ([], False) on a missing/unreadable
+    file. Ids accept either key shape (``id`` or legacy ``assignment_id``)."""
     try:
-        fetch = load_root_section(config_path, "fetch", FetchSection)
-    except (OSError, ValueError):
-        return None
-    if fetch is None:
-        return None
-    aid = fetch.assignment_id
-    return aid if isinstance(aid, int) and not isinstance(aid, bool) else None
+        doc = tomlkit.parse(course_config.read_text(encoding="utf-8"))
+    except (OSError, tomlkit.exceptions.ParseError):
+        return [], False
+    fetch = doc.get("fetch")
+    if not isinstance(fetch, MutableMapping):
+        return [], False
+    entries = fetch.get("assignments")
+    if not isinstance(entries, list):
+        return [], False
+    ids: list[int] = []
+    needs_norm = False
+    for entry in entries:
+        if not isinstance(entry, MutableMapping):
+            continue
+        value = entry.get("id") or entry.get("assignment_id")
+        if isinstance(value, int) and not isinstance(value, bool):
+            ids.append(value)
+        if "assignment_id" in entry or "out" in entry:
+            needs_norm = True
+    return sorted(ids), needs_norm
 
 
 def _roster_entries(roster: Path) -> dict[str, str]:
@@ -260,34 +275,86 @@ def _seed_section(alias_path: Path, table: str, key: str, value: str) -> None:
     _write_doc(alias_path, doc)
 
 
-def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[str]:
-    """ONE-TIME migration: rename each child dir to its str(assignment_id),
-    patch the course config's ``[[fetch.assignments]]`` ``out`` paths, seed
-    the course alias.toml ``[assignment]`` and the assignment alias.toml
-    ``[student]`` from roster.csv, then delete roster.csv.
+def _resolve_renames(
+    course_dir: Path,
+    course_config: Path,
+    pending_dirs: list[str],
+    entry_ids: list[int],
+) -> tuple[list[tuple[Path, str, dict[str, str]]], list[str]]:
+    """Map non-numeric dirs to course-list ids by index order (sorted dirs
+    vs sorted entries). Returns (targets, ambiguity messages): when the
+    counts differ or an id already names a child dir, no targets and a
+    report message (the dirs are left unchanged)."""
+    if len(pending_dirs) != len(entry_ids):
+        return [], [
+            f"ambiguous: {len(pending_dirs)} named dirs vs {len(entry_ids)} "
+            f"[[fetch.assignments]] entries in {course_config}; "
+            "dirs left unchanged"
+        ]
+    occupied = {
+        child.name
+        for child in course_dir.iterdir()
+        if child.is_dir() and child.name.isdigit()
+    }
+    if any(str(aid) in occupied for aid in entry_ids):
+        return [], [
+            f"ambiguous: an id in {course_config} already names a child dir; "
+            "dirs left unchanged"
+        ]
+    targets = []
+    for child_name, aid in zip(pending_dirs, entry_ids, strict=True):
+        child = course_dir / child_name
+        roster = child / "roster.csv"
+        targets.append((
+            child,
+            str(aid),
+            _roster_entries(roster) if roster.is_file() else {},
+        ))
+    return targets, []
 
-    Returns one description string per intended action; with ``dry_run=True``
-    it only reports and changes nothing. Idempotent: once every child dir is
-    named after its id, the second run yields no actions.
+
+def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[str]:
+    """ONE-TIME migration: rename each non-numeric child dir to its
+    str(assignment_id), normalize the course config's ``[[fetch.assignments]]``
+    entries (assignment_id -> id, drop out), seed the course alias.toml
+    ``[assignment]`` and the assignment alias.toml ``[student]`` from
+    roster.csv, then delete roster.csv.
+
+    Ids come from the course config's list, matched to dirs by index order
+    (sorted dirs vs sorted entries) — assignment configs no longer carry
+    [fetch]. A count mismatch or a collision with an already-numeric dir is
+    ambiguous: the dirs are left unchanged and reported. Returns one
+    description string per intended action; with ``dry_run=True`` it only
+    reports and changes nothing. Idempotent: once every child dir is named
+    after its id, the second run yields no actions.
     """
     course_config = course_dir / "config.toml"
+    entry_ids, needs_norm = _course_entries(course_config)
+    pending = sorted(
+        child.name
+        for child in course_dir.iterdir()
+        if child.is_dir()
+        and not child.name.isdigit()
+        and (child / "config.toml").is_file()
+    )
+
     targets: list[tuple[Path, str, dict[str, str]]] = []
-    for child in sorted(course_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        aid = _fetch_assignment_id(child / "config.toml")
-        if aid is None or child.name == str(aid):
-            continue
-        new_name = str(aid)
-        roster = child / "roster.csv"
-        entries = _roster_entries(roster) if roster.is_file() else {}
-        targets.append((child, new_name, entries))
+    if pending:
+        targets, ambiguity = _resolve_renames(
+            course_dir, course_config, pending, entry_ids
+        )
+        if ambiguity:
+            return ambiguity
 
     actions: list[str] = []
+    if needs_norm:
+        actions.append(
+            "normalize [[fetch.assignments]] (assignment_id -> id, drop out) "
+            f"in {course_config}"
+        )
     for child, new_name, entries in targets:
         actions.extend([
             f"rename {child} -> {child.with_name(new_name)}",
-            f'patch "{child.name}/raw" -> "{new_name}/raw" in {course_config}',
             f'seed [assignment] "{new_name}" = "{child.name}" in '
             f"{course_dir / 'alias.toml'}",
         ])
@@ -301,19 +368,20 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
     if dry_run:
         return actions
 
+    if course_config.is_file():
+        try:
+            config_doc = tomlkit.parse(course_config.read_text(encoding="utf-8"))
+            if _normalize_entries(config_doc):
+                _write_doc(course_config, config_doc)
+        except (OSError, tomlkit.exceptions.ParseError):
+            # ponytail: unreadable/corrupt course config -> leave it alone
+            # (the old blind str.replace would have rewritten a corrupt file
+            # anyway).
+            pass
+
     for child, new_name, entries in targets:
         child.rename(child.with_name(new_name))
         migrated = child.with_name(new_name)
-        if course_config.is_file():
-            try:
-                config_doc = tomlkit.parse(course_config.read_text(encoding="utf-8"))
-                if _patch_out_entries(config_doc, child.name, new_name):
-                    _write_doc(course_config, config_doc)
-            except (OSError, tomlkit.exceptions.ParseError):
-                # ponytail: unreadable/corrupt course config -> leave it
-                # alone (the old blind str.replace would have rewritten a
-                # corrupt file anyway).
-                pass
         _seed_section(course_dir / "alias.toml", "assignment", new_name, child.name)
         if entries:
             upsert_student_aliases(migrated, entries)

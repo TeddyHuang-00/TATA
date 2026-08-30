@@ -89,7 +89,7 @@
 
 | 动作 | 键 | 等价 CLI | 行为 |
 |------|----|---------|------|
-| 导入作业 | `c` | `fetch` 交互选择 | Modal 选 Canvas 作业 + out/mode → 单作业 fetch → 写 course config 的 `[[fetch.assignments]]` |
+| 导入作业 | `c` | `fetch` 交互选择 | Modal 选 Canvas 作业 + mode → 单作业 fetch → 写 course config 的 `[[fetch.assignments]]`（`id` 条目） |
 | fetch 全部 | `F` | `fetch -c data/<course>/config.toml` | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」 |
 | 查重+聚合 | `p` | `plagiarism -c data/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏 |
 | 课程配置 | `cfg` | — | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/mode/`[[fetch.assignments]]`/[plagiarism] 覆盖） |
@@ -122,7 +122,7 @@ Assignment 层新增职责（相对 v1 的 S2）：
 | `enter` | Global/Course | Drill down one level | Global→Course→Assignment; inside Assignment 'enter' unused (02 has no enter binding) |
 | `esc` / `backspace` | Course/Assignment | Drill up one level | Assignment→Course→Global; at Global top esc closes Modal or is ignored |
 | `c` | Global | Import course | Modal: pick Canvas course → create `data/<dir>/config.toml` → enter Course view |
-| `c` | Course | Import assignment | Modal: pick assignment + out + mode → fetch → append to course config |
+| `c` | Course | Import assignment | Modal: pick assignment + mode → fetch → append to course config (`id` entry) |
 | `F` | Course | Fetch all | Per-assignment cache skip (`.fetch-cache.json`) |
 | `p` | Course | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to S4 |
 | `cfg` | Course | Course config | Switch to S5 (context=Course) |
@@ -145,7 +145,7 @@ Assignment 层新增职责（相对 v1 的 S2）：
 
 ### 6.2 导入作业 / fetch 全部 / 查重+聚合（course 内）
 ```
-Course 视图 [c] → Modal(Canvas 作业 Select + Input(out) + RadioSet(mode))
+Course 视图 [c] → Modal(Canvas 作业 Select + RadioSet(mode))
     → 确认 → job: _run_fetch(单作业 FetchCliOptions) → remember_fetch 写 course config 清单
     → 完成 notify + 重扫
 Course 视图 [F] → Confirm Modal「Fetch course 6 assignments (126 submissions, cached skipped)」
@@ -206,7 +206,7 @@ cp data/config.toml data/271218/config.toml
 rm -r data/0-10-* data/1-1-* data/1-6-* \
       data/1-7-* data/1-10-* data/1-11-* data/config.toml
 ```
-- `[[fetch.assignments]].out` 值**不变**（相对 course config 解析：`1-6-…/raw` 在新位置下仍对）
+- `[[fetch.assignments]]` 条目存 `id`（无 `out`）：fetch 输出目录恒为 `<course dir>/<id>/raw`（派生于 id，不存储）
 - 迁移后 `data/config.toml` 若保留 = **global config**（可选，全局默认；无它时三层退化为两层）
 - course 目录名：默认 course_id（`271218`），任意唯一目录名 + config 内 course_id 亦可
 - 现有 `find_root_config`（`parent.parent/config.toml`）在迁移后**自动**指向 course config，无需修改；`load_assignment_file` 需增加第三层合并（global，可选）

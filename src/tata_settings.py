@@ -576,7 +576,8 @@ class SettingsScreen(Vertical):
             assigns = (raw.get("fetch") or {}).get("assignments")
             if isinstance(assigns, list) and assigns:
                 entries = [
-                    f"  {entry.get('assignment_id')} -> {entry.get('out')}"
+                    f"  {entry.get('id') or entry.get('assignment_id')}"
+                    + (f"  [{entry.get('mode')}]" if entry.get("mode") else "")
                     for entry in assigns
                     if isinstance(entry, dict)
                 ]
