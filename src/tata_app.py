@@ -39,10 +39,12 @@ from textual.widgets import (
     TabPane,
 )
 
+from src.assignment_config import FetchSection
 from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
 from src.plagiarism import detect_plagiarism
 from src.score_review import ScoreReviewScreen
+from src.tata_alias import assignment_display_name
 from src.tata_plagiarism import PlagiarismScreen
 from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
 from src.tata_settings import SettingsScreen
@@ -170,6 +172,10 @@ class DashboardScreen(Vertical):
         self._last_dir: dict[str, str] = {}
         self._filter: str | None = None  # course-level state filter
         self._job: dict | None = None  # minimal job protocol (see _start_job)
+        # Per-target state of the last/current fetch-all (F) run; None = panel
+        # hidden. Each entry: {"label", "state", "err", "seconds"}.
+        self._fetch_progress: list[dict] | None = None
+        self._fetch_done = False  # fetch-all completed; panel stays visible
 
     @override
     def compose(self) -> ComposeResult:
@@ -178,6 +184,9 @@ class DashboardScreen(Vertical):
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
         yield AssignmentScreen(self.state)
+        progress: Static = Static(id="dash-progress", markup=True)
+        progress.display = False  # fetch-all panel; shown by fetch-all only
+        yield progress
         yield Static(id="dash-status", markup=True)
 
     def on_mount(self) -> None:
@@ -311,6 +320,14 @@ class DashboardScreen(Vertical):
             status.update(
                 "enter=Drill down   esc/backspace=Up one level   r=Rescan   q=Quit"
             )
+        # Fetch-all progress panel: live during the run and after completion;
+        # hidden on any level/navigation change (course level only). A new
+        # non-fetch-all job also clears _fetch_progress in _start_job.
+        self.query_one("#dash-progress", Static).display = (
+            state.dashboard_level == "course"
+            and self._fetch_progress is not None
+            and (self.state.active_job == "fetch-all" or self._fetch_done)
+        )
         self._restore_cursor(table)
         self._refocus()
 
@@ -518,24 +535,133 @@ class DashboardScreen(Vertical):
             self.app.notify("A job is already running", severity="warning")
             return
         course = self.state.current_course
+        cfg = self._fetch_all_section(course)
+        if cfg is None:
+            self.app.notify(
+                "No assignments configured for fetch — add [[fetch.assignments]] "
+                "to the course config",
+                severity="warning",
+            )
+            return
         self.app.push_screen(
             ConfirmationModal(
                 "Fetch all",
-                f"Fetch {course.assignment_count} assignment(s) in this course?",
+                f"Fetch {len(cfg.assignments)} assignment(s) in this course?",
                 [("Fetch", "run")],
             ),
             callback=self._on_fetch_all_confirmed,
         )
 
+    @staticmethod
+    def _fetch_all_section(course: CourseInfo) -> FetchSection | None:
+        """Course [fetch] section via main.py's loader (empty list -> None).
+
+        Mirrors the CLI's root-config model exactly: ``[[fetch.assignments]]``
+        entries with ``out`` (already '<aid>/raw') and ``mode`` falling back to
+        the root [fetch] mode.
+        """
+        try:
+            cfg = main_mod._root_fetch(course.config_path)
+        except ValueError:
+            return None
+        if cfg is None or cfg.course_id is None or not cfg.assignments:
+            return None
+        return cfg
+
     def _on_fetch_all_confirmed(self, value: object) -> None:
         if value != "run" or self.state.current_course is None:
             return
         course = self.state.current_course
-        self._start_job(
-            "fetch",
-            lambda: main_mod._run_fetch(FetchCliOptions(config=course.config_path)),
-            after=self._rescan_course,
-        )
+        cfg = self._fetch_all_section(course)
+        if cfg is None:
+            return
+        targets: list[dict] = []
+        for entry in cfg.assignments:
+            # Alias-aware label; the out path's parent dir names the
+            # assignment (e.g. '2978557') — raw paths are never shown.
+            label = assignment_display_name(
+                self.state.assignments_dir,
+                course.dir_name,
+                Path(entry.out).parent.name or str(entry.assignment_id),
+                entry.assignment_id,
+            )
+            targets.append(
+                {"label": label, "state": "pending", "err": "", "seconds": 0.0}
+            )
+        self._fetch_progress = targets
+        self._fetch_done = False
+        self._render_fetch_progress()
+        entries = list(cfg.assignments)
+        course_id = cfg.course_id
+        config_path = course.config_path
+
+        def job() -> None:  # worker thread
+            for i, entry in enumerate(entries):
+                self._mark_fetch(i, "running")
+                t0 = time.monotonic()
+                try:
+                    main_mod._run_fetch(
+                        FetchCliOptions(
+                            course=course_id,
+                            assignment=entry.assignment_id,
+                            out=entry.out,  # entry.out already ends in '/raw'
+                            config=config_path,
+                            mode=entry.mode or cfg.mode,
+                        )
+                    )
+                    self._mark_fetch(i, "done", seconds=time.monotonic() - t0)
+                except BaseException as exc:  # per-target failure: keep going
+                    self._mark_fetch(
+                        i, "failed", err=str(exc), seconds=time.monotonic() - t0
+                    )
+
+        self._start_job("fetch-all", job, after=self._rescan_course)
+
+    def _mark_fetch(
+        self,
+        index: int,
+        state: str,
+        err: str | None = None,
+        seconds: float | None = None,
+    ) -> None:  # worker thread (mutates state, renders on the main thread)
+        if self._fetch_progress is None:
+            return
+        target = self._fetch_progress[index]
+        target["state"] = state
+        if err is not None:
+            target["err"] = err
+        if seconds is not None:
+            target["seconds"] = seconds
+        self.app.call_from_thread(self._render_fetch_progress)
+
+    def _render_fetch_progress(self) -> None:  # main thread
+        if self._fetch_progress is None:
+            return
+        lines = []
+        for target in self._fetch_progress:
+            label = target["label"]
+            if target["state"] == "running":
+                lines.append(f"[yellow]▶ {label}[/yellow]")
+            elif target["state"] == "done":
+                lines.append(
+                    f"[green]✓ {label} ({target['seconds']:.1f}s)[/green]"
+                )
+            elif target["state"] == "failed":
+                # Escape markup brackets; keep the line short (no paths).
+                err = (target["err"] or "").replace("[", r"\[")[:60]
+                lines.append(f"[red]✗ {label} — {err}[/red]")
+            else:
+                lines.append(f"[dim]○ {label}[/dim]")
+        panel = self.query_one("#dash-progress", Static)
+        panel.display = True
+        panel.update("\n".join(lines))
+        if self.state.active_job == "fetch-all":
+            done = sum(
+                1 for t in self._fetch_progress if t["state"] != "pending"
+            )
+            self.query_one("#dash-status", Static).update(
+                f"Fetching {done}/{len(self._fetch_progress)}…"
+            )
 
     def action_plagiarism_run(self) -> None:
         if self.state.dashboard_level != "course" or self.state.current_course is None:
@@ -621,13 +747,17 @@ class DashboardScreen(Vertical):
     def _start_job(
         self, stage: str, fn: Callable[[], None], after: Callable[[], None] | None = None
     ) -> None:
-        """One exclusive worker thread; progress is #dash-status text only."""
+        """One exclusive worker thread; progress is #dash-status text (plus the
+        #dash-progress panel for fetch-all)."""
         if self.state.active_job is not None:
             self.app.notify(
                 f"'{self.state.active_job}' is running — finish or cancel it first",
                 severity="warning",
             )
             return
+        if stage != "fetch-all":
+            self._fetch_progress = None  # hide any stale fetch-all panel
+            self._fetch_done = False
         self.state.active_job = stage
         self._job = {"stage": stage}
         self.query_one("#dash-status", Static).update(f"Running {stage}…")
@@ -655,14 +785,38 @@ class DashboardScreen(Vertical):
         error: BaseException | None,
         after: Callable[[], None] | None,
     ) -> None:  # main thread
+        stage = self._job["stage"] if self._job else None
         self.state.active_job = None
         self._job = None
         if error is not None:
             self.query_one("#dash-status", Static).update("Job failed")
             self.app.notify(f"Job failed: {error}", severity="error")
             return
+        progress = self._fetch_progress
+        fetch_all = stage == "fetch-all" and progress is not None
+        if fetch_all:
+            self._fetch_done = True  # before after(): rescan re-renders the panel
         if after is not None:
             after()
+        if fetch_all and progress is not None:
+            done = sum(1 for t in progress if t["state"] == "done")
+            fails = len(progress) - done
+            summary = f"Fetch complete: {done}/{len(progress)} ok"
+            if fails:
+                summary += f", {fails} failed"
+            self.query_one("#dash-status", Static).update(summary)
+            if fails:
+                first_err = next(
+                    (t["err"] for t in progress if t["state"] == "failed"),
+                    "",
+                )
+                self.app.notify(
+                    f"Fetch complete: {fails} failed — {first_err}",
+                    severity="warning",
+                )
+            else:
+                self.app.notify("Fetch complete", severity="information")
+            return
         self.query_one("#dash-status", Static).update(
             f"Done in {time.monotonic() - start:.1f}s"
         )
