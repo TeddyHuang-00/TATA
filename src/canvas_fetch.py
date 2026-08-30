@@ -3,7 +3,6 @@
 # auto (detect from submissions: attachments present -> attach, else text).
 from __future__ import annotations
 
-import csv
 import json
 import operator
 import sys
@@ -12,9 +11,9 @@ from typing import Literal
 
 from canvasapi import Canvas
 
-FetchMode = Literal["attach", "text", "auto"]
+from src.tata_alias import upsert_student_aliases
 
-ROSTER_FIELDS = ["user_id", "user_name", "sortable_name", "file"]
+FetchMode = Literal["attach", "text", "auto"]
 
 
 def load_env() -> tuple[str, str]:
@@ -128,13 +127,18 @@ def fetch_assignment(
         else _fetch_text(subs, out)
     )
     rows.sort(key=operator.itemgetter("sortable_name"))
-    roster = out.parent / "roster.csv"
-    with roster.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=ROSTER_FIELDS)
-        w.writeheader()
-        w.writerows(rows)
+    aliases = {
+        r["user_id"]: (
+            r["sortable_name"]
+            if r["sortable_name"] not in {"", "?"}
+            else r["user_name"] if r["user_name"] not in {"", "?"} else r["user_id"]
+        )
+        for r in rows
+    }
+    upsert_student_aliases(out.parent, aliases)
+    alias_path = out.parent / "alias.toml"
     files = sum(1 for r in rows if r["file"])
-    print(f"{mode_resolved}: {files} submissions -> {out}/ ; roster -> {roster}")
+    print(f"{mode_resolved}: {files} submissions -> {out}/ ; alias -> {alias_path}")
     return rows
 
 

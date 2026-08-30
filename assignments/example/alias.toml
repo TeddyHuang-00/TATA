@@ -1,0 +1,13 @@
+# TATA alias.toml: optional [course]/[assignment]/[student] display names.
+# Keys are string IDs; values are display names. Merge order: global ->
+# course -> assignment (closer files win). Entries added by fetch only
+# fill missing keys (manual edits here are preserved).
+
+[course]
+"271218" = "ITCS 5153"
+
+[assignment]
+"2978557" = "First Colab"
+
+[student]
+"412607" = "Aalla, Movin Reddy"

@@ -151,8 +151,8 @@ class FetchAssignmentEntry(BaseModel):
     """One assignment in the root config's [[fetch.assignments]] list.
 
     ``out`` is the fetch output dir (raw submissions), relative to the root
-    config; the assignment root (config.toml, roster.csv, plagiarism/) is its
-    parent. ``mode`` falls back to the root [fetch] mode.
+    config; the assignment root (config.toml, alias.toml, plagiarism/) is
+    its parent. ``mode`` falls back to the root [fetch] mode.
     """
 
     assignment_id: int = Field(ge=1)

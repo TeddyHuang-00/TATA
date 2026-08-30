@@ -50,6 +50,11 @@ async def main() -> None:
         graded = Path(tmp) / "graded"
         graded.mkdir()
         _make_graded(graded)
+        # Assignment-root alias.toml supplies display names (was roster.csv).
+        (Path(tmp) / "alias.toml").write_text(
+            '[student]\n"100572" = "Aalla, A"\n"201818" = "Zed, Z"\n',
+            encoding="utf-8",
+        )
 
         # 1. platform contract: push -> render -> esc pops back
         app = _Harness()
@@ -64,6 +69,10 @@ async def main() -> None:
             assert isinstance(app.screen, ScoreReviewScreen), type(app.screen)
             review = app.screen
             assert [s["student"] for s in review.students] == ["100572", "201818"]
+            assert [s["sortable_name"] for s in review.students] == [
+                "Aalla, A",
+                "Zed, Z",
+            ]
             listing = review.query_one("#criteria-list", Static)
             assert "good work" in str(listing.content), str(listing.content)
 

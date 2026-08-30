@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 from src.canvas_fetch import fetch_assignment, remember_fetch
+from src.tata_alias import load_alias_file
 
 
 class StubAtt:
@@ -59,9 +59,8 @@ class StubCanvas:
         return StubCourse(self._assignment)
 
 
-def _roster(out: Path) -> list[dict]:
-    with (out.parent / "roster.csv").open() as f:
-        return list(csv.DictReader(f))
+def _student_aliases(out: Path) -> dict[str, str]:
+    return load_alias_file(out.parent / "alias.toml").get("student", {})
 
 
 def test_attach_mode_naming_and_cache(tmp_path: Path) -> None:
@@ -100,10 +99,14 @@ def test_attach_mode_naming_and_cache(tmp_path: Path) -> None:
     assert (out / "300.ipynb").exists()
     assert (out / "300_1.docx").exists()
     assert (out / ".fetch-cache.json").exists()
-    rows = _roster(out)
-    assert len(rows) == 5
-    assert rows[0]["file"] == "100.ipynb"
-    assert [r["file"] for r in rows if r["user_id"] == "400"] == [""]
+    aliases = _student_aliases(out)
+    assert aliases == {
+        "100": "Alpha, A",
+        "200": "Beta, B",
+        "300": "Gamma, G",
+        "400": "Empty, E",
+    }
+    assert not (out.parent / "roster.csv").exists()
 
     # Second run: unchanged attachments are not re-downloaded.
     StubAtt.downloads = 0
@@ -132,19 +135,54 @@ def test_text_mode_and_auto_detection(tmp_path: Path) -> None:
     assert (out / "100.txt").read_text() == "my answer"
     assert (out / "200_LATE_0.txt").read_text() == "late answer"
     assert not (out / "300.txt").exists()
-    rows = _roster(out)
-    assert {r["file"] for r in rows} == {"100.txt", "200_LATE_0.txt", ""}
+    assert set(_student_aliases(out)) == {"100", "200", "300"}
     assert not (out / ".fetch-cache.json").exists()
 
 
-def test_roster_sorted_by_sortable_name(tmp_path: Path) -> None:
+def test_rows_sorted_by_sortable_name(tmp_path: Path) -> None:
     out = tmp_path / "raw"
     subs = [
         StubSub(300, name="Zed, Z", sortable_name="Zed, Z"),
         StubSub(100, name="Alpha, A", sortable_name="Alpha, A"),
     ]
+    rows = fetch_assignment(StubCanvas(StubAssignment(subs)), 1, 2, out)
+    assert [r["user_id"] for r in rows] == [100, 300]
+
+
+def test_alias_name_fallbacks(tmp_path: Path) -> None:
+    out = tmp_path / "raw"
+    subs = [
+        StubSub(100, name="Name, F", sortable_name=""),
+        StubSub(200, name="?", sortable_name="?"),
+    ]
     fetch_assignment(StubCanvas(StubAssignment(subs)), 1, 2, out)
-    assert [r["user_id"] for r in _roster(out)] == ["100", "300"]
+    aliases = _student_aliases(out)
+    # empty sortable -> user_name; missing user name -> user_id
+    assert aliases["100"] == "Name, F"
+    assert aliases["200"] == "200"
+
+
+def test_upsert_preserves_manual_overrides_and_tables(tmp_path: Path) -> None:
+    out = tmp_path / "raw"
+    alias_path = out.parent / "alias.toml"
+    alias_path.write_text(
+        '# manual edits\n[course]\n"1" = "Course One"\n'
+        '[student]\n"100" = "Manual, Override"\n'
+        'unknown_key = "kept"\n',
+        encoding="utf-8",
+    )
+    subs = [
+        StubSub(100, name="Alpha, A", sortable_name="Alpha, A"),
+        StubSub(200, name="Beta, B", sortable_name="Beta, B"),
+    ]
+    fetch_assignment(StubCanvas(StubAssignment(subs)), 1, 2, out)
+    aliases = _student_aliases(out)
+    assert aliases["100"] == "Manual, Override"  # manual wins
+    assert aliases["200"] == "Beta, B"  # new key filled
+    text = alias_path.read_text()
+    assert '[course]\n"1" = "Course One"' in text
+    assert "unknown_key = " in text
+    assert "Manual, Override" in text
 
 
 def test_remember_fetch_append_and_replace(tmp_path: Path) -> None:

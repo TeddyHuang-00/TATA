@@ -2,7 +2,6 @@
 # Usage: uv run score-view <score_dir>  |  uv run main.py view <score_dir> [--web]
 from __future__ import annotations
 
-import csv
 import json
 import shlex
 import sys
@@ -34,6 +33,7 @@ from src.processing import (
     _convert_html_to_markdown,
     _convert_ipynb_to_markdown,
 )
+from src.tata_alias import student_display_name
 
 # Layout threshold: stack the panels below this width (Textual has no media
 # queries; same threshold as the discussion TUI viewer).
@@ -183,34 +183,6 @@ def _rating_sort_key(rating: str) -> tuple[int, str]:
     return (rank, lowered)
 
 
-def _find_roster(start: Path) -> Path | None:
-    for d in [start, *start.parents]:
-        candidate = d / "roster.csv"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _load_roster(roster: Path | None) -> dict[str, str]:
-    names: dict[str, str] = {}
-    if roster is None:
-        return names
-    try:
-        rows = list(csv.reader(roster.read_text(encoding="utf-8").splitlines()))
-    except OSError:
-        return names
-    # columns: user_id, user_name, sortable_name, file
-    n_cols = 3
-    n_file_cols = 4
-    for fields in rows:
-        if len(fields) >= n_cols and fields[0] != "user_id":
-            sortable = fields[2] or fields[1]
-            names[fields[0]] = sortable
-            if len(fields) >= n_file_cols and fields[3]:
-                names[Path(fields[3]).stem] = sortable
-    return names
-
-
 class ScoreReviewScreen(Screen):
     """Reusable score-review screen (shared by CLI Viewer and the platform).
 
@@ -246,10 +218,20 @@ class ScoreReviewScreen(Screen):
         # the review screen with no way back, see design/03 §3.3).
         self.pop_on_escape = pop_on_escape
         self.students = _load_students(score_dir)
-        roster = _find_roster(score_dir)
-        names = _load_roster(roster)
+        # Display names come from the alias.toml chain; the assignment root is
+        # score_dir.parent, so the chain candidates are assignment root /
+        # parent / parent.parent alias.toml files (see src.tata_alias).
+        assignment_root = score_dir.parent
+        assignments_dir = assignment_root.parent.parent
+        course_dir_name = assignment_root.parent.name
+        assignment_dir_name = assignment_root.name
         for s in self.students:
-            s["sortable_name"] = names.get(s["student"], s["student"])
+            s["sortable_name"] = student_display_name(
+                assignments_dir,
+                course_dir_name,
+                assignment_dir_name,
+                s["student"],
+            )
         # deterministic order: sortable name, then user id
         self.students.sort(key=lambda s: (s["sortable_name"].lower(), s["student"]))
         self.index = 0
