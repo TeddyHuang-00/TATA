@@ -1,8 +1,9 @@
-# TATA 设计稿 v1.1 — 04 · Plagiarism（S4）
+# TATA 设计稿 v1.2 — 04 · Plagiarism（S4）
 
-> 职责：相似度对排名表（DataTable）、行选中→对比弹窗（Modal 并排文本）、顶部聚合报告入口；**z 分数按 per-assignment 与聚合两套呈现**；上下文=当前 course（跨作业聚合）或当前作业（单作业对）
+> 职责：course 级查重屏 —— 4-tab（Aggregate / Assignments / Students / Pairs）排名表（DataTable）+ Pairs 内嵌对比面板 `#cmp-pane`；`[p]` 检测 / `[a]` 聚合 job 按钮；z 分数按 per-assignment 与聚合两套呈现
+> v1.2 (2026-08-30 update)：S4 重构为 course 级 4-tab（Aggregate 默认 / Assignments / Students / Pairs）；对比改为 Pairs 面板内嵌 `#cmp-pane`（行高亮即时更新，no push_screen，CompareModal 已删除）；检测/聚合 quiet 运行（不打印纯文本报告，TUI 只读 JSON）；display 阈值唯一来源 = course config `[plagiarism].display_threshold`（默认 0.8，容错读取；z 聚合仍按 alpha）；「embedding 列/二次 Tab」不存在，未实现
 > v1.1 变更：顶部标题显示课程上下文；`[a]` 聚合键驱动 **course config**（`data/<course>/config.toml` 的 `[[fetch.assignments]]`），不再是 data/ 根配置；聚合只在本 course 内（跨课程聚合 v1 不做，YAGNI）
-> 数据来源：`plagiarism/all_pairs.json`（copydetect：`{test_file, reference_file, test_similarity_pct, reference_similarity_pct, max_similarity_pct, token_overlap}`）、`all_pairs.embedding.json`（嵌入向量来源），聚合报告来自 `plagiarism_aggregate`（`MatchRecord{student_a, student_b, raw_similarity_pct, logit_similarity, z_score, one_sided_p_value}` + 个体方法 gumbel 统计 + 合并 z）
+> 数据来源：各作业 `plagiarism/all_pairs.json`（copydetect：`{test_file, reference_file, test_similarity_pct, reference_similarity_pct, max_similarity_pct, token_overlap}`；`all_pairs.embedding.json` 属检测端混合输入，不在 pane 展示）+ 课程 `plagiarism/aggregate.json`（`run_aggregate_job` 写入；内容来自 `plagiarism_aggregate`：`MatchRecord{student_a, student_b, raw_similarity_pct, logit_similarity, z_score, one_sided_p_value}` + 个体方法 gumbel 统计 + 合并 z）；copydetect `autoopen=False`（不弹浏览器）
 
 ---
 
@@ -10,36 +11,25 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ Plagiarism · 271218 / 1-10-…   pairs 42 · threshold 80%  [p]Run  [a]Aggregate│
+│ Plagiarism · course 271218  ·  pairs 42 (top 20)  ·  display threshold 80% │
+│ [p]Run detection  [a]Run aggregate                                         │
 ├────────────────────────────────────────────────────────────────────────────┤
-│ ┌─Assignments─────────────┐ ┌─Cross-assignment aggregate─┐                    │
-│ │ #  File A     File B    │ │ #  Student A   Student B   │                    │
-│ │  1  0142.py  0156.py    │ │  1  0142      0156        │                    │
-│ │     sim 91.2% ov 340    │ │     sim 88.4%  z 5.21     │                    │
-│ │  2  0142.py  0163.py    │ │  2  0157      0163        │                    │
-│ │     sim 84.6% ov 210    │ │     sim 81.0%  z 4.88     │                    │
-│ │  3  0157.py  0142.py    │ │  3  ...(more)             │                    │
-│ │  ...(20 rows/page)      │ │                           │                    │
-│ └────────────────────────┘ └───────────────────────────┘                    │
+│ [Aggregate] [Assignments] [Students] [Pairs]   (TabbedContent, agg first)  │
+│ ┌─ Aggregate (default): course-level z/p table ───────────────────────────┐│
+│ │ #  Student A   Student B   raw sim   z     p(α)      Flag               ││
+│ │  1  0142      0156        88.4      5.21   0.0002   ◆ FLAG              ││
+│ │  ...(20 rows/page)                                                      ││
+│ └─────────────────────────────────────────────────────────────────────────┘│
+│ Assignments / Students / Pairs: same DataTable + empty-static shape;       │
+│ Pairs rows use <assignment>/plagiarism/all_pairs.json (Assignment/Student  │
+│ A/Student B/sim %/overlap/Flag columns); row selection renders #cmp-pane:  │
+│ ┌─ #cmp-pane (embedded, no modal)  0142.py ↔ 0156.py  sim 91.2%  ov 340 ─┐ │
+│ │ 0142.py (processed)    │ 0156.py (processed)    │  o=Open $EDITOR       │ │
+│ │ 1  def score(data):    │ 1  def score(data):    │ ...similar lines      │ │
+│ │ 2      agg = [...];    │ 2      agg = [...];    │ highlighted[reverse]  │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
 ├────────────────────────────────────────────────────────────────────────────┤
-│ ↳ 1 pair over α=0.01 threshold (flag) · 2 over display_threshold            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-对比弹窗（`enter` 或 `c` 进入，`ModalScreen`，最大 96×30）：
-
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ ⚖ Compare: 0142.py ↔ 0156.py   max_sim 91.2%  token_overlap 340   z 5.21 FLAG
-├──────────────────────────────────┬─────────────────────────────────────────┤
-│ 0142.py (processed)               │ 0156.py (processed)                    │
-│ 1  def score(data):               │ 1  def score(data):                    │
-│ 2      agg = [x for x in data]    │ 2      agg = [x for x in data]         │
-│ 3      if not agg: return 0.0     │ 3      if not agg: return 0.0          │
-│ 4      return sum(agg)/len(agg)   │ 4      return sum(agg)/len(agg)        │
-│ 5  ...similar lines highlighted[reverse]...                               │
-├──────────────────────────────────┴─────────────────────────────────────────┤
-│ [c]Copy line  [o]Open file ($EDITOR)  [esc]Close                             │
+│ ↳ 1 pair over α=0.01 threshold (flag) · 2 over display threshold 80%        │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -47,69 +37,68 @@
 
 | 标注 | 组件（Textual 8.x） | 用途 |
 |------|--------------------|------|
-| Tab 容器 | `TabbedContent` + `TabPane`×2（`#pane-pairs` / `#pane-aggregate`） | 单作业对 vs 课程内聚合 |
-| 排名表 | `DataTable`×2 | 视图 A：文件对（sim/重叠）；视图 B：学生对（raw sim/z/p） |
-| 判定列 | 单元格 `Static`（`flag`/`flag-warn` class） | 视图 A 用 `display_threshold`(80%)；视图 B 用聚合 `alpha` 阈值 |
-| 顶部按钮 | `Button`×2 | `[p]` 运行检测（复用 S2 job 协议）；`[a]` 运行聚合（`--aggregate`） |
-| 状态行 | `Static` | 汇总：对总数/疑点数/阈值说明 |
-| 对比弹窗 | `ModalScreen` + 2×`VerticalScroll`（并排） | 并排文本 + 相似片段高亮；用 `Grid` 两列 |
-| （复用） | `RichLog`（弹窗内不重复） | 检测运行时隐藏于底部，进度走 S2 协议 |
+| Tab 容器 | `TabbedContent` + `TabPane`×4（`#pane-aggregate`（初始）/`#pane-assignments`/`#pane-students`/`#pane-pairs`） | course 级：聚合 z/p 表 / 按作业 / 按学生 / 按 pair |
+| 排名表 | `DataTable`×4（`cursor_type="row"`，`zebra_stripes`） | Aggregate：Student A/B、raw sim、z、p、Flag；Assignments/Students：Assignment/Student、Pairs、Flagged、Max sim %；Pairs：Assignment、Student A/B、sim %、overlap、Flag |
+| 判定列 | 单元格 `Static`（`flag`/`flag-warn` class） | display 判定用 `display_threshold`（80%）；Aggregate 的 z/p 判定用聚合 `alpha` |
+| 顶部按钮 | `Button`×2（`plag-run` / `plag-aggregate`） | `[p]` 运行检测（单作业 copydetect，quiet）；`[a]` 运行聚合（`run_aggregate_job`：detect_plagiarism aggregate=True, quiet + `_write_aggregate_json`） |
+| 状态行 | `Static`（`#plag-status`） | 汇总：对总数 / display 疑点数 / 阈值（`display threshold N%`） |
+| 对比面板 | `#cmp-pane`（`Horizontal` 内 2×列，行高亮即时更新；**非 ModalScreen、no push_screen**） | 并排文本 + 相似片段高亮；`o` 打开 `$EDITOR`；复用 `preview_content`/`find_raw_file` |
+| （复用） | `RichLog` + `JobHost`（src/tata_jobs.py 共享协议） | 检测/聚合运行日志；进度走 JobHost 协议 |
 
 ## 3. z 分数双呈现设计（验收关键）
 
-| 视图 | 列 | 含义 | 置信来源 |
+| 视图（tab） | 列 | 含义 | 置信来源 |
 |------|----|------|---------|
-| A 单作业对 | `max_similarity_pct` / `token_overlap` / 判定 | 该作业内部排名的原始相似度 | `all_pairs.json` 原样 |
-| A·嵌入列（可选 tab 内二次 Tab） | `max_similarity_pct`（embedding） | 嵌入余弦相似度（top-N 对） | `all_pairs.embedding.json` |
-| B 聚合报告 | `raw_similarity_pct` / `z_score` / `one_sided_p_value` / 判定 | logit 变换→per-assignment z 标准化→跨作业 Stouffer 合并；**主体是聚合 z，不是原始分** | `plagiarism_aggregate` MatchRecord + combined stat |
+| Pairs | `sim %` / `overlap`（`max_similarity_pct` / `token_overlap`） | 该作业内部排名的原始相似度 | 该作业 `all_pairs.json` 原样 |
+| Assignments / Students | Assignment / Student、Pairs、Flagged、Max sim % | 按作业、按学生聚合的 display 级计数 | 各作业 `all_pairs.json` 汇总 |
+| Aggregate（默认） | `raw sim` / `z` / `p` / `Flag` | logit 变换→per-assignment z 标准化→跨作业 Stouffer 合并；**主体是聚合 z，不是原始分** | `plagiarism/aggregate.json`（`plagiarism_aggregate` 统计） |
 
-明确标注（表头与状态行）：“⚠ 聚合 z 为跨作业归一化信号，`raw_similarity_pct` 为原始值”——避免把 88% 误当绝对证据（呼应 aggregate 源码注释“triage signal, not proof”）。
+明确标注（表头与状态行）：“⚠ 聚合 z 为跨作业归一化信号，`raw sim` 为原始值”——避免把 88% 误当绝对证据（呼应 aggregate 源码注释“triage signal, not proof”）。
 
 **判定标记规则：**
-- 视图 A：`max_similarity_pct ≥ display_threshold(80)` → `◆ 显示级`；`≥ 90` → 追加 `↑`
-- 视图 B：`one_sided_p_value < alpha(0.01)` → `◆ 疑点`（红色 `flag` class）；仅预览 `z_score ≥ 3` 且未超 alpha → `? 关注`
+- Pairs：`sim ≥ display_threshold(80)` → `◆ FLAG`（红色 `flag` class）
+- Aggregate：`p < alpha(0.01)` → `◆ FLAG`；仅预览 `z ≥ 3` 且未超 alpha → `? watch`（黄色）；否则 `—`
 
 ## 4. 交互流
 
 ```
-进入 S4（Tab 切到 plagiarism）→ 读 state.current_course / state.current_assignment
-  ├─ 有 current_assignment → 上下文绑定该作业（视图 A 用该作业的 all_pairs.json）
-  ├─ 只有 current_course → 上下文绑定该 course（视图 A/B 显示 course 内聚合：所有作业 pairs）
-  ├─ 无 course → 显示 Global 提示：「请先在 Dashboard 进入某课程再使用查重屏幕」
-  ├─ all_pairs.json 存在 → 解析 → 视图 A 填充（按 max_similarity_pct 降序，默认 20 行）
-  ├─ 聚合 JSON 存在 → 视图 B 填充；不存在 → 视图 B 空态 + [a] 按钮高亮
-  ├─ 作业未运行检测 → 视图 A 空态 + [p] 按钮高亮
-行选中 + enter/c → 解析两个文件（优先 processed/*.md，回退 raw 转换，复用 _preview_content 逻辑）
-   → 计算相似片段（token_overlap 行集合 → 高亮首 200 行）→ push_screen(CompareModal)
-   → o 发起 $EDITOR 打开原文件；esc 关闭返回表格
-[a] 运行聚合 → job（后台：读本 course 各作业 all_pairs*.json → 合并统计 → 写聚合 JSON/MD）→ 完成后视图 B 刷新 + notify
-[p] 运行检测 → job（与 S2 的 K 按钮同一协议）→ 完成后视图 A 刷新
+进入 S4（Tab 切到 plagiarism）→ 读 state.current_course（course 级 scope，不看 current_assignment）
+  ├─ 无 course → 空态提示：「请先在 Dashboard 进入某课程再使用查重屏幕」
+  ├─ 逐作业读 <assignment>/plagiarism/all_pairs.json（tolerant 解析，单文件失败记入 course_errors 不中断）
+  ├─ aggregate.json 存在 → Aggregate 填充；不存在 → 空态 + [a] 按钮
+  ├─ 全部无 pairs → 各空态 + [p] 按钮
+Pairs 行高亮（↓/j）→ on_data_table_row_highlighted → #cmp-pane 即时渲染
+   （侧文件解析：优先 processed/*.md，回退 raw，复用 preview_content/find_raw_file；
+     token_overlap 行集合 → 相似行高亮；无 push_screen、无 Modal）
+[a] 运行聚合 → job（run_aggregate_job：detect_plagiarism(aggregate=True, quiet=True)
+     + _write_aggregate_json 写课程 plagiarism/aggregate.json）→ 完成后各 pane 刷新 + notify
+[p] 运行检测 → job（detect_plagiarism(aggregate=False, quiet=True)，单作业 copydetect，需
+     state.current_assignment（无 → notify 提示先进入课程/作业）；autoopen=False 不弹浏览器）
+     → 完成后 Pairs/Assignments/Students 刷新
 ```
 
 ## 5. 键盘映射表
 
 | 键 | 动作 | 说明 |
 |----|------|------|
-| `tab` | Switch (pairs / aggregate) | TabbedContent 原生 |
-| `↑/↓` 或 `j/k` | Move in table | |
-| `enter` 或 `c` | Open compare modal | 仅视图 A 且行有文件对 |
-| `o` | Open selected file in `$EDITOR` | 弹窗焦点内有效 |
-| `·`/`e` | Copy row info to clipboard | `copy_to_clipboard`（通知确认） |
-| `p` | Run / re-run detection | 与 S2 `k` 同协议 |
-| `a` | Run aggregation | 需当前 course config 的 `[[fetch.assignments]]` 存在，否则 notify 提示缺失（引导去 Course 视图导入作业） |
+| `tab` | Switch pane | TabbedContent 原生（4 pane 循环） |
+| `↑/↓` 或 `j/k` | Move in table | DataTable 原生 |
+| `p` | Run detection（当前作业） | 单作业 copydetect；`run_aggregate_job` 之外的另一 job 入口 |
+| `a` | Run aggregation（当前 course） | 需当前 course config 的 `[[fetch.assignments]]` 存在，否则 job 失败/提示缺失（引导去 Course 视图导入作业） |
 | `r` | Reload data files | 外部改动后刷新 |
-| `esc` | Close modal / back to previous tab | |
-| `?` | Help | 全域 |
+| `esc` | Back to Dashboard | 离开 S4 |
+
+> 对比不再有独立 Modal/键位：Pairs 行高亮即渲染 `#cmp-pane`（无 `enter`/`c`/`o` 弹窗绑定；`esc` 只负责回 Dashboard）
 
 ## 6. 空态 / 错误态 / 加载态
 
 | 态 | 表现 |
 |----|------|
-| **空态·未运行检测** | 视图 A 居中 Static：「No pairs yet. Run plagiarism (`p`) on the assignment or `[a]` for course aggregation.」 |
-| **空态·无对** | `pair_count == 0`（模板单文件/无参考匹配）：「Detection done, 0 pairs (submissions <2 or all below threshold).」 |
-| **空态·聚合缺失** | 视图 B：Static「No aggregate report yet. Run `a` for cross-assignment z-scores (needs `[[fetch.assignments]]` in the course config).」 |
-| **空态·course config 缺作业清单** | `[a]` 点击时 `notify(error, "data/<course>/config.toml missing [[fetch.assignments]]")`，引导去 S1·Course 导入作业 |
-| **加载态·检测运行中** | 视图 A 顶部行 `Static`「Detecting: 12/18 …」+ 不定态 ProgressBar；表数据加载完成后替换 |
-| **错误态·JSON 损坏** | 该视图显示「Load failed: <err>」+ `notify(error)`；建议 `p` 重跑 |
-| **错误态·嵌入模型下载失败** | 日志红字（模型首次下载可达数 GB）→ 明确提示「Embedding model not available locally; copydetect partial only」；`notify(warning)` |
-| **错误态·聚合数据不一致** | 某作业 pair 文件缺失 → 聚合跳过该作业并在状态行注明「Skipped: <assignment> (missing all_pairs.json)」 |
+| **空态·无 course** | 顶栏隐藏，各 pane 显示「No course selected. Open Dashboard and enter a course first.」 |
+| **空态·未运行检测** | Pairs/Assignments/Students pane 居中 Static：「No pairs yet. Run detection (p) or aggregation (a).」 |
+| **空态·无对** | `pair_count == 0`（模板单文件/无参考匹配）；聚合已跑无对：「Aggregation done, 0 tested pairs.」 |
+| **空态·聚合缺失** | Aggregate pane：Static「No aggregate report yet. Run (a).」 |
+| **加载态·检测运行中** | RichLog 实时日志 + 进度行（JobHost 协议）；表格加载完成后替换 |
+| **错误态·JSON 损坏** | 该 pane 显示「Load failed: <err>」+ `notify(error)`；建议 `p` 重跑 |
+| **错误态·单作业 pair 文件缺失** | 该作业行从列表跳过，空闲额外尾部注明「Load failed: <assignment> (missing all_pairs.json)」；聚合跳过该作业（状态行注明 Skipped） |
+| **错误态·嵌入模型下载失败** | 检测端的嵌入混合失败（embedding 仅检测端输入）；日志红字 + warning，copydetect partial |

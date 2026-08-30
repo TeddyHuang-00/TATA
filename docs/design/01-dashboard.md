@@ -2,6 +2,7 @@
 
 > 职责：三层 drill-down 工作台 —— **Global（课程一览）→ Course（课程作业一览 + 跨作业操作）→ Assignment（作业工作台，即原 S2 内容）**
 > 版本变更（v1.1 多课程支持）：Dashboard 吸收原 S2 Pipeline Tab；`data/` 目录插入 course 层（`data/<course>/<assignment>`）；配置分层 global→course→assignment
+> v1.1 (2026-08-30 update)：Assignment 工作台移除查重 stage（查重仅剩 Course 层 `p` 与 S4 tab），新增 `score review` 按钮（push_screen ScoreReviewScreen）；S4 重构为 course 级 4-tab（详见 04）
 > 对应 CLI：`fetch`、`plagiarism --aggregate`、帮助、`list_courses/list_assignments`
 
 ---
@@ -70,7 +71,7 @@
 │ 4  1-6-first-python    2979480   31     0     0    —    ○ Not run  Never      │
 │ 5  1-7-ai-studio-01    2979482    0     0     0    —    ○ Not run  Never      │
 ├────────────────────────────────────────────────────────────────────────────┤
-│ ➜ 1-10-my-ai-start…  enter=Assignment  s=Review  p=Plagiarism  esc=Global  │
+│ ➜ 1-10-my-ai-start…  enter=Assignment  s=Score review  p=Plagiarism  esc=Global  │
 │     Course config: plagiarism overrides global · fetch list: 6 entries      │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -151,7 +152,8 @@ Course 视图 [F] → Confirm Modal「Fetch course 6 assignments (126 submission
     → job: _run_fetch(FetchCliOptions(config=course_config))   # 等价 CLI course config fetch
     → 完成 notify(成功 N/失败 M) + 行徽章更新
 Course 视图 [p] → Confirm Modal「Run plagiarism for all assignments + cross-assignment aggregate」
-    → job: detect_plagiarism(course_config, aggregate=True)     # 一条命令全做
+    → job: detect_plagiarism(course_config, aggregate=True, quiet=True)
+           # quiet：不打印纯文本报告；S4 只读 JSON（各作业 all_pairs.json + 课程聚合 aggregate.json）
     → 完成 notify + S4 视图刷新（若用户停留在 Dashboard，徽章更新）
 ```
 
