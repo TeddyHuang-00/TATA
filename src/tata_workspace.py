@@ -34,7 +34,6 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
-import main
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -43,6 +42,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, RichLog, Static
 
+from src import cli as main
 from src.aliases import assignment_display_name
 from src.analysis import analyze_assignment
 from src.assignment_config import load_assignment_file

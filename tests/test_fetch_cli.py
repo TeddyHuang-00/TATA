@@ -153,7 +153,7 @@ def test_fetch_entries_uses_list_out_and_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import main as main_mod
+    import src.cli as main_mod
     from src.assignment_config import FetchSection
 
     cfg = FetchSection.model_validate({

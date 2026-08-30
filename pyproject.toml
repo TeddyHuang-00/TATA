@@ -36,6 +36,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
+tata = "src.cli:main"
 tui = "src.tata_app:run"
 
 [tool.hatch.build.targets.wheel]

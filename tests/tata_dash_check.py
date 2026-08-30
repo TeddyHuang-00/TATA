@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import main as main_mod
+import src.cli as main_mod
 import src.tata_app as tata_app_mod
 from rich.text import Text as RichText
 from src.cli_options import FetchCliOptions

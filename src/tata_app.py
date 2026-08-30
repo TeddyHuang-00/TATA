@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import ClassVar, Literal, override
 
 import dotenv
-import main as main_mod
 import tomlkit
 from canvasapi import Canvas
 from rich.markup import escape
@@ -40,6 +39,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from src import cli as main_mod
 from src.aliases import assignment_display_name, course_display_name
 from src.assignment_config import FetchSection
 from src.canvas_fetch import list_assignments, list_courses

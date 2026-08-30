@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from main import _classify_config, _fetch_course, _load_config, _remember
 from src.assignment_config import (
     FetchSection,
     find_global_config,
@@ -15,6 +14,7 @@ from src.assignment_config import (
     load_assignment_file,
 )
 from src.canvas_fetch import remember_fetch
+from src.cli import _classify_config, _fetch_course, _load_config, _remember
 
 GRADING = '[grading]\nrubric = "rubrics/x.toml"\nsystem_prompt = "prompt/system.md"\nprovider = "ollama"\n'
 
@@ -315,7 +315,7 @@ def test_retry_fetch_dedups_shared_assignment(
         '\n[[fetch.assignments]]\nassignment_id = 9901\nout = "hw1/raw"\n',
     )
     seen: set[tuple[int, int]] = set()
-    with mock.patch("main.fetch_assignment") as mock_fetch:
+    with mock.patch("src.cli.fetch_assignment") as mock_fetch:
         assert _fetch_course(None, global_cfg, None, None, seen) is True
         assert _fetch_course(None, course_cfg, None, None, seen) is True
     assert mock_fetch.call_count == 1
