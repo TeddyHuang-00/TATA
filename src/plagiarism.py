@@ -22,6 +22,7 @@ from .assignment_config import (
     load_assignment_file,
     load_root_section,
     resolve_assignment_paths,
+    root_plagiarism_section,
 )
 from .cli_options import (
     AliasChoices,
@@ -607,13 +608,6 @@ def detect_plagiarism(
             quiet=quiet,
         )
     return summary
-
-
-def root_plagiarism_section(root_config: Path) -> PlagiarismSection:
-    return (
-        load_root_section(root_config, "plagiarism", PlagiarismSection)
-        or PlagiarismSection()
-    )
 
 
 def main() -> None:

@@ -7,8 +7,9 @@ with an embedded ``#cmp-pane`` side-by-side compare (no pushed modal; the
 pane updates live on row highlight).  All UI copy is English (design 04
 v1.1).
 
-Jobs reuse the S2 JobHandle protocol (design 99 §3.1): the worker thread
-runs :func:`src.plagiarism.detect_plagiarism` (quiet=True — the panes read
+Jobs reuse the S2 JobHandle protocol (design 99 §3.1), shared with the
+workspace via :class:`src.tata_jobs.JobHost`: the worker thread runs
+:func:`src.plagiarism.detect_plagiarism` (quiet=True — the panes read
 the JSON, not the text report) with stdout redirected into a log queue; the
 main thread drains it into the RichLog.  ``[p]`` detects the current
 assignment, ``[a]`` runs the course aggregate.
@@ -26,9 +27,6 @@ Data sources (course-scoped; no dependence on ``state.current_assignment``):
 from __future__ import annotations
 
 import json
-import queue
-import threading
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
@@ -40,7 +38,6 @@ from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Button,
     DataTable,
-    ProgressBar,
     RichLog,
     Static,
     TabbedContent,
@@ -56,19 +53,20 @@ from src.aliases import (
 from src.plagiarism import detect_plagiarism, root_plagiarism_section
 from src.plagiarism_aggregate import aggregate_pair_rows
 from src.score_review import base_uid, find_raw_file, preview_content
-from src.tata_scan import AssignmentInfo
-from src.tata_workspace import (
-    format_job_summary,
-    is_displayed,
-    run_stage_worker,
+from src.tata_jobs import JobHost
+from src.tata_scan import (
+    DISPLAY_THRESHOLD_PCT as DEFAULT_DISPLAY_THRESHOLD_PCT,
+    AssignmentInfo,
+    _pair_pct,
+    _plagiarism_threshold_pct,
 )
+from src.tata_workspace import is_displayed
 
 if TYPE_CHECKING:
     from src.tata_app import AppState
 
 PAGE_ROWS = 20
 SIDE_MAX_LINES = 300
-DEFAULT_DISPLAY_THRESHOLD_PCT = 80.0
 AGG_ALPHA_FALLBACK = 0.01
 AGG_JSON_NAME = "aggregate.json"
 Z_WATCH_THRESHOLD = 3.0
@@ -91,15 +89,28 @@ def _aggregate_file(course_dir: Path) -> Path:
     return course_dir / "plagiarism" / AGG_JSON_NAME
 
 
-def _load_pairs(assignment_dir: Path) -> tuple[list[dict] | None, str | None]:
-    """(pairs, error).  ``None`` pairs = file absent (detection not run)."""
-    file_ = _pairs_file(assignment_dir)
+def _load_payload(file_: Path) -> tuple[object | None, str | None]:
+    """``(payload, error)`` for a pairs/aggregate JSON file.
+
+    ``None`` payload = file absent; parse failures carry the exact error
+    string. Shape checks (and their exact error strings) stay in the callers.
+    """
     if not file_.is_file():
         return None, None
     try:
         data = json.loads(file_.read_text(encoding="utf-8"))
     except (ValueError, OSError) as exc:
         return None, f"{type(exc).__name__}: {exc}"
+    return data, None
+
+
+def _load_pairs(assignment_dir: Path) -> tuple[list[dict] | None, str | None]:
+    """(pairs, error).  ``None`` pairs = file absent (detection not run)."""
+    data, err = _load_payload(_pairs_file(assignment_dir))
+    if err is not None:
+        return None, err
+    if data is None:
+        return None, None
     if not isinstance(data, dict) or not isinstance(data.get("pairs"), list):
         return None, "malformed payload (missing list 'pairs')"
     return data["pairs"], None
@@ -130,41 +141,16 @@ def _load_course_pairs(
 
 def _load_aggregate(course_dir: Path) -> tuple[dict | None, str | None]:
     """(aggregate payload, error).  ``None`` payload = file absent."""
-    file_ = _aggregate_file(course_dir)
-    if not file_.is_file():
+    data, err = _load_payload(_aggregate_file(course_dir))
+    if err is not None:
+        return None, err
+    if data is None:
         return None, None
-    try:
-        data = json.loads(file_.read_text(encoding="utf-8"))
-    except (ValueError, OSError) as exc:
-        return None, f"{type(exc).__name__}: {exc}"
     if not isinstance(data, dict):
         return None, "malformed payload (not an object)"
     if not isinstance(data.get("pairs"), list):
         return None, "malformed payload (missing list 'pairs')"
     return data, None
-
-
-def _display_threshold_pct(config_path: Path | None) -> float:
-    """Course ``[plagiarism] display_threshold`` as percent (80 default)."""
-    if config_path is None:
-        return DEFAULT_DISPLAY_THRESHOLD_PCT
-    # root-section read: course configs carry no [grading]; missing section
-    # falls back to PlagiarismSection defaults (0.8)
-    return root_plagiarism_section(config_path).display_threshold * 100.0
-
-
-def _pair_pct(pair: dict) -> float:
-    """``max_similarity_pct`` as float (0.0 on missing/malformed values).
-
-    Real data writes floats, but dirty JSON (strings, nulls, non-dict
-    entries) must not crash the TUI.
-    """
-    if not isinstance(pair, dict):
-        return 0.0
-    try:
-        return float(pair.get("max_similarity_pct", 0.0))
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _overlap_display(pair: dict) -> str:
@@ -305,8 +291,15 @@ def _cmp_pane() -> ComposeResult:
 # ---------- the screen ----------
 
 
-class PlagiarismScreen(Vertical):
+class PlagiarismScreen(JobHost):
     """S4 plagiarism tab: course-scoped tabs with p/a job buttons."""
+
+    log_widget_id = "#plag-log"
+    cancel_button_id = "#plag-cancel"
+    progress_text_id = "#plag-progress-text"
+    protect_message = "Job '{stage}' is running — use the Cancel button"
+    cancelled_log = "Job cancelled — progress saved"
+    cancelled_notify = "Cancelled"
 
     can_focus = True  # keeps screen bindings alive while a job runs
 
@@ -358,7 +351,6 @@ class PlagiarismScreen(Vertical):
                 yield from _cmp_pane()
         with Horizontal(id="plag-progress"):
             yield Static("", id="plag-progress-text", markup=True)
-            yield ProgressBar(show_eta=False, id="plag-bar")
             yield Button("Cancel", id="plag-cancel", variant="warning")
         yield RichLog(
             markup=True,
@@ -405,6 +397,9 @@ class PlagiarismScreen(Vertical):
         for scroll in self.query("#cmp-pane VerticalScroll"):
             scroll.styles.height = "1fr"
         self.set_interval(0.1, self._tick)
+        # Reload here AND on tab activation (tata_app.TabActivated): the
+        # activation handler covers the shell's tab pane; this covers
+        # directly pushed instances (check scripts) and startup state.
         self.reload_all()
 
     # ---------- public API (called by the platform shell on tab switch) ----------
@@ -442,7 +437,9 @@ class PlagiarismScreen(Vertical):
 
         course = state.current_course
         # the panes are course-scoped: the knob is the course-level threshold
-        self._threshold_pct = _display_threshold_pct(course.config_path)
+        # (shared tolerant helper with scan_courses — malformed configs
+        # fall back to the default instead of blanking the pane)
+        self._threshold_pct = _plagiarism_threshold_pct(course.config_path)
         self._course_pairs, self._course_errors = _load_course_pairs(state)
         self._agg, self._agg_error = _load_aggregate(course.config_path.parent)
         self._notify_load_errors()
@@ -875,15 +872,6 @@ class PlagiarismScreen(Vertical):
             return
         self._start_job("aggregate", run_aggregate_job, course.config_path)
 
-    def _protect(self) -> bool:
-        if self._job is not None:
-            self.app.notify(
-                f"Job '{self._job['stage']}' is running — use the Cancel button",
-                severity="warning",
-            )
-            return True
-        return False
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if button_id == "plag-run":
@@ -893,40 +881,7 @@ class PlagiarismScreen(Vertical):
         elif button_id == "plag-cancel":
             self.action_cancel_job()
 
-    # ---------- job protocol (design 99 §3.1, mirrors AssignmentScreen) ----------
-
-    def _start_job(self, stage: str, fn: object, config_path: Path) -> None:
-        if self.state.active_job is not None:
-            self.app.notify(
-                f"'{self.state.active_job}' is running — finish or cancel it first",
-                severity="warning",
-            )
-            return
-        q: queue.Queue = queue.Queue()
-        cancel_event = threading.Event()
-        self._job = {
-            "stage": stage,
-            "fn": fn,
-            "kwargs": {},
-            "config_path": config_path,
-            "queue": q,
-            "cancel_event": cancel_event,
-            "total": None,
-            "progress": 0,
-            "state": "running",
-            "text": "running…",
-            "dir_name": config_path.parent.name,
-        }
-        self.state.active_job = stage
-        self._log_line(f"▶ {stage} started ({config_path.name})")
-        self._render_busy()
-        self.focus()
-        self.run_worker(
-            partial(run_stage_worker, job=self._job),
-            thread=True,
-            group="stage",
-            exclusive=True,
-        )
+    # ---------- job protocol (shared core in src.tata_jobs.JobHost) ----------
 
     def _render_busy(self) -> None:
         busy = self._job is not None
@@ -937,59 +892,9 @@ class PlagiarismScreen(Vertical):
             self.query_one("#plag-run", Button).label = "Run detection"
             self.query_one("#plag-aggregate", Button).label = "Run aggregate"
             return
-        job = self._job
-        cancel = self.query_one("#plag-cancel", Button)
-        cancel.disabled = job["state"] == "stopping"
-        cancel.label = "Stop…" if job["state"] == "stopping" else "Cancel"
-        self.query_one("#plag-progress-text", Static).update(
-            escape(job.get("text", "running…"))
-        )
+        self._render_busy_cancel()
 
-    def _tick(self) -> None:
-        job = self._job
-        if job is None:
-            return
-        q = job["queue"]
-        while True:
-            try:
-                kind, payload = q.get_nowait()
-            except queue.Empty:
-                break
-            if kind == "log":
-                self._log_line(payload)
-            elif kind == "done":
-                self._job_done(payload)
-                return
-
-    def _job_done(self, summary: dict | None) -> None:
-        job = self._job
-        if job is None:
-            return
-        self.state.active_job = None
-        self._job = None
-        self._render_busy()
-        if summary:
-            if summary.get("cancelled"):
-                self._log_line("Job cancelled — progress saved")
-                self.app.notify("Cancelled", severity="information")
-            else:
-                line = format_job_summary(summary)
-                if line:
-                    self._log_line(line)
-                errors = int(summary.get("errors") or 0)
-                self.app.notify(
-                    line or f"Job {job['stage']} finished",
-                    severity="warning" if errors else "success",
-                )
+    @override
+    def job_finished(self, job: dict, summary: dict | None) -> None:
         self.reload_all()
         self._focus_active_table()
-
-    def _log_line(self, line: str) -> None:
-        text = escape(line)
-        if line.startswith("[error]") or "✗" in line:
-            styled = f"[red]{text}[/red]"
-        elif "[done]" in line or "✓" in line or "→" in line:
-            styled = f"[green]{text}[/green]"
-        else:
-            styled = text
-        self.query_one("#plag-log", RichLog).write(styled)

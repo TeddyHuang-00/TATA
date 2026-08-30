@@ -27,6 +27,7 @@ import csv
 import sys
 import tomllib
 from collections.abc import MutableMapping, Sequence
+from functools import lru_cache
 from pathlib import Path
 
 import tomlkit
@@ -46,8 +47,17 @@ _HEADER = (
 )
 
 
+@lru_cache(maxsize=128)
 def load_alias_file(path: Path) -> dict[str, dict[str, str]]:
-    """Parse one alias.toml into {section: {id: name}}; {} on any problem."""
+    """Parse one alias.toml into {section: {id: name}}; {} on any problem.
+
+    Cached by path: in-process writers (``_write_doc``) clear the cache, so
+    reads (per row render) stay fast.  Note the cache can go stale: the file
+    can also change via EXTERNAL processes while the app runs (hand edits,
+    ``migrate_course_to_ids``) — the next read keeps the old entries until
+    app restart.  Externally-edited files are picked up only on restart
+    (or after an in-process write clears the entry).
+    """
     if not path.is_file():
         return {}
     try:
@@ -168,6 +178,7 @@ def _open_alias_doc(path: Path) -> tomlkit.TOMLDocument:
 def _write_doc(path: Path, doc: tomlkit.TOMLDocument) -> None:
     text = tomlkit.dumps(doc)
     path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
+    load_alias_file.cache_clear()  # the file changed on disk — drop stale reads
 
 
 def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> None:

@@ -373,6 +373,19 @@ def load_root_section[T: BaseModel](path: Path, section: str, model: type[T]) ->
     return model.model_validate(values)
 
 
+def root_plagiarism_section(root_config: Path) -> PlagiarismSection:
+    """``[plagiarism]`` section of a course/global config (defaults when absent).
+
+    Single source of the display threshold for both the scanner (dashboard
+    flags) and the Plagiarism pane (moved here from ``src.plagiarism`` so the
+    scan layer needs no stage-module import).
+    """
+    return (
+        load_root_section(root_config, "plagiarism", PlagiarismSection)
+        or PlagiarismSection()
+    )
+
+
 def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
     """Load an assignment config layered over the course config and, when
     present, the global config above it (``data/config.toml``).

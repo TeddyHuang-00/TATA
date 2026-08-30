@@ -40,7 +40,7 @@ def _stage_buttons(app: TataApp) -> dict[str, Button]:
     ws = app.query_one(AssignmentScreen)
     return {
         name: ws.query_one(f"#stage-{name}", Button)
-        for name in ("fetch", "preprocess", "grade", "score", "analyze", "score_view")
+        for name in ("fetch", "preprocess", "grade", "score", "analyze", "score_review")
     }
 
 
@@ -66,12 +66,12 @@ async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
     assert "1 pending · 1 done" in str(buttons["grade"].label), buttons["grade"].label
     assert "1/1 scored" in str(buttons["score"].label), buttons["score"].label
     assert "Not run" in str(buttons["analyze"].label), buttons["analyze"].label
-    assert str(buttons["score_view"].label).startswith("score view\n"), buttons[
-        "score_view"
+    assert str(buttons["score_review"].label).startswith("score review\n"), buttons[
+        "score_review"
     ].label
     # no _sub entry -> single-'…' subtitle fallback
-    assert str(buttons["score_view"].label).rstrip().endswith("…"), buttons[
-        "score_view"
+    assert str(buttons["score_review"].label).rstrip().endswith("…"), buttons[
+        "score_review"
     ].label
     assert not ws.query("#stage-plagiarism"), "plagiarism button should be gone"
     assert not hasattr(ws, "action_run_plagiarism")
@@ -247,9 +247,9 @@ async def _check_fetch_gate(app: TataApp, pilot: Pilot) -> None:
         app.notify = orig_notify
 
 
-async def _check_score_view(app: TataApp, pilot: Pilot) -> None:
-    """Click #stage-score_view -> ScoreReviewScreen pushed; esc pops back."""
-    await pilot.click("#stage-score_view")
+async def _check_score_review(app: TataApp, pilot: Pilot) -> None:
+    """Click #stage-score_review -> ScoreReviewScreen pushed; esc pops back."""
+    await pilot.click("#stage-score_review")
     await pilot.pause()
     assert isinstance(app.screen, ScoreReviewScreen), type(app.screen)
     assert len(app.screen.students) > 0
@@ -260,11 +260,11 @@ async def _check_score_view(app: TataApp, pilot: Pilot) -> None:
     assert app.query_one(AssignmentScreen).display
 
 
-async def _check_score_view_empty(app: TataApp, pilot: Pilot) -> None:
+async def _check_score_review_empty(app: TataApp, pilot: Pilot) -> None:
     """Empty graded/ -> notify, no push."""
     notices, orig_notify = spy_notify(app)
     try:
-        await pilot.click("#stage-score_view")
+        await pilot.click("#stage-score_review")
         await pilot.pause()
         assert not isinstance(app.screen, ScoreReviewScreen), type(app.screen)
         assert len(app.screen_stack) == 1
@@ -300,7 +300,7 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_button_click(app, pilot)
     await _check_editor_warning(app, pilot)
     await _check_fetch_gate(app, pilot)
-    await _check_score_view(app, pilot)
+    await _check_score_review(app, pilot)
     await _check_help_and_back(app, pilot)
 
 
@@ -338,7 +338,7 @@ async def main() -> None:
         app2 = TataApp(root_dir=empty_root)
         async with app2.run_test(size=(120, 40)) as pilot2:
             await _enter_assignment(app2, pilot2)
-            await _check_score_view_empty(app2, pilot2)
+            await _check_score_review_empty(app2, pilot2)
     print("tata_workspace check OK")
 
 

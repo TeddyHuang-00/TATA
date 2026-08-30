@@ -46,7 +46,13 @@ from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
 from src.score_review import open_score_review
 from src.tata_plagiarism import PlagiarismScreen, run_aggregate_job
-from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
+from src.tata_scan import (
+    AssignmentInfo,
+    CourseInfo,
+    _plagiarism_threshold_pct,
+    scan_assignments,
+    scan_courses,
+)
 from src.tata_settings import SettingsScreen
 from src.tata_workspace import (
     AssignmentScreen,
@@ -108,7 +114,16 @@ class AppState:
         self.courses = scan_courses(self.assignments_dir)
 
     def load_assignments(self, course: CourseInfo) -> None:
-        self.assignments = scan_assignments(self.assignments_dir / course.dir_name)
+        # Single display-threshold source: the course's [plagiarism] section
+        # (default 0.8 -> 80%), shared with the Plagiarism pane — the
+        # dashboard flags must never disagree with the pane. Tolerant helper
+        # (M1): malformed course config falls back to the default, never
+        # crashes TUI startup.
+        threshold_pct = _plagiarism_threshold_pct(course.config_path)
+        self.assignments = scan_assignments(
+            self.assignments_dir / course.dir_name,
+            threshold_pct=threshold_pct,
+        )
 
 
 def _fmt_score(value: float | None) -> str:
@@ -216,6 +231,12 @@ class DashboardScreen(Vertical):
                 f"Courses: {len(state.courses)}"
             )
             breadcrumb.update("Global")
+            # ponytail: one shared header cannot reflect per-course
+            # thresholds when they differ — show the first (sorted) course's;
+            # per-course labels would need the threshold in the row instead.
+            thr = _plagiarism_threshold_pct(
+                state.courses[0].config_path if state.courses else None
+            )
             table.add_columns(
                 "Course",
                 "Assignments",
@@ -223,7 +244,7 @@ class DashboardScreen(Vertical):
                 "Proc",
                 "Grad",
                 "Avg score",
-                ">80% pairs",
+                f">{thr:g}% pairs",
                 "Last run",
             )
             for i, c in enumerate(state.courses):

@@ -3,10 +3,13 @@
 Third dashboard level, hosted inside :class:`src.tata_app.DashboardScreen`
 (the workspace is not its own Tab — design 02 v1.1). All UI copy is English.
 
-Long jobs use the JobHandle protocol (design 99 §3.1): a worker thread runs
-the existing synchronous stage functions with stdout/stderr redirected into a
-``queue.Queue``; a 0.1 s timer on the main thread drains the queue into the
-RichLog and updates the ProgressBar. Worker threads never touch widgets.
+Long jobs use the JobHandle protocol (design 99 §3.1), shared with the
+Plagiarism screen via :class:`src.tata_jobs.JobHost` (worker thread, log
+queue, 0.1 s drain; see that module for the contract):
+a worker thread runs the existing synchronous stage functions with
+stdout/stderr redirected into a ``queue.Queue``; a 0.1 s timer on the main
+thread drains the queue into the RichLog and updates the ProgressBar.
+Worker threads never touch widgets.
 
 Honesty notes over the design (design 99 accepted trade-offs):
 - The stage functions are not modified and print no done/total events, so
@@ -21,16 +24,12 @@ Honesty notes over the design (design 99 accepted trade-offs):
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import queue
 import shlex
 import shutil
 import subprocess
-import threading
 from datetime import UTC, datetime
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
@@ -51,6 +50,7 @@ from src.grading import grade_assignment
 from src.processing import preprocess_assignment
 from src.score_review import open_score_review
 from src.scoring import score_assignment
+from src.tata_jobs import JobHost
 from src.tata_scan import AssignmentInfo, count_files, count_recursive
 
 if TYPE_CHECKING:
@@ -85,8 +85,6 @@ _STATE_LABELS = {
     "partial": "Partial",
     "done": "Done",
     "flagged": "Flagged",
-    "error": "Error",
-    "unknown": "? Unknown",
 }
 
 _BADGE_COLOR = {
@@ -94,8 +92,6 @@ _BADGE_COLOR = {
     "partial": "yellow",
     "done": "green",
     "flagged": "red",
-    "error": "red bold",
-    "unknown": "dim",
 }
 
 _STAGE_KEYS = (
@@ -104,7 +100,7 @@ _STAGE_KEYS = (
     ("grade", "grade"),
     ("score", "score"),
     ("analyze", "analyze"),
-    ("score view", "score_view"),
+    ("score review", "score_review"),
 )
 
 
@@ -188,40 +184,6 @@ def _run_fetch_job(config_path: Path) -> None:
     main._run_fetch(FetchCliOptions(config=config_path))
 
 
-def format_job_summary(summary: dict) -> str:
-    """Summary line shaped exactly like the CLI's (design 02 §6)."""
-    return main._format_job_summary(summary)
-
-
-# ---------- log queue writer ----------
-
-
-class _LineQueueWriter:
-    """Stdout sink that splits writes into lines and enqueues them.
-
-    Stage functions print per-file lines; each ``write`` is buffered until a
-    newline so the queue carries whole log lines (best effort when the stage
-    writes from its own thread pool).
-    """
-
-    def __init__(self, q: queue.Queue) -> None:
-        self._q = q
-        self._buf = ""
-
-    def write(self, s: str) -> int:
-        self._buf += s
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            if line.rstrip():
-                self._q.put(("log", line.rstrip()))
-        return len(s)
-
-    def flush(self) -> None:
-        if self._buf.rstrip():
-            self._q.put(("log", self._buf.rstrip()))
-            self._buf = ""
-
-
 # ---------- modals ----------
 
 
@@ -266,13 +228,23 @@ class ConfirmationModal(ModalScreen[str | None]):
 # ---------- the workspace ----------
 
 
-class AssignmentScreen(Vertical):
+class AssignmentScreen(JobHost):
     """Third dashboard level: 6 stage buttons + config panel + live log.
 
-    Owns the JobHandle state (queue + cancel event + progress). The worker
-    thread is a Textual ``run_worker(thread=True, group='stage',
-    exclusive=True)`` so only one stage job runs at a time.
+    Owns the JobHandle state (queue + cancel event + progress) via
+    :class:`src.tata_jobs.JobHost`. The worker thread is a Textual
+    ``run_worker(thread=True, group='stage', exclusive=True)`` so only one
+    stage job runs at a time.
     """
+
+    log_widget_id = "#richlog"
+    cancel_button_id = "#ws-cancel"
+    progress_text_id = "#ws-progress-text"
+    protect_message = "Stage job '{stage}' is running — press x to cancel"
+    cancelled_log = "Job cancelled — progress saved (checkpoint/mtime based)"
+    cancelled_notify = "Cancelled — progress saved"
+    green_contains: ClassVar[tuple[str, ...]] = ("[done]", "✓")
+    green_prefixes: ClassVar[tuple[str, ...]] = ("[processed]",)
 
     can_focus = True  # holds focus while stage buttons are disabled mid-job
 
@@ -478,38 +450,7 @@ class AssignmentScreen(Vertical):
         incr.update(_incremental_line(info))
         incr.display = self._incr_on
 
-    def _render_busy(self) -> None:
-        job = self._job
-        busy = job is not None
-        self.query_one("#ws-progress", Horizontal).display = busy
-        self._render_buttons()
-        if not busy:
-            return
-        cancel = self.query_one("#ws-cancel", Button)
-        cancel.disabled = job["state"] == "stopping"
-        cancel.label = "Stop…" if job["state"] == "stopping" else "Cancel"
-        bar = self.query_one("#ws-progress > ProgressBar", ProgressBar)
-        total = job.get("total")
-        bar.total = total
-        bar.progress = job.get("progress", 0) if total else 0
-        self.query_one("#ws-progress-text", Static).update(
-            escape(job.get("text", "running…"))
-        )
-
     # ---------- stage actions ----------
-
-    def _protect(self) -> bool:
-        """True when a job is already running (block new stage starts)."""
-        if self._job is not None:
-            self.app.notify(
-                f"Stage job '{self._job['stage']}' is running — press x to cancel",
-                severity="warning",
-            )
-            return True
-        return False
-
-    def _config_path(self) -> Path | None:
-        return self._info.config_path if self._info is not None else None
 
     def action_run_fetch(self) -> None:
         if self._protect():
@@ -597,6 +538,12 @@ class AssignmentScreen(Vertical):
                 severity="warning",
             )
             return
+        if self._total.get("score") is None:
+            self.app.notify(
+                "No graded submissions — run grade first",
+                severity="warning",
+            )
+            return
         self._start_job("score", score_assignment, total=self._total["score"])
 
     def action_run_analyze(self) -> None:
@@ -604,7 +551,7 @@ class AssignmentScreen(Vertical):
             return
         self._start_job("analyze", analyze_assignment)
 
-    def action_run_score_view(self) -> None:
+    def action_run_score_review(self) -> None:
         info = self._info
         if info is None:
             return
@@ -672,77 +619,32 @@ class AssignmentScreen(Vertical):
             if action is not None:
                 action()
 
-    # ---------- job protocol ----------
+    # ---------- job protocol (shared core in src.tata_jobs.JobHost) ----------
 
-    def _start_job(
-        self,
-        stage: str,
-        fn: object,
-        *,
-        kwargs: dict | None = None,
-        total: int | None = None,
-    ) -> None:
-        config_path = self._config_path()
-        if config_path is None:
-            return
-        assert self._info is not None
-        if self.state.active_job is not None:
-            self.app.notify(
-                f"'{self.state.active_job}' is running — finish or cancel it first",
-                severity="warning",
-            )
-            return
-        q: queue.Queue = queue.Queue()
-        cancel_event = threading.Event()
-        self._job = {
-            "stage": stage,
-            "fn": fn,
-            "kwargs": kwargs or {},
-            "config_path": config_path,
-            "queue": q,
-            "cancel_event": cancel_event,
-            "total": total,
-            "progress": 0,
-            "state": "running",
-            "text": f"0/{total}" if total else "running…",
-            "dir_name": self._info.dir_name,
-        }
-        self.state.active_job = stage
-        self._log_line(f"▶ {stage} started ({config_path.name})")
-        self._render_busy()
-        self.focus()  # keep bindings alive while the buttons are disabled
-        worker = partial(run_stage_worker, job=self._job)
-        self.run_worker(worker, thread=True, group="stage", exclusive=True)
+    def _config_path(self) -> Path | None:
+        return self._info.config_path if self._info is not None else None
 
-    def _tick(self) -> None:
-        """Main-thread queue drain + filesystem progress poll (0.1 s).
-
-        The queue is drained unconditionally — the worker's ``('done', …)``
-        marker must always be consumed so ``state.active_job`` is released,
-        even when the job belongs to another assignment (the user navigated
-        away while it ran; F1). Only UI updates are gated on the dir match.
-        """
+    def _render_busy(self) -> None:
         job = self._job
-        if job is None:
+        busy = job is not None
+        self.query_one("#ws-progress", Horizontal).display = busy
+        self._render_buttons()
+        if not busy:
             return
-        on_this_dir = (
-            self._info is not None and job.get("dir_name") == self._info.dir_name
-        )
-        q = job["queue"]
-        while True:
-            try:
-                kind, payload = q.get_nowait()
-            except queue.Empty:
-                break
-            if kind == "log":
-                if on_this_dir:
-                    self._log_line(payload)
-            elif kind == "done":
-                self._job_done(payload)
-                return
-        if not on_this_dir:
-            return  # job belongs to another assignment — keep this UI clean
-        # Progress polls the same counters the incremental scan uses.
+        self._render_busy_cancel()
+        bar = self.query_one("#ws-progress > ProgressBar", ProgressBar)
+        total = job.get("total")
+        bar.total = total
+        bar.progress = job.get("progress", 0) if total else 0
+
+    @override
+    def _job_is_ours(self, job: dict) -> bool:
+        """True when the job targets the currently bound assignment."""
+        return self._info is not None and job.get("dir_name") == self._info.dir_name
+
+    @override
+    def poll_progress(self, job: dict) -> None:
+        """Per-tick progress polls the same counters the incremental scan uses."""
         if job["total"]:
             new_done = self._stage_done(job["stage"])
             if new_done != job["progress"]:
@@ -764,38 +666,15 @@ class AssignmentScreen(Vertical):
             return count_recursive(a_dir / "scored")
         return 0
 
-    def _job_done(self, summary: dict | None) -> None:
-        job = self._job
-        if job is None:
-            return
-        # F1: the shared active_job slot is released unconditionally — the
-        # job may belong to another assignment (user navigated away while
-        # it ran). UI updates stay gated on the dir match.
-        self.state.active_job = None
-        self._job = None
-        self._render_busy()
+    @override
+    def job_finished(self, job: dict, summary: dict | None) -> None:
         on_this_dir = self._info is not None and job.get("dir_name") == self._info.dir_name
         if on_this_dir and is_displayed(self):
             self.focus_stage()
-        if on_this_dir and summary:
-            if summary.get("cancelled"):
-                self._log_line(
-                    "Job cancelled — progress saved (checkpoint/mtime based)"
-                )
-                self.app.notify("Cancelled — progress saved", severity="information")
-            else:
-                line = format_job_summary(summary)
-                if line:
-                    self._log_line(line)
-                errors = int(summary.get("errors") or 0)
-                self.app.notify(
-                    line or f"Job {job['stage']} finished",
-                    severity="warning" if errors else "success",
-                )
         self._rescan_after_job(job)
 
     def _rescan_after_job(self, job: dict) -> None:
-        """Re-scan increments; job may outlive the current dashboard level."""
+        """Re-scan increments; the job may outlive the current level."""
         state = self.state
         if state.current_course is not None:
             state.load_assignments(state.current_course)
@@ -812,44 +691,3 @@ class AssignmentScreen(Vertical):
             ):
                 state.current_assignment = fresh[name]
         self.render_all()
-
-    # ---------- log ----------
-
-    def _log_line(self, line: str) -> None:
-        text = escape(line)
-        if line.startswith("[error]") or "✗" in line:
-            styled = f"[red]{text}[/red]"
-        elif "[done]" in line or "✓" in line or line.startswith("[processed]"):
-            styled = f"[green]{text}[/green]"
-        else:
-            styled = text
-        self.query_one("#richlog", RichLog).write(styled)
-
-
-def run_stage_worker(job: dict) -> None:
-    """Worker thread body for one stage job (design 99 §3.1).
-
-    Reads a JobHandle dict; redirects the stage function's stdout/stderr into
-    the handle's log queue and pushes a ``("done", summary)`` marker at the
-    end. Never touches widgets — the main thread drains the queue.
-    """
-    writer = _LineQueueWriter(job["queue"])
-    with (
-        contextlib.redirect_stdout(writer),
-        contextlib.redirect_stderr(writer),
-    ):
-        try:
-            summary = job["fn"](job["config_path"], **job["kwargs"])
-        except BaseException as exc:  # SystemExit from fetch's non-tty exit included
-            job["queue"].put(("log", f"[error] {type(exc).__name__}: {exc}"))
-            summary = {
-                "stage": job["stage"],
-                "success": 0,
-                "errors": 1,
-                "total": 0,
-                "success_rate": 0.0,
-            }
-    if job["cancel_event"].is_set():
-        job["queue"].put(("done", {"cancelled": True}))
-    else:
-        job["queue"].put(("done", summary))

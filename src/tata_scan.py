@@ -16,7 +16,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.assignment_config import FetchSection, is_course_config, load_root_section
+from pydantic import ValidationError
+
+from src.assignment_config import (
+    FetchSection,
+    is_course_config,
+    load_root_section,
+    root_plagiarism_section,
+)
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
 # `display_threshold = 0.8`); NOT the aggregate z-score alpha — z-level flags
@@ -109,6 +116,21 @@ def _fetch_id(config_path: Path, key: str) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def _plagiarism_threshold_pct(config_path: Path | None) -> float:
+    """Course display threshold, tolerant of missing/malformed configs.
+
+    A dirty course config (bad TOML -> ValueError; wrong-type [plagiarism]
+    value -> ValidationError) must not crash scan_courses/load_assignments —
+    the scan layer's doctrine is dirty-data tolerance (see ``_pair_pct``).
+    """
+    try:
+        if config_path is not None:
+            return root_plagiarism_section(config_path).display_threshold * 100
+    except (OSError, ValueError, ValidationError):
+        pass  # dirty config -> default
+    return DISPLAY_THRESHOLD_PCT
+
+
 def _score_summary(scored_dir: Path) -> float | None:
     """Mean percent of the 'Total Score: X/Y' lines under scored/ (None if none)."""
     totals: list[float] = []
@@ -140,7 +162,7 @@ def _pair_pct(pair: dict) -> float:
         return 0.0
 
 
-def _flagged_pairs(assignment_dir: Path) -> int:
+def _flagged_pairs(assignment_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT) -> int:
     """Display-level pairs in ``plagiarism/all_pairs.json`` at/above the
     display threshold (design 04 ``display_threshold``; NOT z-level flags)."""
     pairs_file = assignment_dir / "plagiarism" / "all_pairs.json"
@@ -153,12 +175,20 @@ def _flagged_pairs(assignment_dir: Path) -> int:
     return sum(
         1
         for pair in data.get("pairs", [])
-        if _pair_pct(pair) >= DISPLAY_THRESHOLD_PCT
+        if _pair_pct(pair) >= threshold_pct
     )
 
 
-def scan_assignments(course_dir: Path) -> list[AssignmentInfo]:
-    """Scan the leaf assignment dirs of ``course_dir`` (each holds config.toml)."""
+def scan_assignments(
+    course_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT
+) -> list[AssignmentInfo]:
+    """Scan the leaf assignment dirs of ``course_dir`` (each holds config.toml).
+
+    ``threshold_pct`` is the display flag threshold (percent); the caller
+    (scan_courses / AppState.load_assignments) passes the course's
+    ``[plagiarism] display_threshold`` — the default matches the course
+    config default (0.8).
+    """
     infos: list[AssignmentInfo] = []
     if not course_dir.is_dir():
         return infos
@@ -189,7 +219,7 @@ def scan_assignments(course_dir: Path) -> list[AssignmentInfo]:
                 stage_mtime=mtimes,
                 last_run=max(mtimes.values()) if mtimes else None,
                 score_summary=_score_summary(entry / "scored"),
-                flagged_pairs=_flagged_pairs(entry),
+                flagged_pairs=_flagged_pairs(entry, threshold_pct),
             )
         )
     return infos
@@ -209,7 +239,10 @@ def scan_courses(assignments_dir: Path) -> list[CourseInfo]:
             or not is_course_config(cfg)
         ):
             continue
-        assignments = scan_assignments(entry)
+        assignments = scan_assignments(
+            entry,
+            threshold_pct=_plagiarism_threshold_pct(cfg),
+        )
         counts = Counts()
         score_parts: list[float] = []
         last_run: float | None = None
