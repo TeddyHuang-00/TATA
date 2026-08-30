@@ -29,6 +29,8 @@ import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 
+import tomlkit
+
 SECTIONS = ("course", "assignment", "student")
 
 # roster.csv columns: user_id, user_name, sortable_name, file (file optional)
@@ -150,42 +152,20 @@ def course_student_display_name(
 
 # -- field-level TOML patching (mirrors canvas_fetch's [fetch] patching) ----
 
-def _section_bounds(lines: list[str], table: str) -> tuple[int, int] | None:
-    """(start, end) of ``[table]``: end is the first line that starts a new
-    table (``[x]`` or ``[[x]]``); bare keys after such a line belong to it."""
-    starts = [
-        i
-        for i, ln in enumerate(lines)
-        if ln.strip().split("#", 1)[0].strip() == f"[{table}]"
-    ]
-    if not starts:
-        return None
-    start = starts[0]
-    end = start + 1
-    while end < len(lines) and not lines[end].lstrip().startswith("["):
-        end += 1
-    return start, end
+def _open_alias_doc(path: Path) -> tomlkit.TOMLDocument:
+    """Parse an alias.toml; missing files start from the header comment,
+    corrupt files from an empty document (reads tolerate them too)."""
+    if path.exists():
+        try:
+            return tomlkit.parse(path.read_text(encoding="utf-8"))
+        except tomlkit.exceptions.ParseError:
+            return tomlkit.parse("")
+    return tomlkit.parse(_HEADER)
 
 
-def _section_keys(lines: list[str], start: int, end: int) -> set[str]:
-    keys: set[str] = set()
-    for ln in lines[start + 1 : end]:
-        key = ln.partition("=")[0].strip()
-        if key and not key.startswith("#"):
-            keys.add(key.strip('"\''))
-    return keys
-
-
-def _quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _insert(key_vals: list[str], lines: list[str], start: int, end: int) -> None:
-    """Insert key/value lines at the end of the section content in place."""
-    insert_at = end - 1
-    while insert_at > start and not lines[insert_at].strip():
-        insert_at -= 1
-    lines[insert_at + 1 : insert_at + 1] = key_vals
+def _write_doc(path: Path, doc: tomlkit.TOMLDocument) -> None:
+    text = tomlkit.dumps(doc)
+    path.write_text(text if text.endswith("\n") else text + "\n", encoding="utf-8")
 
 
 def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> None:
@@ -194,22 +174,14 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
     other table/section/unknown key are left untouched."""
     path = assignment_root / "alias.toml"
     entries = {str(k): str(v) for k, v in entries.items()}
-    created = not path.exists()
-    text = path.read_text(encoding="utf-8") if not created else _HEADER
-    lines = text.splitlines()
-    bounds = _section_bounds(lines, "student")
-    if bounds is None:
-        lines.extend(("[student]", ""))
-        start, end = len(lines) - 2, len(lines)
-    else:
-        start, end = bounds
-    existing = _section_keys(lines, start, end)
-    additions = [
-        f"{_quote(k)} = {_quote(v)}" for k, v in entries.items() if k not in existing
-    ]
-    if additions:
-        _insert(additions, lines, start, end)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    doc = _open_alias_doc(path)
+    if "student" not in doc:
+        doc["student"] = {}
+    student = doc["student"]
+    for key, value in entries.items():
+        if key not in student:
+            student[key] = value
+    _write_doc(path, doc)
 
 
 # -- one-time migration: dir names -> assignment ids -----------------------
@@ -238,21 +210,14 @@ def _roster_entries(roster: Path) -> dict[str, str]:
     return entries
 
 
-def _seed_section(
-    alias_path: Path, table: str, key: str, value: str
-) -> None:
+def _seed_section(alias_path: Path, table: str, key: str, value: str) -> None:
     """Add ``key = value`` to ``[table]`` in alias_path if the key is absent."""
-    text = alias_path.read_text(encoding="utf-8") if alias_path.exists() else _HEADER
-    lines = text.splitlines()
-    bounds = _section_bounds(lines, table)
-    if bounds is None:
-        lines.extend((f"[{table}]", ""))
-        start, end = len(lines) - 2, len(lines)
-    else:
-        start, end = bounds
-    if key not in _section_keys(lines, start, end):
-        _insert([f"{_quote(key)} = {_quote(value)}"], lines, start, end)
-    alias_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    doc = _open_alias_doc(alias_path)
+    if table not in doc:
+        doc[table] = {}
+    if key not in doc[table]:
+        doc[table][key] = value
+    _write_doc(alias_path, doc)
 
 
 def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[str]:

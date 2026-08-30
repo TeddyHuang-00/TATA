@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import operator
 import sys
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Literal
 
+import tomlkit
 from canvasapi import Canvas
 
 from src.aliases import upsert_student_aliases
@@ -142,41 +144,6 @@ def fetch_assignment(
     return rows
 
 
-def _fetch_section_bounds(lines: list[str]) -> tuple[int, int] | None:
-    """(start, end) of the top-level [fetch] table: end is the first nested
-    table heading (bare keys after a [[...]]/[x] line belong to that table)."""
-    starts = [
-        i
-        for i, ln in enumerate(lines)
-        if ln.strip().split("#", 1)[0].strip() == "[fetch]"
-    ]
-    if not starts:
-        return None
-    start = starts[0]
-    end = start + 1
-    while end < len(lines) and not lines[end].lstrip().startswith("["):
-        end += 1
-    return start, end
-
-
-def _patch_fetch_section(
-    lines: list[str], start: int, end: int, values: dict[str, str]
-) -> None:
-    """Update the [fetch] keys in place; nested tables ([[fetch.assignments]])
-    and unknown keys stay untouched."""
-    section = lines[start + 1 : end]
-    done: set[str] = set()
-    for i, ln in enumerate(section):
-        key = ln.partition("=")[0].strip()
-        if key in values:
-            section[i] = f"{key} = {values[key]}"
-            done.add(key)
-    for key, val in values.items():
-        if key not in done:
-            section.append(f"{key} = {val}")
-    lines[start + 1 : end] = section
-
-
 def remember_fetch(
     config_path: Path,
     *,
@@ -193,28 +160,27 @@ def remember_fetch(
     file is created if missing. Course-level state goes to the course config,
     assignment-level state to the assignment config.
     """
-    if not config_path.exists():
-        text = "# TATA config: add [grading] with rubric/system_prompt/provider.\n"
+    if config_path.exists():
+        try:
+            doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+        except (OSError, tomlkit.exceptions.ParseError):
+            doc = tomlkit.parse("")
     else:
-        text = config_path.read_text(encoding="utf-8")
+        doc = tomlkit.parse(
+            "# TATA config: add [grading] with rubric/system_prompt/provider.\n"
+        )
 
     # Defaults (mode=auto, out_dir=raw) stay omitted, as before.
-    values: dict[str, str] = {}
+    fetch = doc.get("fetch")
+    if not isinstance(fetch, MutableMapping):
+        doc["fetch"] = {}
+        fetch = doc["fetch"]
     if course_id is not None:
-        values["course_id"] = str(course_id)
+        fetch["course_id"] = course_id
     if assignment_id is not None:
-        values["assignment_id"] = str(assignment_id)
+        fetch["assignment_id"] = assignment_id
     if mode is not None and mode != "auto":
-        values["mode"] = f'"{mode}"'
+        fetch["mode"] = mode
     if out_dir is not None and out_dir != "raw":
-        values["out_dir"] = f'"{out_dir}"'
-
-    bounds = _fetch_section_bounds(text.splitlines())
-    if bounds is None:
-        block = "[fetch]\n" + "\n".join(f"{k} = {v}" for k, v in values.items()) + "\n"
-        text = text.rstrip() + "\n\n" + block
-    else:
-        lines = text.splitlines()
-        _patch_fetch_section(lines, *bounds, values)
-        text = "\n".join(lines) + "\n"
-    config_path.write_text(text, encoding="utf-8")
+        fetch["out_dir"] = out_dir
+    config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")

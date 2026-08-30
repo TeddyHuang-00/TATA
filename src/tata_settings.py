@@ -20,16 +20,16 @@ schema generation / full hook-model editing are not implemented.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
 import tomllib
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
+import tomlkit
 from canvasapi import Canvas
 from pydantic import ValidationError
 from textual.app import ComposeResult
@@ -114,62 +114,52 @@ _SECTION_MODELS: dict[str, type] = {
     "plagiarism": PlagiarismSection,
 }
 
-_SAFE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 _WEIGHT_EPS = 1e-6  # tolerance for the copydetect+embedding sum check
 
 
 def _dump_toml(data: dict) -> str:
-    """Serialize ``data`` back to TOML.
+    """Serialize ``data`` back to TOML via tomlkit.
 
-    ponytail: stdlib ``tomllib`` is read-only and the ``toml`` PyPI package is
-    not a dependency, so this mini writer covers the shapes these configs
-    actually contain (scalars, lists of scalars, ``[table]`` and
-    ``[[table]]``/``[a.b]`` nesting). Keys are emitted bare when they match
-    ``[A-Za-z0-9_-]+`` (true for every schema key), quoted otherwise; strings
-    use JSON escaping, a subset of TOML basic-string escapes.
+    ponytail: stdlib ``tomllib`` is read-only, so tomlkit does the
+    serialization for the shapes these configs contain (scalars, lists,
+    ``[table]`` / ``[[table]]`` nesting). None values are skipped (TOML has
+    no null).
     """
 
-    def scalar(value: object) -> str:
-        if isinstance(value, str):
-            return json.dumps(value)
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, int):
-            return str(value)
-        if isinstance(value, float):
-            return repr(value)
+    def clean(value: object) -> object:
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items() if v is not None}
         if isinstance(value, list):
-            return "[" + ", ".join(scalar(item) for item in value) + "]"
-        message = f"unsupported TOML value: {type(value).__name__}"
-        raise TypeError(message)
+            return [clean(v) for v in value if v is not None]
+        return value
 
-    def table(prefix: str, section: dict) -> list[str]:
-        lines: list[str] = []
-        for key, value in section.items():
-            if value is None or isinstance(value, (dict, list)):
-                continue
-            lines.append(f"{_key(key)} = {scalar(value)}")
-        for key, value in section.items():
+    return tomlkit.dumps(tomlkit.item(clean(data)))
+
+
+def _dump_edits(path: Path, edits: dict[str, dict[str, object]]) -> str:
+    """Overlay ``edits`` in place on the file's existing TOML document.
+
+    The original text is parsed, so comments, formatting and unknown keys
+    survive (the old ``_dump_toml`` rebuilt the whole file from the parsed
+    dict and destroyed user comments) — only the edited keys change. Missing
+    or unparseable files start from an empty document; None values are never
+    written.
+    """
+    try:
+        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+    except (OSError, tomlkit.exceptions.ParseError):
+        doc = tomlkit.parse("")
+    for section, values in edits.items():
+        table = doc.get(section)
+        if not isinstance(table, MutableMapping):
+            doc[section] = tomlkit.table()
+            table = doc[section]
+        for key, value in values.items():
             if value is None:
                 continue
-            name = f"{prefix}.{key}" if prefix else key
-            if isinstance(value, list) and all(
-                isinstance(item, dict) for item in value
-            ):
-                for item in value:
-                    lines.append(f"[[{name}]]")
-                    lines.extend(table(name, item))
-            elif isinstance(value, dict):
-                lines.append(f"[{name}]")
-                lines.extend(table(name, value))
-            elif isinstance(value, list):
-                lines.append(f"{_key(key)} = {scalar(value)}")
-        return lines
-
-    def _key(key: str) -> str:
-        return key if _SAFE_KEY.fullmatch(key) else json.dumps(key)
-
-    return "\n".join(table("", data)) + "\n"
+            table[key] = value
+    out = tomlkit.dumps(doc)
+    return out if out.endswith("\n") else out + "\n"
 
 
 def merge_edits(original: dict, edits: dict) -> dict:
@@ -836,8 +826,7 @@ class SettingsScreen(Vertical):
         if problems:
             self._fail("Validation failed", "; ".join(problems))
             return
-        original = self._read_raw(target)
-        content = _dump_toml(merge_edits(original, edits))
+        content = _dump_edits(target, edits)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")

@@ -9,10 +9,8 @@ Run: ``uv run python src/tata_app.py``
 
 from __future__ import annotations
 
-import json
 import time
-import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import partial
@@ -20,6 +18,7 @@ from pathlib import Path
 from typing import ClassVar, Literal, override
 
 import main as main_mod
+import tomlkit
 from canvasapi import Canvas
 from rich.markup import escape
 from textual.app import App, ComposeResult
@@ -514,21 +513,28 @@ class DashboardScreen(Vertical):
         # — the fetch itself already succeeded.
         cfg_path = course.config_path
         try:
-            data = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-            fetch = data.get("fetch")
-            entries = fetch.get("assignments") if isinstance(fetch, dict) else None
-            if isinstance(entries, list) and any(
-                isinstance(e, dict) and e.get("assignment_id") == aid for e in entries
-            ):
-                return
-        except (OSError, tomllib.TOMLDecodeError):
+            doc = tomlkit.parse(cfg_path.read_text(encoding="utf-8"))
+        except (OSError, tomlkit.exceptions.ParseError):
             return
-        cfg_path.write_text(
-            cfg_path.read_text(encoding="utf-8").rstrip()
-            + f"\n\n[[fetch.assignments]]\nassignment_id = {aid}\n"
-            + f'out = {json.dumps(f"{out}/raw")}\n',
-            encoding="utf-8",
+        fetch = doc.get("fetch")
+        entries = (
+            fetch.get("assignments") if isinstance(fetch, MutableMapping) else None
         )
+        if isinstance(entries, list) and any(
+            isinstance(e, dict) and e.get("assignment_id") == aid for e in entries
+        ):
+            return
+        if isinstance(fetch, MutableMapping):
+            if "assignments" not in fetch:
+                fetch["assignments"] = tomlkit.aot()
+            fetch["assignments"].append({"assignment_id": aid, "out": f"{out}/raw"})
+        else:
+            doc["fetch"] = {"assignments": tomlkit.aot()}
+            doc["fetch"]["assignments"].append({
+                "assignment_id": aid,
+                "out": f"{out}/raw",
+            })
+        cfg_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
 
     def _rescan_course(self) -> None:
         if self.state.current_course is not None:
