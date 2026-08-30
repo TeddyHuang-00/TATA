@@ -10,6 +10,7 @@ from src.plagiarism import (
     _blend_rows,
     _pair_key,
     _write_full_pair_data,
+    detect_plagiarism,
 )
 
 
@@ -74,3 +75,121 @@ def test_blend_rows_weights() -> None:
     assert by_key["a.md", "c.md"]["embedding_similarity_pct"] is None
     # Sorted by blended score descending.
     assert blended[0]["max_similarity_pct"] == pytest.approx(81.0)
+
+
+# -- T2a/T2b: code detector autoopen fix + quiet aggregate report ------------
+
+
+def _minimal_notebook() -> str:
+    return json.dumps(
+        {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": ["print(1)"],
+                }
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+    )
+
+
+def test_code_detector_disables_autoopen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T2a: the code-path CopyDetector must be constructed with
+    autoopen=False/silent=True (a default autoopen=True opens a browser
+    window from inside the TUI worker thread)."""
+    captured: list[dict] = []
+
+    class FakeDetector:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+            self.test_files: list[str] = []
+            self.ref_files: list[str] = []
+            self.similarity_matrix: list = []
+            self.token_overlap_matrix: list = []
+
+        def run(self) -> None:
+            pass
+
+        def generate_html_report(self) -> None:
+            pass
+
+    monkeypatch.setattr("src.plagiarism.CopyDetector", FakeDetector)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "raw").mkdir()
+        (root / "raw" / "100001.ipynb").write_text(
+            _minimal_notebook(), encoding="utf-8"
+        )
+        (root / "config.toml").write_text(
+            "[fetch]\nassignment_id = 1001\n"
+            "[grading]\nrubric = 'rubrics/exam.toml'\n"
+            "system_prompt = 'prompt/system.md'\n"
+            "provider = 'deepseek'\n"
+            "max_parallel_tasks = 4\n"
+            "[plagiarism]\ndisplay_threshold = 0.9\n",
+            encoding="utf-8",
+        )
+        detect_plagiarism(root / "config.toml")
+
+    assert captured, "code-path CopyDetector should have been constructed"
+    assert captured[-1]["autoopen"] is False, captured[-1]
+    assert captured[-1]["silent"] is True, captured[-1]
+
+
+def test_aggregate_quiet_suppresses_stdout_report(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """T2b: quiet=True skips the text report print (TUI jobs read
+    aggregate.json instead); quiet=False keeps it (CLI unchanged)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        a_dir = root / "a1"
+        (a_dir / "plagiarism").mkdir(parents=True)
+        (a_dir / "config.toml").write_text("", encoding="utf-8")
+        pairs = [
+            {
+                "test_file": "1001.md",
+                "reference_file": "1002.md",
+                "test_similarity_pct": 80.0,
+                "reference_similarity_pct": 85.0,
+                "max_similarity_pct": 85.0,
+                "token_overlap": 10,
+            },
+            {
+                "test_file": "1001.md",
+                "reference_file": "1003.md",
+                "test_similarity_pct": 50.0,
+                "reference_similarity_pct": 55.0,
+                "max_similarity_pct": 55.0,
+                "token_overlap": 3,
+            },
+        ]
+        (a_dir / "plagiarism" / "all_pairs.json").write_text(
+            json.dumps({"version": 1, "pairs": pairs}), encoding="utf-8"
+        )
+        (root / "config.toml").write_text("[fetch]\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "src.plagiarism._run_assignment",
+            lambda cfg: {
+                "stage": "plagiarism",
+                "success": 0,
+                "errors": 0,
+                "total": 0,
+                "success_rate": 0,
+            },
+        )
+
+        detect_plagiarism(root / "config.toml", aggregate=True, quiet=True)
+        out = capsys.readouterr().out
+        assert "Cross-Assignment Aggregate" not in out, out
+
+        detect_plagiarism(root / "config.toml", aggregate=True, quiet=False)
+        out = capsys.readouterr().out
+        assert "Cross-Assignment Aggregate" in out, out

@@ -1,18 +1,22 @@
-"""S4 Plagiarism screen (T6a): pair ranking + course aggregate panes.
+"""S4 Plagiarism screen (T2): course-scoped tabs + embedded compare pane.
 
-Two panes (``TabbedContent``): ``#pane-pairs`` — per-assignment pair table
-(sorted by ``max_similarity_pct``, top 20 rows) — and ``#pane-aggregate`` —
-course-level z-score table.  ``enter`` on a pair opens a side-by-side
-compare ``ModalScreen``.  All UI copy is English (design 04 v1.1; no
-cross-course pane — that was dropped by user decision).
+Four tabs (``TabbedContent``, aggregate first): ``#pane-aggregate`` —
+course-level z-score table; ``#pane-assignments`` — per-assignment ranking;
+``#pane-students`` — per-student ranking; ``#pane-pairs`` — per-pair ranking
+with an embedded ``#cmp-pane`` side-by-side compare (no pushed modal; the
+pane updates live on row highlight).  All UI copy is English (design 04
+v1.1).
 
 Jobs reuse the S2 JobHandle protocol (design 99 §3.1): the worker thread
-runs :func:`src.plagiarism.detect_plagiarism` with stdout redirected into a
-log queue; the main thread drains it into the RichLog.  ``[p]`` detects the
-current assignment, ``[a]`` runs the course aggregate.
+runs :func:`src.plagiarism.detect_plagiarism` (quiet=True — the panes read
+the JSON, not the text report) with stdout redirected into a log queue; the
+main thread drains it into the RichLog.  ``[p]`` detects the current
+assignment, ``[a]`` runs the course aggregate.
 
-Data sources:
-- pairs: ``<assignment>/plagiarism/all_pairs.json`` (copydetect rows)
+Data sources (course-scoped; no dependence on ``state.current_assignment``):
+- pairs: ``<assignment>/plagiarism/all_pairs.json`` per assignment in
+  ``state.assignments`` (values may be strings; every float conversion is
+  tolerant)
 - aggregate: ``<course>/plagiarism/aggregate.json`` — ``detect_plagiarism``
   only prints the text report, so the [a] worker additionally writes this
   JSON; the pane reads it.  Rows are built with ``aggregate_pair_rows`` —
@@ -33,7 +37,6 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     DataTable,
@@ -50,10 +53,10 @@ from src.aliases import (
     course_student_display_name,
     student_display_name,
 )
-from src.assignment_config import load_assignment_file
-from src.plagiarism import detect_plagiarism
+from src.plagiarism import detect_plagiarism, root_plagiarism_section
 from src.plagiarism_aggregate import aggregate_pair_rows
 from src.score_review import base_uid, find_raw_file, preview_content
+from src.tata_scan import AssignmentInfo
 from src.tata_workspace import (
     format_job_summary,
     is_displayed,
@@ -70,7 +73,7 @@ AGG_ALPHA_FALLBACK = 0.01
 AGG_JSON_NAME = "aggregate.json"
 Z_WATCH_THRESHOLD = 3.0
 
-_ALPHA = "\N{GREEK SMALL LETTER ALPHA}"
+_PANE_ORDER = ["pane-aggregate", "pane-assignments", "pane-students", "pane-pairs"]
 
 _FLAG_TEXT = Text("FLAG", style="red bold")
 _WATCH_TEXT = Text("? watch", style="yellow bold")
@@ -102,6 +105,29 @@ def _load_pairs(assignment_dir: Path) -> tuple[list[dict] | None, str | None]:
     return data["pairs"], None
 
 
+def _load_course_pairs(
+    state: AppState,
+) -> tuple[list[tuple[AssignmentInfo, dict]], list[str]]:
+    """Course-scoped pairs: ``(assignment_info, pair)`` for every assignment
+    in ``state.assignments`` that has pair data.
+
+    Returns ``(loaded, errors)``; absent files (detection not run) are
+    skipped silently, corrupt/malformed payloads are recorded as per-
+    assignment errors.
+    """
+    loaded: list[tuple[AssignmentInfo, dict]] = []
+    errors: list[str] = []
+    for info in state.assignments:
+        pairs, err = _load_pairs(info.config_path.parent)
+        if err is not None:
+            errors.append(f"{info.dir_name}: {err}")
+            continue
+        if pairs is None:
+            continue
+        loaded.extend((info, pair) for pair in pairs)
+    return loaded, errors
+
+
 def _load_aggregate(course_dir: Path) -> tuple[dict | None, str | None]:
     """(aggregate payload, error).  ``None`` payload = file absent."""
     file_ = _aggregate_file(course_dir)
@@ -113,17 +139,32 @@ def _load_aggregate(course_dir: Path) -> tuple[dict | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
     if not isinstance(data, dict):
         return None, "malformed payload (not an object)"
+    if not isinstance(data.get("pairs"), list):
+        return None, "malformed payload (missing list 'pairs')"
     return data, None
 
 
 def _display_threshold_pct(config_path: Path | None) -> float:
-    """Assignment ``[plagiarism] display_threshold`` as percent (80 default)."""
+    """Course ``[plagiarism] display_threshold`` as percent (80 default)."""
     if config_path is None:
         return DEFAULT_DISPLAY_THRESHOLD_PCT
+    # root-section read: course configs carry no [grading]; missing section
+    # falls back to PlagiarismSection defaults (0.8)
+    return root_plagiarism_section(config_path).display_threshold * 100.0
+
+
+def _pair_pct(pair: dict) -> float:
+    """``max_similarity_pct`` as float (0.0 on missing/malformed values).
+
+    Real data writes floats, but dirty JSON (strings, nulls, non-dict
+    entries) must not crash the TUI.
+    """
+    if not isinstance(pair, dict):
+        return 0.0
     try:
-        return float(load_assignment_file(config_path).plagiarism.display_threshold) * 100.0
-    except Exception:
-        return DEFAULT_DISPLAY_THRESHOLD_PCT
+        return float(pair.get("max_similarity_pct", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _overlap_display(pair: dict) -> str:
@@ -134,6 +175,22 @@ def _overlap_display(pair: dict) -> str:
     if isinstance(overlap, float):
         return str(int(overlap))
     return str(overlap)  # int or missing
+
+
+def pair_side_name(
+    assignments_dir: Path,
+    course_dir_name: str,
+    assignment_info: AssignmentInfo,
+    file_name: str | None,
+) -> str:
+    """Display name for one pair side: the file stem is the student uid."""
+    stem = Path(str(file_name)).stem
+    return student_display_name(
+        assignments_dir,
+        course_dir_name,
+        assignment_info.dir_name,
+        base_uid(stem),
+    )
 
 
 # ---------- aggregate JSON writer (used by the [a] job) ----------
@@ -147,7 +204,10 @@ def _aggregate_rows(course_dir: Path, alpha: float, floor: float, cap: float) ->
 def _write_aggregate_json(course_config: Path) -> Path:
     """Write ``<course>/plagiarism/aggregate.json`` for the pane."""
     course_dir = course_config.parent
-    plag = load_assignment_file(course_config).plagiarism
+    # Root-section read: course configs carry no [grading], so the layered
+    # load_assignment_file path raises on real data.  Same section source
+    # the CLI aggregate report uses (root_plagiarism_section).
+    plag = root_plagiarism_section(course_config)
     rows = sorted(
         _aggregate_rows(
             course_dir,
@@ -177,13 +237,14 @@ def _write_aggregate_json(course_config: Path) -> Path:
 
 
 def _run_detect_job(config_path: Path) -> dict | None:
-    """Single-assignment copydetect run (no aggregate)."""
-    return detect_plagiarism(config_path, aggregate=False)
+    """Single-assignment copydetect run (no aggregate); quiet: the pane
+    reads all_pairs.json, not the text report."""
+    return detect_plagiarism(config_path, aggregate=False, quiet=True)
 
 
-def _run_aggregate_job(config_path: Path) -> dict | None:
-    """Course aggregate: detect_plagiarism (text to the log) + JSON for the pane."""
-    summary = detect_plagiarism(config_path, aggregate=True)
+def run_aggregate_job(config_path: Path) -> dict | None:
+    """Course aggregate: detect_plagiarism (quiet) + JSON for the pane."""
+    summary = detect_plagiarism(config_path, aggregate=True, quiet=True)
     try:
         _write_aggregate_json(config_path)
     except Exception as exc:
@@ -191,23 +252,7 @@ def _run_aggregate_job(config_path: Path) -> dict | None:
     return summary
 
 
-# ---------- compare modal ----------
-
-
-def _pair_student_name(
-    state: AppState, file_name: str | None
-) -> str:
-    """Display name for one pair side: the file stem is the student uid."""
-    stem = Path(str(file_name)).stem
-    info = state.current_assignment
-    if info is None:
-        return stem
-    return student_display_name(
-        state.assignments_dir,
-        state.current_course.dir_name if state.current_course is not None else "",
-        info.dir_name,
-        base_uid(stem),
-    )
+# ---------- side resolution (shared by the compare pane) ----------
 
 
 def _resolve_side(assignment_dir: Path, file_name: str) -> tuple[Path | None, Path | None]:
@@ -243,60 +288,25 @@ def _side_lines(
     return "\n".join(out)
 
 
-class CompareModal(ModalScreen[None]):
-    """Side-by-side file comparison (design 04 §1)."""
+# ---------- embedded compare pane ----------
 
-    BINDINGS: ClassVar = [
-        Binding("escape", "close", "Close", show=False),
-        Binding("c", "close", "Close", show=False),
-    ]
 
-    def __init__(
-        self,
-        title: str,
-        left_name: str,
-        left_text: str,
-        right_name: str,
-        right_text: str,
-    ) -> None:
-        super().__init__()
-        self._title = title
-        self._left_name = left_name
-        self._left_text = left_text
-        self._right_name = right_name
-        self._right_text = right_text
-
-    def action_close(self) -> None:
-        self.dismiss()
-
-    @override
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="confirm-modal"):
-            yield Static(f"[b]{escape(self._title)}[/b]", classes="modal-title")
-            with Grid(id="cmp-grid"):
-                with VerticalScroll():
-                    yield Static(f"[b]{escape(self._left_name)}[/b]", markup=True)
-                    yield Static(self._left_text, markup=True, id="cmp-left")
-                with VerticalScroll():
-                    yield Static(f"[b]{escape(self._right_name)}[/b]", markup=True)
-                    yield Static(self._right_text, markup=True, id="cmp-right")
-
-    def on_mount(self) -> None:
-        grid = self.query_one("#cmp-grid", Grid)
-        grid.styles.grid_size_columns = 2
-        grid.styles.grid_size_rows = 1
-        grid.styles.grid_columns = "1fr 1fr"
-        grid.styles.grid_rows = "1fr"
-        for scroll in self.query(VerticalScroll):
-            scroll.styles.height = "1fr"
-        self.query_one("Vertical", Vertical).styles.max_height = 36
+def _cmp_pane() -> ComposeResult:
+    """Side-by-side compare below the pairs table (hidden by default)."""
+    with Horizontal(id="cmp-pane"), Vertical():
+        yield Static("", id="cmp-title", markup=True)
+        with Grid(id="cmp-grid"):
+            with VerticalScroll():
+                yield Static("", id="cmp-left", markup=True)
+            with VerticalScroll():
+                yield Static("", id="cmp-right", markup=True)
 
 
 # ---------- the screen ----------
 
 
 class PlagiarismScreen(Vertical):
-    """S4 plagiarism tab: pairs + aggregate panes with p/a job buttons."""
+    """S4 plagiarism tab: course-scoped tabs with p/a job buttons."""
 
     can_focus = True  # keeps screen bindings alive while a job runs
 
@@ -316,9 +326,9 @@ class PlagiarismScreen(Vertical):
         super().__init__(id="plagiarism")
         self.state = state
         self._job: dict | None = None
-        self._pairs: list[dict] | None = None
-        self._pairs_error: str | None = None
-        self._visible_pairs: list[dict] = []
+        self._course_pairs: list[tuple[AssignmentInfo, dict]] = []
+        self._course_errors: list[str] = []
+        self._visible_rows: list[tuple[AssignmentInfo, dict]] = []
         self._agg: dict | None = None
         self._agg_error: str | None = None
         self._threshold_pct = DEFAULT_DISPLAY_THRESHOLD_PCT
@@ -332,13 +342,20 @@ class PlagiarismScreen(Vertical):
         with Horizontal(id="plag-buttons"):
             yield Button("Run detection", id="plag-run")
             yield Button("Run aggregate", id="plag-aggregate")
-        with TabbedContent(id="plag-tabs", initial="pane-pairs"):
-            with TabPane("Pairs", id="pane-pairs"):
-                yield DataTable(id="pairs-table", cursor_type="row", zebra_stripes=True)
-                yield Static("", id="pairs-empty", markup=True)
+        with TabbedContent(id="plag-tabs", initial="pane-aggregate"):
             with TabPane("Aggregate", id="pane-aggregate"):
                 yield DataTable(id="agg-table", cursor_type="row", zebra_stripes=True)
                 yield Static("", id="agg-empty", markup=True)
+            with TabPane("Assignments", id="pane-assignments"):
+                yield DataTable(id="assign-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="assign-empty", markup=True)
+            with TabPane("Students", id="pane-students"):
+                yield DataTable(id="students-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="students-empty", markup=True)
+            with TabPane("Pairs", id="pane-pairs"):
+                yield DataTable(id="pairs-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="pairs-empty", markup=True)
+                yield from _cmp_pane()
         with Horizontal(id="plag-progress"):
             yield Static("", id="plag-progress-text", markup=True)
             yield ProgressBar(show_eta=False, id="plag-bar")
@@ -356,15 +373,37 @@ class PlagiarismScreen(Vertical):
     def on_mount(self) -> None:
         self.styles.height = "1fr"
         self.query_one("#plag-tabs", TabbedContent).styles.height = "1fr"
-        self.query_one("#plag-log", RichLog).styles.height = 12
+        self.query_one("#plag-log", RichLog).styles.height = 8
         self.query_one("#plag-progress", Horizontal).display = False
-        for table_id in ("pairs-table", "agg-table"):
+        for table_id in (
+            "pairs-table",
+            "assign-table",
+            "students-table",
+            "agg-table",
+        ):
             self.query_one(f"#{table_id}", DataTable).styles.height = "1fr"
-        for empty_id in ("pairs-empty", "agg-empty"):
+        for empty_id in (
+            "pairs-empty",
+            "assign-empty",
+            "students-empty",
+            "agg-empty",
+        ):
             empty = self.query_one(f"#{empty_id}", Static)
             empty.styles.height = "1fr"
             empty.styles.content_align = ("center", "middle")
             empty.styles.opacity = 0.6
+        # embedded compare pane: ~40% of the pairs pane, table takes the rest
+        cmp_pane = self.query_one("#cmp-pane", Horizontal)
+        cmp_pane.display = False
+        cmp_pane.styles.height = "40%"
+        self.query_one("#cmp-pane > Vertical", Vertical).styles.width = "1fr"
+        grid = self.query_one("#cmp-grid", Grid)
+        grid.styles.grid_size_columns = 2
+        grid.styles.grid_size_rows = 1
+        grid.styles.grid_columns = "1fr 1fr"
+        grid.styles.grid_rows = "1fr"
+        for scroll in self.query("#cmp-pane VerticalScroll"):
+            scroll.styles.height = "1fr"
         self.set_interval(0.1, self._tick)
         self.reload_all()
 
@@ -390,8 +429,8 @@ class PlagiarismScreen(Vertical):
 
         # pre-existing errors may have cleared on a later load
         self._last_error = None
-        self._pairs_error = None
         self._agg_error = None
+        self._course_errors = []
         for widget_id in (
             "#plag-topbar",
             "#plag-buttons",
@@ -401,25 +440,23 @@ class PlagiarismScreen(Vertical):
             self.query_one(widget_id).display = True
         empty.display = False
 
-        info = state.current_assignment
-        self._threshold_pct = _display_threshold_pct(
-            info.config_path if info is not None else None
-        )
-        if info is not None:
-            self._pairs, self._pairs_error = _load_pairs(info.config_path.parent)
-        else:
-            self._pairs, self._pairs_error = None, None
-        self._agg, self._agg_error = _load_aggregate(
-            state.current_course.config_path.parent
-        )
+        course = state.current_course
+        # the panes are course-scoped: the knob is the course-level threshold
+        self._threshold_pct = _display_threshold_pct(course.config_path)
+        self._course_pairs, self._course_errors = _load_course_pairs(state)
+        self._agg, self._agg_error = _load_aggregate(course.config_path.parent)
         self._notify_load_errors()
         self._render_topbar()
+        self._render_assignments()
+        self._render_students()
         self._render_pairs()
         self._render_aggregate()
         self._render_status()
 
     def _notify_load_errors(self) -> None:
-        errors = [e for e in (self._pairs_error, self._agg_error) if e is not None]
+        errors = list(self._course_errors)
+        if self._agg_error is not None:
+            errors.append(self._agg_error)
         joined = " / ".join(errors) if errors else None
         if joined is not None and joined != self._last_error:
             self._last_error = joined
@@ -427,9 +464,12 @@ class PlagiarismScreen(Vertical):
 
     # ---------- rendering ----------
 
+    def _course_dir_name(self) -> str:
+        course = self.state.current_course
+        return course.dir_name if course is not None else ""
+
     def _render_topbar(self) -> None:
         state = self.state
-        info = state.current_assignment
         course = state.current_course
         context = (
             course_display_name(
@@ -438,77 +478,187 @@ class PlagiarismScreen(Vertical):
             if course is not None
             else "-"
         )
-        if info is not None:
-            context += (
-                " / "
-                + assignment_display_name(
-                    state.assignments_dir,
-                    course.dir_name if course is not None else "",
-                    info.dir_name,
-                    info.assignment_id,
-                )
-            )
-        n = len(self._pairs) if self._pairs is not None else 0
-        top = f"Plagiarism · [b]{escape(context)}[/b]  ·  pairs {n}"
-        if n > PAGE_ROWS:
-            top += f" (top {PAGE_ROWS})"
-        top += f"  ·  display threshold {self._threshold_pct:.0f}%"
+        n_pairs = len(self._course_pairs)
+        cap = f" (top {PAGE_ROWS})" if n_pairs > PAGE_ROWS else ""
+        top = (
+            f"Plagiarism · [b]{escape(context)}[/b]  ·  pairs {n_pairs}{cap}"
+            f"  ·  display threshold {self._threshold_pct:.0f}%"
+        )
         self.query_one("#plag-topbar", Static).update(top)
 
-    def _render_pairs(self) -> None:
-        table = self.query_one("#pairs-table", DataTable)
-        empty = self.query_one("#pairs-empty", Static)
+    def _render_assignments(self) -> None:
+        table = self.query_one("#assign-table", DataTable)
+        empty = self.query_one("#assign-empty", Static)
         table.clear(columns=True)
-        if self._pairs_error is not None:
-            self._show_pane_empty(empty, table, f"Load failed: {self._pairs_error}")
-            return
-        if self.state.current_assignment is None:
+        by_assignment: dict[str, list[dict]] = {}
+        for a, pair in self._course_pairs:
+            by_assignment.setdefault(a.dir_name, []).append(pair)
+        state = self.state
+        course_dir_name = self._course_dir_name()
+        rows: list[tuple[AssignmentInfo, int, int, float]] = []
+        for a in state.assignments:
+            pairs = by_assignment.get(a.dir_name, [])
+            max_sim = max((_pair_pct(p) for p in pairs), default=0.0)
+            flagged = sum(
+                1 for p in pairs if _pair_pct(p) >= self._threshold_pct
+            )
+            rows.append((a, len(pairs), flagged, max_sim))
+        rows.sort(key=lambda r: (-r[3], r[0].dir_name))
+        if not rows:
             self._show_pane_empty(
-                empty,
-                table,
-                "No assignment selected. Open Dashboard and enter an assignment first.",
+                empty, table, "No assignments in this course."
             )
             return
-        if self._pairs is None:
-            self._show_pane_empty(
-                empty,
-                table, "No pairs yet. Run plagiarism (p) or aggregation (a)."
-            )
-            return
-        if not self._pairs:
-            self._show_pane_empty(
-                empty,
-                table,
-                "Detection done, 0 pairs (submissions <2 or all below threshold).",
-            )
-            return
-        table.add_columns("File A", "File B", "sim %", "overlap", "diff", "Flag")
-        rows = sorted(
-            self._pairs,
-            key=lambda p: float(p.get("max_similarity_pct") or 0.0),
-            reverse=True,
-        )[:PAGE_ROWS]
-        self._visible_pairs = rows
-        for index, pair in enumerate(rows):
-            sim = float(pair.get("max_similarity_pct") or 0.0)
-            diff = sim - self._threshold_pct
+        table.add_columns("Assignment", "Pairs", "Flagged", "Max sim %")
+        for index, (a, count, flagged, max_sim) in enumerate(rows):
             table.add_row(
-                escape(_pair_student_name(self.state, str(pair.get("test_file")))),
-                escape(_pair_student_name(self.state, str(pair.get("reference_file")))),
-                f"{sim:.1f}",
-                _overlap_display(pair),
-                f"{diff:+.1f}",
-                _FLAG_TEXT if sim >= self._threshold_pct else _DASH_TEXT,
+                escape(
+                    assignment_display_name(
+                        state.assignments_dir,
+                        course_dir_name,
+                        a.dir_name,
+                        a.assignment_id,
+                    )
+                ),
+                str(count),
+                str(flagged),
+                f"{max_sim:.1f}",
+                key=str(index),
+            )
+        empty.display = False
+        table.display = True
+        if self._course_errors:
+            # per-assignment load failures: note under the table (rows that
+            # did load stay visible)
+            empty.update(
+                "[dim]Load failed: "
+                + escape("; ".join(self._course_errors))
+                + "[/dim]"
+            )
+            empty.styles.height = "auto"
+            empty.display = True
+
+    def _render_students(self) -> None:
+        table = self.query_one("#students-table", DataTable)
+        empty = self.query_one("#students-empty", Static)
+        table.clear(columns=True)
+        state = self.state
+        course_dir_name = self._course_dir_name()
+        # Students aggregated over all course pairs by base uid.  A pair
+        # counts once per student per row (a self-pair still counts); the
+        # display name comes from the first pair/assignment the student
+        # appears in (state.assignments order) — alias chains are
+        # per-student, so the choice is cosmetic but deterministic.
+        students: dict[str, list] = {}
+        for a, pair in self._course_pairs:
+            sim = _pair_pct(pair)
+            flagged = sim >= self._threshold_pct
+            seen: set[str] = set()
+            for key in ("test_file", "reference_file"):
+                stem = Path(str(pair.get(key) or "")).stem
+                uid = base_uid(stem)
+                if uid in seen:
+                    continue
+                seen.add(uid)
+                rec = students.get(uid)
+                if rec is None:
+                    rec = [
+                        pair_side_name(
+                            state.assignments_dir,
+                            course_dir_name,
+                            a,
+                            str(pair.get(key)),
+                        ),
+                        0,
+                        0,
+                        0.0,
+                    ]
+                    students[uid] = rec
+                rec[1] += 1
+                if flagged:
+                    rec[2] += 1
+                rec[3] = max(rec[3], sim)
+        rows = sorted(students.values(), key=lambda r: (-r[3], str(r[0])))
+        if not rows:
+            self._show_pane_empty(
+                empty,
+                table,
+                "No pairs yet. Run detection (p) or aggregation (a).",
+            )
+            return
+        table.add_columns("Student", "Pairs", "Flagged", "Max sim %")
+        for index, (name, count, flagged, max_sim) in enumerate(rows):
+            table.add_row(
+                escape(name),
+                str(count),
+                str(flagged),
+                f"{max_sim:.1f}",
                 key=str(index),
             )
         empty.display = False
         table.display = True
 
-    @staticmethod
-    def _show_pane_empty(empty: Static, table: DataTable, message: str) -> None:
-        empty.update(message)
-        empty.display = True
-        table.display = False
+    def _render_pairs(self) -> None:
+        table = self.query_one("#pairs-table", DataTable)
+        empty = self.query_one("#pairs-empty", Static)
+        table.clear(columns=True)
+        if not self._course_pairs:
+            self._show_pane_empty(
+                empty,
+                table,
+                "No pairs yet. Run detection (p) or aggregation (a).",
+            )
+            self._update_compare()
+            return
+        state = self.state
+        course_dir_name = self._course_dir_name()
+        rows = sorted(
+            self._course_pairs,
+            key=lambda r: (
+                -_pair_pct(r[1]),
+                r[0].dir_name,
+                str(r[1].get("test_file") or ""),
+            ),
+        )[:PAGE_ROWS]
+        self._visible_rows = rows
+        table.add_columns(
+            "Assignment", "Student A", "Student B", "sim %", "overlap", "Flag"
+        )
+        for index, (a, pair) in enumerate(rows):
+            sim = _pair_pct(pair)
+            table.add_row(
+                escape(
+                    assignment_display_name(
+                        state.assignments_dir,
+                        course_dir_name,
+                        a.dir_name,
+                        a.assignment_id,
+                    )
+                ),
+                escape(
+                    pair_side_name(
+                        state.assignments_dir,
+                        course_dir_name,
+                        a,
+                        str(pair.get("test_file")),
+                    )
+                ),
+                escape(
+                    pair_side_name(
+                        state.assignments_dir,
+                        course_dir_name,
+                        a,
+                        str(pair.get("reference_file")),
+                    )
+                ),
+                f"{sim:.1f}",
+                _overlap_display(pair),
+                _FLAG_TEXT if sim >= self._threshold_pct else _DASH_TEXT,
+                key=str(index),
+            )
+        empty.display = False
+        table.display = True
+        self._update_compare()
 
     def _render_aggregate(self) -> None:
         table = self.query_one("#agg-table", DataTable)
@@ -530,11 +680,7 @@ class PlagiarismScreen(Vertical):
             return
         alpha = float(self._agg.get("alpha") or AGG_ALPHA_FALLBACK)
         table.add_columns("Student A", "Student B", "raw sim", "z", "p", "Flag")
-        course_dir_name = (
-            self.state.current_course.dir_name
-            if self.state.current_course is not None
-            else ""
-        )
+        course_dir_name = self._course_dir_name()
         ranking = sorted(
             rows,
             key=lambda row: (-float(row.get("z_score") or 0.0),),
@@ -573,27 +719,24 @@ class PlagiarismScreen(Vertical):
         table.display = True
 
     def _render_status(self) -> None:
-        parts: list[str] = []
-        if self._pairs and not self._pairs_error:
-            flags = sum(
-                1
-                for p in self._pairs
-                if float(p.get("max_similarity_pct") or 0.0) >= self._threshold_pct
-            )
-            parts.append(
-                f"{flags} of {len(self._pairs)} pairs over display_threshold"
-                f" {self._threshold_pct:.0f}%"
-            )
-        if self._agg and not self._agg_error:
-            alpha = float(self._agg.get("alpha") or AGG_ALPHA_FALLBACK)
-            parts.append(
-                f"{self._agg.get('flagged_pairs', 0)} of"
-                f" {self._agg.get('tested_pairs', len(self._agg.get('pairs') or []))}"
-                f" over {_ALPHA}={alpha:.4g}"
-            )
-        self.query_one("#plag-status", Static).update(" · ".join(parts))
+        flagged = sum(
+            1
+            for _a, pair in self._course_pairs
+            if _pair_pct(pair) >= self._threshold_pct
+        )
+        self.query_one("#plag-status", Static).update(
+            f"{len(self._course_pairs)} pairs total · {flagged} flagged"
+            f" (display threshold {self._threshold_pct:.0f}%)"
+        )
 
     # ---------- pane/table helpers ----------
+
+    @staticmethod
+    def _show_pane_empty(empty: Static, table: DataTable, message: str) -> None:
+        empty.update(message)
+        empty.styles.height = "1fr"
+        empty.display = True
+        table.display = False
 
     def _active_table(self) -> DataTable | None:
         tabs = self.query_one("#plag-tabs", TabbedContent)
@@ -611,11 +754,71 @@ class PlagiarismScreen(Vertical):
         else:
             self.focus()
 
+    # ---------- embedded compare pane ----------
+
+    def _update_compare(self) -> None:
+        pane = self.query_one("#cmp-pane", Horizontal)
+        table = self.query_one("#pairs-table", DataTable)
+        cursor = table.cursor_row
+        if cursor is None or not (0 <= cursor < len(self._visible_rows)):
+            pane.display = False
+            return
+        state = self.state
+        if state.current_course is None:
+            pane.display = False
+            return
+        course_dir_name = state.current_course.dir_name
+        a, pair = self._visible_rows[cursor]
+        overlap = pair.get("token_overlap")
+        overlap_lines = (
+            {int(line) for line in overlap} if isinstance(overlap, list) else set()
+        )
+        sim = _pair_pct(pair)
+        flag_note = "  [red]FLAG[/red]" if sim >= self._threshold_pct else ""
+        test_name = pair_side_name(
+            state.assignments_dir,
+            course_dir_name,
+            a,
+            str(pair.get("test_file")),
+        )
+        ref_name = pair_side_name(
+            state.assignments_dir,
+            course_dir_name,
+            a,
+            str(pair.get("reference_file")),
+        )
+        self.query_one("#cmp-title", Static).update(
+            f"[b]Compare: {escape(test_name)} ↔ "
+            f"{escape(ref_name)}   max_sim {sim:.1f}%"
+            f"   token_overlap {_overlap_display(pair)}{flag_note}[/b]"
+        )
+        assignment_dir = a.config_path.parent
+        self.query_one("#cmp-left", Static).update(
+            _side_lines(
+                assignment_dir, str(pair.get("test_file")), overlap_lines
+            )
+        )
+        self.query_one("#cmp-right", Static).update(
+            _side_lines(
+                assignment_dir, str(pair.get("reference_file")), overlap_lines
+            )
+        )
+        pane.display = True
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "pairs-table":
+            return
+        self._update_compare()
+
     # ---------- actions ----------
 
     def action_next_pane(self) -> None:
         tabs = self.query_one("#plag-tabs", TabbedContent)
-        tabs.active = "pane-aggregate" if tabs.active == "pane-pairs" else "pane-pairs"
+        try:
+            next_index = (_PANE_ORDER.index(str(tabs.active)) + 1) % len(_PANE_ORDER)
+        except ValueError:
+            next_index = 0
+        tabs.active = _PANE_ORDER[next_index]
         self._focus_active_table()
 
     def action_cursor_up(self) -> None:
@@ -670,7 +873,7 @@ class PlagiarismScreen(Vertical):
         if course is None:
             self.app.notify("No course selected", severity="warning")
             return
-        self._start_job("aggregate", _run_aggregate_job, course.config_path)
+        self._start_job("aggregate", run_aggregate_job, course.config_path)
 
     def _protect(self) -> bool:
         if self._job is not None:
@@ -680,48 +883,6 @@ class PlagiarismScreen(Vertical):
             )
             return True
         return False
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        if event.data_table.id != "pairs-table":
-            return
-        self._open_compare()
-
-    def _open_compare(self) -> None:
-        info = self.state.current_assignment
-        if info is None or self._pairs is None:
-            return
-        table = self.query_one("#pairs-table", DataTable)
-        cursor = table.cursor_row
-        if not 0 <= cursor < len(self._visible_pairs):
-            return
-        pair = self._visible_pairs[cursor]
-        assignment_dir = info.config_path.parent
-        overlap = pair.get("token_overlap")
-        overlap_lines = {int(line) for line in overlap} if isinstance(overlap, list) else set()
-        sim = float(pair.get("max_similarity_pct") or 0.0)
-        flag_note = "  [red]FLAG[/red]" if sim >= self._threshold_pct else ""
-        test_name = _pair_student_name(self.state, str(pair.get("test_file")))
-        ref_name = _pair_student_name(self.state, str(pair.get("reference_file")))
-        title = (
-            f"Compare: {test_name} ↔ "
-            f"{ref_name}   max_sim {sim:.1f}%"
-            f"   token_overlap {_overlap_display(pair)}{flag_note}"
-        )
-        left = _side_lines(
-            assignment_dir, str(pair.get("test_file")), overlap_lines
-        )
-        right = _side_lines(
-            assignment_dir, str(pair.get("reference_file")), overlap_lines
-        )
-        self.app.push_screen(
-            CompareModal(
-                title,
-                test_name,
-                left,
-                ref_name,
-                right,
-            )
-        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

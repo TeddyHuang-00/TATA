@@ -252,6 +252,8 @@ def _run_code_plagiarism(
         extensions=cfg.extensions,
         display_t=cfg.display_threshold,
         out_file=str(cfg.report_file),
+        autoopen=False,
+        silent=True,
     )
     detector.run()
     exported_pairs = _write_full_pair_data(detector, cfg.full_pairs_file)
@@ -473,6 +475,7 @@ def _aggregate_report(
     output: Path | None,
     *,
     assignment_dirs: list[Path] | None = None,
+    quiet: bool = False,
 ) -> None:
     """Aggregate over the assignments root, or only the listed dirs.
 
@@ -499,7 +502,8 @@ def _aggregate_report(
     )
     report = to_text(payload)
     if output is None:
-        print(report)
+        if not quiet:
+            print(report)
         return
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report + "\n", encoding="utf-8")
@@ -550,12 +554,15 @@ def detect_plagiarism(
     *,
     aggregate: bool = False,
     output: Path | None = None,
+    quiet: bool = False,
 ) -> dict | None:
     """Run plagiarism for one assignment, or for all under the root config.
 
     ``--config data/config.toml`` runs every assignment below it;
     ``--config data/X/config.toml`` runs X only. ``--aggregate`` appends
     the cross-assignment z-score report over the assignments root.
+    ``quiet`` suppresses the stdout text report (TUI jobs; the pane reads
+    aggregate.json instead).
     """
     resolved = config_path.resolve()
     is_root = is_root_config(resolved)
@@ -584,21 +591,25 @@ def detect_plagiarism(
         if aggregate:
             _aggregate_report(
                 resolved.parent,
-                _root_plagiarism_section(resolved),
+                root_plagiarism_section(resolved),
                 output,
                 assignment_dirs=listed,
+                quiet=quiet,
             )
         return _combine_summaries(summaries)
 
     summary = _run_assignment(resolved)
     if aggregate:
         _aggregate_report(
-            resolved.parent.parent, load_assignment_file(resolved).plagiarism, output
+            resolved.parent.parent,
+            load_assignment_file(resolved).plagiarism,
+            output,
+            quiet=quiet,
         )
     return summary
 
 
-def _root_plagiarism_section(root_config: Path) -> PlagiarismSection:
+def root_plagiarism_section(root_config: Path) -> PlagiarismSection:
     return (
         load_root_section(root_config, "plagiarism", PlagiarismSection)
         or PlagiarismSection()

@@ -44,9 +44,8 @@ from src.aliases import assignment_display_name, course_display_name
 from src.assignment_config import FetchSection
 from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
-from src.plagiarism import detect_plagiarism
 from src.score_review import open_score_review
-from src.tata_plagiarism import PlagiarismScreen
+from src.tata_plagiarism import PlagiarismScreen, run_aggregate_job
 from src.tata_scan import AssignmentInfo, CourseInfo, scan_assignments, scan_courses
 from src.tata_settings import SettingsScreen
 from src.tata_workspace import (
@@ -697,7 +696,7 @@ class DashboardScreen(Vertical):
         course = self.state.current_course
 
         def job() -> None:
-            detect_plagiarism(course.config_path, aggregate=True)
+            run_aggregate_job(course.config_path)
 
         def after() -> None:
             self._rescan_course()

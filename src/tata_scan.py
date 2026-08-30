@@ -20,7 +20,8 @@ from src.assignment_config import FetchSection, is_course_config, load_root_sect
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
 # `display_threshold = 0.8`); NOT the aggregate z-score alpha — z-level flags
-# live in the aggregate report (S4), which the TUI does not consume yet.
+# live in the aggregate report (S4) as z/p cells, which the Aggregate pane
+# consumes.
 DISPLAY_THRESHOLD_PCT = 80.0
 
 _TOTAL_SCORE_RE = re.compile(r"Total Score:\s*([0-9.]+)/([0-9.]+)")
