@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.tata_plagiarism as plag_mod
 from src.tata_app import TataApp
-from src.tata_plagiarism import CompareModal, PlagiarismScreen
+from src.tata_plagiarism import CompareModal, PlagiarismScreen, _pair_student_name
 from textual.app import ComposeResult, Screen
 from textual.pilot import Pilot
 from textual.widgets import DataTable, RichLog, Static, TabbedContent
@@ -132,7 +132,8 @@ def _make_fixture(assignments_dir: Path) -> None:
         encoding="utf-8",
     )
     (a_dir / "alias.toml").write_text(
-        '[student]\n"a1b" = "Alice A"\n"a1c" = "Bob B"\n"1003" = "Carol, Z"\n',
+        '[student]\n"a1b" = "Alice A"\n"a1c" = "Bob B"\n"1003" = "Carol, Z"\n'
+        '"301741" = "Aalla, Movin Reddy"\n',
         encoding="utf-8",
     )
 
@@ -391,10 +392,21 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
         app.notify = orig_notify
 
 
+def _check_late_alias_resolution(app: TataApp) -> None:
+    """_LATE_N / _N file stems resolve to the base-uid alias for pair names."""
+    state = app.state
+    assert _pair_student_name(state, "301741_LATE_0.ipynb") == "Aalla, Movin Reddy"
+    assert _pair_student_name(state, "301741_0.ipynb") == "Aalla, Movin Reddy"
+    assert _pair_student_name(state, "301741_LATE_1.txt") == "Aalla, Movin Reddy"
+    # unaliased stem falls back to the raw stem (unchanged)
+    assert _pair_student_name(state, "80123.ipynb") == "80123"
+
+
 async def check_screen(app: TataApp, pilot: Pilot) -> None:
     _set_state(app)
     screen = await _enter(app, pilot)
     _check_pairs_pane(screen)
+    _check_late_alias_resolution(app)
     await _check_aggregate_pane(screen, pilot)
     await _check_compare_modal(screen, pilot, app)
     await _check_no_course_state(screen, pilot, app)

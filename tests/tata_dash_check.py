@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main as main_mod
 import src.tata_app as tata_app_mod
+from rich.text import Text as RichText
 from src.cli_options import FetchCliOptions
 from src.score_review import ScoreReviewScreen
 from src.tata_app import (
@@ -357,6 +358,45 @@ async def _check_aliases(pilot: Pilot, app: TataApp) -> None:
     assert "My Alias" in topbar, topbar
 
 
+async def _check_alias_brackets() -> None:
+    """Alias names containing markup brackets: escaped, plain text displayed."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        course_dir = root / "assignments" / COURSE
+        (course_dir / "a1").mkdir(parents=True)
+        (course_dir / "config.toml").write_text(
+            "[fetch]\ncourse_id = 271218\n", encoding="utf-8"
+        )
+        (course_dir / "a1" / "config.toml").write_text(
+            "[fetch]\nassignment_id = 1001\n", encoding="utf-8"
+        )
+        (course_dir / "alias.toml").write_text(
+            '[course]\n"271218" = "My Course [S]"\n'
+            '[assignment]\n"1001" = "Week [1]"\n',
+            encoding="utf-8",
+        )
+        app = TataApp(root_dir=root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            table = app.query_one("#dashboard-table", DataTable)
+            await _wait_for(pilot, lambda: table.row_count == 1)
+            # global-level cell: escaped markup renders the literal name
+            assert _cell(table, 0, 0) == "My Course [S]", _cell(table, 0, 0)
+            table.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.state.dashboard_level == "course"
+            topbar = _text(app.query_one("#topbar", Static))
+            breadcrumb = _text(app.query_one("#breadcrumb", Static))
+            # display text keeps literal brackets; the stored content is
+            # markup-escaped, so rendering raises no MarkupError
+            assert RichText.from_markup(topbar).plain == (
+                "TATA · Dashboard [Course: My Course [S]]   Canvas: ? (.env missing)"
+            ), topbar
+            assert RichText.from_markup(breadcrumb).plain == "Global / My Course [S]"
+            assert table.row_count == 1
+            assert _cell(table, 0, 0) == "Week [1]", _cell(table, 0, 0)
+
+
 async def main() -> None:
     # no-.env gate does not need .env; separate tmp to keep it clean
     await _check_import_course_gate_without_env()
@@ -398,6 +438,8 @@ async def main() -> None:
                 await _check_aliases(pilot, app)
         finally:
             tata_app_mod.list_assignments = orig_la
+
+    await _check_alias_brackets()
 
     print("tata dash check OK")
 

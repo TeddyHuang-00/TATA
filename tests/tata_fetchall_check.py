@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.tata_app as tata_app_mod
+from rich.text import Text as RichText
 from src.cli_options import FetchCliOptions
 from src.tata_app import TataApp
 from src.tata_workspace import ConfirmationModal
@@ -30,9 +31,16 @@ from textual.widgets import DataTable, Static
 
 AIDS = [1001, 1002, 1003]
 
+# aid -> assigned label in the aliased fixture (1001 gets a bracket name)
+LABELS = {1001: "Week [1]", 1002: "1002", 1003: "1003"}
+
 
 def _make_course(
-    assignments_dir: Path, name: str, course_id: int, with_entries: bool
+    assignments_dir: Path,
+    name: str,
+    course_id: int,
+    with_entries: bool,
+    with_aliases: bool = False,
 ) -> None:
     """One course with 3 assignment dirs; optionally [[fetch.assignments]]."""
     course_dir = assignments_dir / name
@@ -45,6 +53,11 @@ def _make_course(
         f"[fetch]\ncourse_id = {course_id}\n" + (entries if with_entries else ""),
         encoding="utf-8",
     )
+    if with_aliases:
+        # Markup-hostile display name: brackets must be escaped on render.
+        (course_dir / "alias.toml").write_text(
+            '[assignment]\n"1001" = "Week [1]"\n', encoding="utf-8"
+        )
     for aid in AIDS:
         a_dir = course_dir / str(aid)
         a_dir.mkdir()
@@ -69,6 +82,11 @@ def _make_recorder(
 
 def _text(widget: Static) -> str:
     return str(widget.content)
+
+
+def _plain(widget: Static) -> str:
+    """Display text of a markup Static (content holds the markup source)."""
+    return RichText.from_markup(str(widget.content)).plain
 
 
 async def _wait_for(
@@ -111,8 +129,8 @@ async def _check_fetch_all(root: Path) -> None:
         await _wait_for(pilot, lambda: len(calls) == 1)
         await pilot.pause()
         assert panel.display
-        assert "▶ 1001" in _text(panel), _text(panel)
-        assert "○ 1002" in _text(panel), _text(panel)
+        assert "▶ Week [1]" in _plain(panel), _plain(panel)
+        assert "○ 1002" in _plain(panel), _plain(panel)
         assert "Fetching 1/3" in _text(status), _text(status)
 
         # Completion: all done, sequential per-target calls with entry.out.
@@ -128,10 +146,10 @@ async def _check_fetch_all(root: Path) -> None:
             assert call.course == 271218, call.course
             assert call.config == course.config_path
 
-        text = _text(panel)
+        text = _plain(panel)
         assert panel.display, "panel hidden after completion"
         for aid in AIDS:
-            assert f"✓ {aid}" in text, text
+            assert f"✓ {LABELS[aid]}" in text, text
         assert "Fetch complete: 3/3 ok" in _text(status), _text(status)
         assert "assignments/" not in text
         assert "/raw" not in text
@@ -160,9 +178,9 @@ async def _check_fetch_all_failure(root: Path) -> None:
         await pilot.pause()
 
         assert len(calls) == 3, "failed target must not stop the run"
-        text = _text(panel)
+        text = _plain(panel)
         assert "✗ 1002" in text, text
-        assert "✓ 1001" in text, text
+        assert "✓ Week [1]" in text, text
         assert "✓ 1003" in text, text
         assert "Fetch complete: 2/3 ok, 1 failed" in _text(status), _text(status)
         assert any(
@@ -197,11 +215,17 @@ async def _check_fetch_all_empty(root: Path) -> None:
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments", "c1-first", 271218, with_entries=True)
+        _make_course(
+            root / "assignments", "c1-first", 271218, with_entries=True,
+            with_aliases=True,
+        )
         await _check_fetch_all(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _make_course(root / "assignments", "c1-first", 271218, with_entries=True)
+        _make_course(
+            root / "assignments", "c1-first", 271218, with_entries=True,
+            with_aliases=True,
+        )
         await _check_fetch_all_failure(root)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)

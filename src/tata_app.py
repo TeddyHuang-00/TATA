@@ -21,6 +21,7 @@ from typing import ClassVar, Literal, override
 
 import main as main_mod
 from canvasapi import Canvas
+from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -229,7 +230,7 @@ class DashboardScreen(Vertical):
             )
             for i, c in enumerate(state.courses):
                 table.add_row(
-                    course_display_name(state.assignments_dir, c.dir_name, c.course_id),
+                    escape(course_display_name(state.assignments_dir, c.dir_name, c.course_id)),
                     str(c.assignment_count),
                     str(c.counts.raw),
                     str(c.counts.processed),
@@ -253,14 +254,14 @@ class DashboardScreen(Vertical):
                 state.assignments_dir, course.dir_name, course.course_id
             )
             topbar.update(
-                f"[b]TATA[/b] · Dashboard [Course: {course_name}]   {canvas}"
+                f"[b]TATA[/b] · Dashboard [Course: {escape(course_name)}]   {canvas}"
                 + (
                     f"   Filter: {_FILTER_LABELS[self._filter]}"
                     if self._filter is not None
                     else ""
                 )
             )
-            breadcrumb.update(f"Global / [b]{course_name}[/b]")
+            breadcrumb.update(f"Global / [b]{escape(course_name)}[/b]")
             table.add_columns(
                 "Assignment",
                 "ID",
@@ -274,11 +275,13 @@ class DashboardScreen(Vertical):
             shown = _filter_assignments(state.assignments, self._filter)
             for i, a in enumerate(shown):
                 table.add_row(
-                    assignment_display_name(
-                        state.assignments_dir,
-                        course.dir_name,
-                        a.dir_name,
-                        a.assignment_id,
+                    escape(
+                        assignment_display_name(
+                            state.assignments_dir,
+                            course.dir_name,
+                            a.dir_name,
+                            a.assignment_id,
+                        )
                     ),
                     str(a.assignment_id or "-"),
                     str(a.counts.raw),
@@ -314,10 +317,10 @@ class DashboardScreen(Vertical):
                 else ""
             )
             topbar.update(
-                f"[b]TATA[/b] · Dashboard [Assignment: {a_name}]   {canvas}"
+                f"[b]TATA[/b] · Dashboard [Assignment: {escape(a_name)}]   {canvas}"
             )
             breadcrumb.update(
-                f"Global / {course_name} / [b]{a_name}[/b]"
+                f"Global / {escape(course_name)} / [b]{escape(a_name)}[/b]"
             )
             table.display = False
             empty.display = False
@@ -643,7 +646,7 @@ class DashboardScreen(Vertical):
             return
         lines = []
         for target in self._fetch_progress:
-            label = target["label"]
+            label = escape(target["label"])
             if target["state"] == "running":
                 lines.append(f"[yellow]▶ {label}[/yellow]")
             elif target["state"] == "done":

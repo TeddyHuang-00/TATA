@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.cli_options import ScoreReviewCliOptions
 from src.score_review import ScoreReviewScreen, Viewer
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Select, Static
 
 
 class _Harness(App):
@@ -43,6 +43,12 @@ def _make_graded(graded: Path) -> None:
         json.dumps({"task1": {"rating": "partial", "feedback": "meh"}}),
         encoding="utf-8",
     )
+    # late submission: fetch suffixes the stem (_LATE_0); the alias key is
+    # the base uid ("301741").
+    (graded / "301741_LATE_0.json").write_text(
+        json.dumps({"task1": {"rating": "partial", "feedback": "late"}}),
+        encoding="utf-8",
+    )
 
 
 async def main() -> None:
@@ -52,7 +58,8 @@ async def main() -> None:
         _make_graded(graded)
         # Assignment-root alias.toml supplies display names (was roster.csv).
         (Path(tmp) / "alias.toml").write_text(
-            '[student]\n"100572" = "Aalla, A"\n"201818" = "Zed, Z"\n',
+            '[student]\n"100572" = "Aalla, A"\n"201818" = "Zed, Z"\n'
+            '"301741" = "Aalla, Movin Reddy"\n',
             encoding="utf-8",
         )
 
@@ -68,11 +75,26 @@ async def main() -> None:
             await pilot.pause()
             assert isinstance(app.screen, ScoreReviewScreen), type(app.screen)
             review = app.screen
-            assert [s["student"] for s in review.students] == ["100572", "201818"]
+            assert [s["student"] for s in review.students] == [
+                "100572",
+                "301741_LATE_0",
+                "201818",
+            ]
             assert [s["sortable_name"] for s in review.students] == [
                 "Aalla, A",
+                "Aalla, Movin Reddy",
                 "Zed, Z",
             ]
+            # _LATE_N stem resolves to the base-uid alias, shown raw in the id
+            late = next(
+                s for s in review.students if s["student"] == "301741_LATE_0"
+            )
+            assert late["sortable_name"] == "Aalla, Movin Reddy", late
+            select = review.query_one("#student-select", Select)
+            prompts = [str(prompt) for prompt, _ in select._options]  # type: ignore[attr-defined]
+            assert "Aalla, Movin Reddy (301741_LATE_0)" in prompts, """
+                alias must render with the RAW stem in the id part
+            """
             listing = review.query_one("#criteria-list", Static)
             assert "good work" in str(listing.content), str(listing.content)
 
@@ -92,7 +114,7 @@ async def main() -> None:
         async with viewer.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             assert isinstance(viewer.screen, ScoreReviewScreen), type(viewer.screen)
-            assert len(viewer.screen.students) == 2
+            assert len(viewer.screen.students) == 3
             listing = viewer.screen.query_one("#criteria-list", Static)
             assert "good work" in str(listing.content)
 

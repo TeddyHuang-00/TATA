@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import sys
 import tempfile
@@ -79,6 +80,16 @@ def _load_students(score_dir: Path) -> list[dict]:
                 "processed_file": _find_processed_file(score_dir, file.stem),
             })
     return students
+
+
+def _base_uid(stem: str) -> str:
+    """Canvas user id with a fetch suffix (_LATE_N or _N) stripped.
+
+    File stems carry the suffix (canvas_fetch._fetch_attachments /
+    _fetch_text), but alias.toml keys are the unsuffixed uid — so a stem
+    like ``301741_LATE_0`` must resolve to the ``301741`` alias.
+    """
+    return re.sub(r"_(?:LATE_)?\d+$", "", stem)
 
 
 def _find_raw_file(score_dir: Path, student_id: str) -> Path | None:
@@ -231,7 +242,7 @@ class ScoreReviewScreen(Screen):
                 assignments_dir,
                 course_dir_name,
                 assignment_dir_name,
-                s["student"],
+                _base_uid(s["student"]),
             )
         # deterministic order: sortable name, then user id
         self.students.sort(key=lambda s: (s["sortable_name"].lower(), s["student"]))

@@ -190,6 +190,7 @@ ModalScreen {
 
 .confirm-modal {
     width: 92;
+    max-width: 100%;  /* cap to the screen: 80-col terminals would clip width 92 */
     max-height: 36;
     height: auto;
     border: heavy $primary;

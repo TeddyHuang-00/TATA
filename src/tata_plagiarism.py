@@ -55,7 +55,7 @@ from src.plagiarism_aggregate import (
     _combine_pairs_stouffer,
     _load_assignment_records,
 )
-from src.score_review import _find_raw_file, _preview_content
+from src.score_review import _base_uid, _find_raw_file, _preview_content
 from src.tata_alias import (
     assignment_display_name,
     course_display_name,
@@ -245,7 +245,7 @@ def _pair_student_name(
         state.assignments_dir,
         state.current_course.dir_name if state.current_course is not None else "",
         info.dir_name,
-        stem,
+        _base_uid(stem),
     )
 
 
@@ -532,8 +532,8 @@ class PlagiarismScreen(Vertical):
             sim = float(pair.get("max_similarity_pct") or 0.0)
             diff = sim - self._threshold_pct
             table.add_row(
-                _pair_student_name(self.state, str(pair.get("test_file"))),
-                _pair_student_name(self.state, str(pair.get("reference_file"))),
+                escape(_pair_student_name(self.state, str(pair.get("test_file")))),
+                escape(_pair_student_name(self.state, str(pair.get("reference_file")))),
                 f"{sim:.1f}",
                 _overlap_display(pair),
                 f"{diff:+.1f}",
@@ -588,15 +588,19 @@ class PlagiarismScreen(Vertical):
             else:
                 flag = _DASH_TEXT
             table.add_row(
-                course_student_display_name(
-                    self.state.assignments_dir,
-                    course_dir_name,
-                    str(row.get("student_a") or "-"),
+                escape(
+                    course_student_display_name(
+                        self.state.assignments_dir,
+                        course_dir_name,
+                        str(row.get("student_a") or "-"),
+                    )
                 ),
-                course_student_display_name(
-                    self.state.assignments_dir,
-                    course_dir_name,
-                    str(row.get("student_b") or "-"),
+                escape(
+                    course_student_display_name(
+                        self.state.assignments_dir,
+                        course_dir_name,
+                        str(row.get("student_b") or "-"),
+                    )
                 ),
                 f"{float(row.get('raw_similarity_pct') or 0.0):.1f}",
                 f"{z:.2f}",
