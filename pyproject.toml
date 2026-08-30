@@ -24,6 +24,7 @@ dependencies = [
     "sentence-transformers>=6.0.0",
     "tomlkit>=0.15.1",
     "python-dotenv>=1.2.3",
+    "firecrawl-anydoc>=0.2.4",
 ]
 
 [dependency-groups]

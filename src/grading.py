@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import base64
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import instructor
+from markitdown import MarkItDown
+from nbconvert import MarkdownExporter
 from openai import OpenAI
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -143,35 +143,22 @@ def _read_reference_text(reference_file: Path) -> str:
         return reference_file.read_text(encoding="utf-8")
 
     if suffix == ".ipynb":
-        cmd = [
-            sys.executable,
-            "-m",
-            "jupyter",
-            "nbconvert",
-            "--to",
-            "markdown",
-            "--stdout",
-            str(reference_file),
-        ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout
-        except subprocess.CalledProcessError as exc:
+            return MarkdownExporter().from_filename(str(reference_file))[0]
+        except Exception as exc:
             msg = (
                 f"Failed to convert reference notebook to markdown: {reference_file}\n"
-                f"Details: {exc.stderr}"
+                f"Details: {exc}"
             )
             raise RuntimeError(msg) from exc
 
     if suffix == ".html":
-        cmd = ["pandoc", "-f", "html", "-t", "markdown", str(reference_file)]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout
-        except subprocess.CalledProcessError as exc:
+            return MarkItDown().convert(str(reference_file)).text_content
+        except Exception as exc:
             msg = (
                 f"Failed to convert reference HTML to markdown: {reference_file}\n"
-                f"Details: {exc.stderr}"
+                f"Details: {exc}"
             )
             raise RuntimeError(msg) from exc
 

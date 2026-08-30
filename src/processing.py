@@ -3,11 +3,14 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-import sys
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Literal
+
+import anydoc
+from markitdown import MarkItDown, StreamInfo
+from nbconvert import MarkdownExporter
 
 from .assignment_config import (
     ensure_assignment_dirs,
@@ -223,62 +226,36 @@ def convert_ipynb_to_markdown(
     template_name: str | None = None,
     template_dir: Path | None = None,
 ) -> None:
-    """Convert Jupyter notebook to markdown using nbconvert."""
-    cmd = [
-        sys.executable,
-        "-m",
-        "jupyter",
-        "nbconvert",
-        "--to",
-        "markdown",
-        "--output",
-        output_path.name,
-        "--output-dir",
-        str(output_path.parent),
-    ]
-
+    """Convert Jupyter notebook to markdown using nbconvert MarkdownExporter (in-process)."""
+    kwargs: dict = {}
     if template_name:
-        cmd.extend(["--template", template_name])
-
+        kwargs["template_name"] = template_name
     if template_dir:
-        cmd.append(f"--TemplateExporter.extra_template_basedirs={template_dir}")
-
-    cmd.append(
-        str(input_path),
-    )
-
+        kwargs["extra_template_basedirs"] = [str(template_dir)]
+    exporter = MarkdownExporter(**kwargs)
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        msg = f"Failed to convert notebook {input_path}: {e.stderr}"
-        raise RuntimeError(msg) from e
-
-    # Clean up the output file
-    if output_path.exists():
-        content = output_path.read_text(encoding="utf-8")
-        # Remove base64 images if present
-        content = _remove_base64_images(content)
-        output_path.write_text(content, encoding="utf-8")
+        content, _resources = exporter.from_filename(str(input_path))
+    except Exception as exc:
+        msg = f"Failed to convert notebook {input_path}: {exc}"
+        raise RuntimeError(msg) from exc
+    # Clean base64 images and write the converted markdown directly
+    content = _remove_base64_images(content)
+    output_path.write_text(content, encoding="utf-8")
 
 
 def convert_html_to_markdown(input_path: Path, output_path: Path) -> None:
-    """Convert HTML to markdown using pandoc."""
-    cmd = [
-        "pandoc",
-        "-f",
-        "html",
-        "-t",
-        "markdown",
-        str(input_path),
-        "-o",
-        str(output_path),
-    ]
-
+    """Convert HTML to markdown using markitdown (in-process)."""
+    # Canvas text entries may arrive as .txt while containing HTML; tell
+    # markitdown the real extension so it picks its HTML converter.
+    stream_info = StreamInfo(extension=".html")
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        msg = f"Failed to convert HTML {input_path}: pandoc not found or conversion failed. {e.stderr}"
-        raise RuntimeError(msg) from e
+        content = (
+            MarkItDown().convert(str(input_path), stream_info=stream_info).text_content
+        )
+    except Exception as exc:
+        msg = f"Failed to convert HTML {input_path} with markitdown: {exc}"
+        raise RuntimeError(msg) from exc
+    output_path.write_text(content, encoding="utf-8")
 
 
 def _convert_markdown(input_path: Path, output_path: Path) -> None:
@@ -287,35 +264,19 @@ def _convert_markdown(input_path: Path, output_path: Path) -> None:
 
 
 def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
-    """Convert docx to markdown with system anydoc, falling back to markitdown."""
-    if shutil.which("anydoc"):
-        cmd = ["anydoc", str(input_path), "-o", str(output_path)]
+    """Convert docx to markdown with firecrawl-anydoc, falling back to markitdown (both in-process)."""
+    try:
+        content = anydoc.to_markdown(input_path)
+    except Exception as anydoc_exc:
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return
-        except subprocess.CalledProcessError as e:
-            msg = f"anydoc failed on {input_path}: {e.stderr}"
-            raise RuntimeError(msg) from e
-    if (
-        shutil.which("markitdown")
-        or (Path(sys.executable).parent / "markitdown").exists()
-    ):
-        cmd = [
-            sys.executable,
-            "-m",
-            "markitdown",
-            str(input_path),
-            "-o",
-            str(output_path),
-        ]
-        try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return
-        except subprocess.CalledProcessError as e:
-            msg = f"markitdown failed on {input_path}: {e.stderr}"
-            raise RuntimeError(msg) from e
-    msg = "Neither anydoc nor markitdown found. Install anydoc (system) to convert .docx files."
-    raise RuntimeError(msg)
+            content = MarkItDown().convert(str(input_path)).text_content
+        except Exception as exc:
+            msg = (
+                f"Failed to convert docx {input_path}: anydoc failed ({anydoc_exc}); "
+                f"markitdown failed ({exc})"
+            )
+            raise RuntimeError(msg) from exc
+    output_path.write_text(content, encoding="utf-8")
 
 
 def _render_docx_screenshots(
