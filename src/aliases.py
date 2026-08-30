@@ -20,6 +20,7 @@ earlier ones, per table and per key):
 Reading is tolerant (missing/corrupt files return ``{}``); writing is
 field-level TOML patching (never whole-file rewrite) so manual edits survive.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -99,9 +100,10 @@ def _section_paths(assignments_dir: Path, course: str, assignment: str) -> list[
 def course_display_name(
     assignments_dir: Path, dir_name: str, course_id: int | None
 ) -> str:
-    aliases = load_alias_chain(
-        [assignments_dir / "alias.toml", assignments_dir / dir_name / "alias.toml"]
-    )
+    aliases = load_alias_chain([
+        assignments_dir / "alias.toml",
+        assignments_dir / dir_name / "alias.toml",
+    ])
     if course_id is not None:
         name = lookup(aliases, "course", str(course_id))
         if name:
@@ -164,6 +166,7 @@ def course_student_display_name(
 
 # -- field-level TOML patching (mirrors canvas_fetch's [fetch] patching) ----
 
+
 def _open_alias_doc(path: Path) -> tomlkit.TOMLDocument:
     """Parse an alias.toml; missing files start from the header comment,
     corrupt files from an empty document (reads tolerate them too)."""
@@ -198,6 +201,7 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
 
 
 # -- one-time migration: dir names -> assignment ids -----------------------
+
 
 def _patch_out_entries(doc: tomlkit.TOMLDocument, old: str, new: str) -> bool:
     """Rewrite ``[[fetch.assignments]]`` ``out`` values naming ``old`` to
@@ -281,14 +285,12 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
 
     actions: list[str] = []
     for child, new_name, entries in targets:
-        actions.extend(
-            [
-                f"rename {child} -> {child.with_name(new_name)}",
-                f'patch "{child.name}/raw" -> "{new_name}/raw" in {course_config}',
-                f'seed [assignment] "{new_name}" = "{child.name}" in '
-                f"{course_dir / 'alias.toml'}",
-            ]
-        )
+        actions.extend([
+            f"rename {child} -> {child.with_name(new_name)}",
+            f'patch "{child.name}/raw" -> "{new_name}/raw" in {course_config}',
+            f'seed [assignment] "{new_name}" = "{child.name}" in '
+            f"{course_dir / 'alias.toml'}",
+        ])
         if entries:
             actions.append(
                 f"seed [student] from {child / 'roster.csv'} -> "
@@ -304,9 +306,7 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
         migrated = child.with_name(new_name)
         if course_config.is_file():
             try:
-                config_doc = tomlkit.parse(
-                    course_config.read_text(encoding="utf-8")
-                )
+                config_doc = tomlkit.parse(course_config.read_text(encoding="utf-8"))
                 if _patch_out_entries(config_doc, child.name, new_name):
                     _write_doc(course_config, config_doc)
             except (OSError, tomlkit.exceptions.ParseError):
@@ -338,4 +338,6 @@ if __name__ == "__main__":
     for action in reported:
         print(action)
     if not reported:
-        print(f"no actions for {opts.course_dir}" + (" (dry run)" if opts.dry_run else ""))
+        print(
+            f"no actions for {opts.course_dir}" + (" (dry run)" if opts.dry_run else "")
+        )

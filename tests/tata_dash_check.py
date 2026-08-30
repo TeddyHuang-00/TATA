@@ -75,9 +75,9 @@ async def _check_import_course_gate_without_env() -> None:
             table.focus()
             await pilot.press("c")
             await pilot.pause()
-            assert any(
-                "Canvas environment missing" in msg for msg, _sev in notices
-            ), notices
+            assert any("Canvas environment missing" in msg for msg, _sev in notices), (
+                notices
+            )
             assert not isinstance(app.screen, ImportCourseModal)
 
 
@@ -90,7 +90,9 @@ async def _check_import_course_modal_with_env(
         _fix(root, env=True)
         orig_list_courses = tata_app_mod.list_courses
         monkeypatch(
-            tata_app_mod, "list_courses", lambda _canvas: [(111111, "c1-first"), (777, "hw-course")]
+            tata_app_mod,
+            "list_courses",
+            lambda _canvas: [(111111, "c1-first"), (777, "hw-course")],
         )
         try:
             app = TataApp(root_dir=root)
@@ -99,23 +101,17 @@ async def _check_import_course_modal_with_env(
                 table = app.query_one("#dashboard-table", DataTable)
                 table.focus()
                 await pilot.press("c")
-                await wait_for(
-                    pilot, lambda: isinstance(app.screen, ImportCourseModal)
-                )
+                await wait_for(pilot, lambda: isinstance(app.screen, ImportCourseModal))
                 modal = app.screen
                 assert isinstance(modal, ImportCourseModal)
                 # background worker populates the Select
-                await wait_for(
-                    pilot, lambda: modal.query_one(Select).value == 111111
-                )
+                await wait_for(pilot, lambda: modal.query_one(Select).value == 111111)
                 # cancel: escape -> no new dirs
                 await pilot.press("escape")
                 await wait_for(
                     pilot, lambda: not isinstance(app.screen, ImportCourseModal)
                 )
-                dirs = sorted(
-                    p.name for p in (root / "data").iterdir() if p.is_dir()
-                )
+                dirs = sorted(p.name for p in (root / "data").iterdir() if p.is_dir())
                 assert dirs == [COURSE], dirs
                 assert app.state.dashboard_level == "global"
         finally:
@@ -180,7 +176,9 @@ async def _check_s_guard_at_assignment(pilot: Pilot, app: TataApp) -> None:
     """s at assignment level -> workspace's own key; dashboard never pushes review."""
     table = app.query_one("#dashboard-table", DataTable)
     table.focus()
-    await pilot.press("down")  # a2 has no graded; keeps cursor on assignment level below
+    await pilot.press(
+        "down"
+    )  # a2 has no graded; keeps cursor on assignment level below
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "assignment"
@@ -309,8 +307,7 @@ async def _check_alias_brackets() -> None:
             "[fetch]\nassignment_id = 1001\n", encoding="utf-8"
         )
         (course_dir / "alias.toml").write_text(
-            '[course]\n"111111" = "My Course [S]"\n'
-            '[assignment]\n"1001" = "Week [1]"\n',
+            '[course]\n"111111" = "My Course [S]"\n[assignment]\n"1001" = "Week [1]"\n',
             encoding="utf-8",
         )
         app = TataApp(root_dir=root)
@@ -348,7 +345,9 @@ async def main() -> None:
 
         await _check_import_course_modal_with_env(monkeypatch)
 
-        def main_mod_assignment(_canvas: object, course_id: int) -> list[tuple[int, str]]:
+        def main_mod_assignment(
+            _canvas: object, course_id: int
+        ) -> list[tuple[int, str]]:
             return [(777, "HW1")]
 
         orig_la = tata_app_mod.list_assignments

@@ -86,11 +86,7 @@ def count_files(dir_: Path, suffix: str | None = None) -> int:
 def count_recursive(dir_: Path) -> int:
     if not dir_.is_dir():
         return 0
-    return sum(
-        1
-        for p in dir_.rglob("*")
-        if p.is_file() and not p.name.startswith(".")
-    )
+    return sum(1 for p in dir_.rglob("*") if p.is_file() and not p.name.startswith("."))
 
 
 def _max_file_mtime(dir_: Path) -> float | None:
@@ -100,7 +96,9 @@ def _max_file_mtime(dir_: Path) -> float | None:
     latest: float | None = None
     for p in dir_.iterdir():
         if p.is_file():
-            latest = p.stat().st_mtime if latest is None else max(latest, p.stat().st_mtime)
+            latest = (
+                p.stat().st_mtime if latest is None else max(latest, p.stat().st_mtime)
+            )
     return latest
 
 
@@ -162,7 +160,9 @@ def _pair_pct(pair: dict) -> float:
         return 0.0
 
 
-def _flagged_pairs(assignment_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT) -> int:
+def _flagged_pairs(
+    assignment_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT
+) -> int:
     """Display-level pairs in ``plagiarism/all_pairs.json`` at/above the
     display threshold (design 04 ``display_threshold``; NOT z-level flags)."""
     pairs_file = assignment_dir / "plagiarism" / "all_pairs.json"
@@ -172,11 +172,7 @@ def _flagged_pairs(assignment_dir: Path, threshold_pct: float = DISPLAY_THRESHOL
         data = json.loads(pairs_file.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return 0
-    return sum(
-        1
-        for pair in data.get("pairs", [])
-        if _pair_pct(pair) >= threshold_pct
-    )
+    return sum(1 for pair in data.get("pairs", []) if _pair_pct(pair) >= threshold_pct)
 
 
 def scan_assignments(

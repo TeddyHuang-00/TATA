@@ -155,9 +155,7 @@ def convert_preview(raw: Path) -> tuple[str, str]:
     return kind, _truncate(content)
 
 
-def preview_content(
-    raw: Path | None, processed: Path | None
-) -> tuple[str, str] | None:
+def preview_content(raw: Path | None, processed: Path | None) -> tuple[str, str] | None:
     """(kind, content) for a student's preview, or None if no file is known.
 
     Prefers the preprocess markdown (already-converted, what the grader saw)

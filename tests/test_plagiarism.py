@@ -81,22 +81,20 @@ def test_blend_rows_weights() -> None:
 
 
 def _minimal_notebook() -> str:
-    return json.dumps(
-        {
-            "cells": [
-                {
-                    "cell_type": "code",
-                    "execution_count": None,
-                    "metadata": {},
-                    "outputs": [],
-                    "source": ["print(1)"],
-                }
-            ],
-            "metadata": {},
-            "nbformat": 4,
-            "nbformat_minor": 5,
-        }
-    )
+    return json.dumps({
+        "cells": [
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": ["print(1)"],
+            }
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    })
 
 
 def test_code_detector_disables_autoopen(monkeypatch: pytest.MonkeyPatch) -> None:

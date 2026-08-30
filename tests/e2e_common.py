@@ -139,15 +139,15 @@ def write_aliases(
         parts.append(f'[course]\n"111111" = "{course_alias}"\n')
     if assignment_alias:
         parts.append(
-            "[assignment]\n" + "".join(
+            "[assignment]\n"
+            + "".join(
                 f'"{aid}" = "{alias}"\n' for aid, alias in assignment_alias.items()
             )
         )
     if students:
         parts.append(
-            "[student]\n" + "".join(
-                f'"{uid}" = "{name}"\n' for uid, name in students.items()
-            )
+            "[student]\n"
+            + "".join(f'"{uid}" = "{name}"\n' for uid, name in students.items())
         )
     path.write_text("".join(parts), encoding="utf-8")
 

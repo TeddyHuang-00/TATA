@@ -131,7 +131,9 @@ def fetch_assignment(
         r["user_id"]: (
             r["sortable_name"]
             if r["sortable_name"] not in {"", "?"}
-            else r["user_name"] if r["user_name"] not in {"", "?"} else r["user_id"]
+            else r["user_name"]
+            if r["user_name"] not in {"", "?"}
+            else r["user_id"]
         )
         for r in rows
     }

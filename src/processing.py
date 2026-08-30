@@ -30,7 +30,10 @@ def _detect_input_format(file_path: Path) -> InputFormat:
     suffix = file_path.suffix.lower()
     if suffix == ".ipynb":
         return "ipynb"
-    if suffix in {".html", ".txt"}:  # Canvas text-entry bodies are saved as .txt but contain HTML
+    if suffix in {
+        ".html",
+        ".txt",
+    }:  # Canvas text-entry bodies are saved as .txt but contain HTML
         return "html"
     if suffix == ".md":
         return "markdown"
@@ -564,7 +567,8 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
         supported_files = [
             p
             for p in sorted(raw_dir.glob("*"))
-            if p.is_file() and p.suffix.lower() in {".ipynb", ".html", ".txt", ".md", ".docx"}
+            if p.is_file()
+            and p.suffix.lower() in {".ipynb", ".html", ".txt", ".md", ".docx"}
         ]
         if not supported_files:
             print(

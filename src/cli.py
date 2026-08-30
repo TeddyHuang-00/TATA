@@ -261,9 +261,7 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
     seen: set[tuple[int, int]] = set()
     fetched_any = False
     for config_path in course_configs:
-        if _fetch_course(
-            canvas, config_path, course_filter, assignment_filter, seen
-        ):
+        if _fetch_course(canvas, config_path, course_filter, assignment_filter, seen):
             fetched_any = True
     if fetched_any:
         # Course-level lists are the source of truth; the fallback only serves

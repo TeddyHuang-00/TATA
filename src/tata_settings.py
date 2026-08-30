@@ -697,8 +697,7 @@ class SettingsScreen(Vertical):
         if self._ctx == "global" and not target.is_file():
             self._fail(
                 "No global config",
-                "data/config.toml does not exist — create it with "
-                "$EDITOR (e) first",
+                "data/config.toml does not exist — create it with $EDITOR (e) first",
             )
             return
         problems = self._validate(edits)

@@ -249,7 +249,11 @@ class DashboardScreen(Vertical):
             )
             for i, c in enumerate(state.courses):
                 table.add_row(
-                    escape(course_display_name(state.assignments_dir, c.dir_name, c.course_id)),
+                    escape(
+                        course_display_name(
+                            state.assignments_dir, c.dir_name, c.course_id
+                        )
+                    ),
                     str(c.assignment_count),
                     str(c.counts.raw),
                     str(c.counts.processed),
@@ -499,7 +503,11 @@ class DashboardScreen(Vertical):
             aid, out, mode = value  # type: ignore[misc]
         except (TypeError, ValueError):
             return
-        if not isinstance(aid, int) or not isinstance(out, str) or not isinstance(mode, str):
+        if (
+            not isinstance(aid, int)
+            or not isinstance(out, str)
+            or not isinstance(mode, str)
+        ):
             return
         course = self.state.current_course
         if course is None or course.course_id is None:
@@ -618,9 +626,12 @@ class DashboardScreen(Vertical):
                 Path(entry.out).parent.name or str(entry.assignment_id),
                 entry.assignment_id,
             )
-            targets.append(
-                {"label": label, "state": "pending", "err": "", "seconds": 0.0}
-            )
+            targets.append({
+                "label": label,
+                "state": "pending",
+                "err": "",
+                "seconds": 0.0,
+            })
         self._fetch_progress = targets
         self._fetch_done = False
         self._render_fetch_progress()
@@ -676,9 +687,7 @@ class DashboardScreen(Vertical):
             if target["state"] == "running":
                 lines.append(f"[yellow]▶ {label}[/yellow]")
             elif target["state"] == "done":
-                lines.append(
-                    f"[green]✓ {label} ({target['seconds']:.1f}s)[/green]"
-                )
+                lines.append(f"[green]✓ {label} ({target['seconds']:.1f}s)[/green]")
             elif target["state"] == "failed":
                 # Escape markup brackets; keep the line short (no paths).
                 err = (target["err"] or "").replace("[", r"\[")[:60]
@@ -689,9 +698,7 @@ class DashboardScreen(Vertical):
         panel.display = True
         panel.update("\n".join(lines))
         if self.state.active_job == "fetch-all":
-            done = sum(
-                1 for t in self._fetch_progress if t["state"] != "pending"
-            )
+            done = sum(1 for t in self._fetch_progress if t["state"] != "pending")
             self.query_one("#dash-status", Static).update(
                 f"Fetching {done}/{len(self._fetch_progress)}…"
             )
@@ -774,7 +781,10 @@ class DashboardScreen(Vertical):
     # ---------- minimal job protocol (ponytail: status text only, no queue) ----------
 
     def _start_job(
-        self, stage: str, fn: Callable[[], None], after: Callable[[], None] | None = None
+        self,
+        stage: str,
+        fn: Callable[[], None],
+        after: Callable[[], None] | None = None,
     ) -> None:
         """One exclusive worker thread; progress is #dash-status text (plus the
         #dash-progress panel for fetch-all)."""
@@ -804,7 +814,9 @@ class DashboardScreen(Vertical):
         error: BaseException | None = None
         try:
             fn()
-        except BaseException as exc:  # incl. SystemExit from main's interactive fallback
+        except (
+            BaseException
+        ) as exc:  # incl. SystemExit from main's interactive fallback
             error = exc
         self.app.call_from_thread(self._job_done, start, error, after)
 
@@ -903,9 +915,9 @@ class ImportCourseModal(_ImportBase):
         self._safe_post(self._populate)
 
     def _load_failed(self, message: str) -> None:
-        self.query_one("#modal-canvas-course", Select).set_options(
-            [(f"Error: {message}", -1)]
-        )
+        self.query_one("#modal-canvas-course", Select).set_options([
+            (f"Error: {message}", -1)
+        ])
 
     def _populate(self) -> None:
         select = self.query_one("#modal-canvas-course", Select)
@@ -930,9 +942,7 @@ class ImportCourseModal(_ImportBase):
         dir_name = self.query_one("#modal-dir", Input).value.strip() or str(course_id)
         dest = self.state.assignments_dir / dir_name
         if dest.exists():
-            self.app.notify(
-                f"Directory already exists: {dir_name}", severity="error"
-            )
+            self.app.notify(f"Directory already exists: {dir_name}", severity="error")
             return
         dest.mkdir(parents=True)
         (dest / "config.toml").write_text(
@@ -970,10 +980,10 @@ class ImportAssignmentModal(_ImportBase):
     def compose(self) -> ComposeResult:
         with Vertical(classes="confirm-modal"):
             yield Static("[b]Import assignment from Canvas[/b]")
-            yield Select(
-                [("Loading…", -1)], id="modal-assignment", allow_blank=False
+            yield Select([("Loading…", -1)], id="modal-assignment", allow_blank=False)
+            yield Input(
+                placeholder="Output dir (default: assignment id)", id="modal-out"
             )
-            yield Input(placeholder="Output dir (default: assignment id)", id="modal-out")
             yield RadioSet(
                 RadioButton("attach", id="mode-attach"),
                 RadioButton("text", id="mode-text"),
@@ -1002,9 +1012,9 @@ class ImportAssignmentModal(_ImportBase):
         self._safe_post(self._populate)
 
     def _load_failed(self, message: str) -> None:
-        self.query_one("#modal-assignment", Select).set_options(
-            [(f"Error: {message}", -1)]
-        )
+        self.query_one("#modal-assignment", Select).set_options([
+            (f"Error: {message}", -1)
+        ])
 
     def _populate(self) -> None:
         select = self.query_one("#modal-assignment", Select)
@@ -1110,7 +1120,10 @@ class TataApp(App[None]):
     def _derive_ctx(self) -> str:
         """Settings context matching the current dashboard level."""
         state = self.state
-        if state.dashboard_level == "assignment" and state.current_assignment is not None:
+        if (
+            state.dashboard_level == "assignment"
+            and state.current_assignment is not None
+        ):
             return "assignment"
         if state.dashboard_level == "course" and state.current_course is not None:
             return "course"

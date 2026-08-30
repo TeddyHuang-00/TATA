@@ -98,10 +98,13 @@ AGGREGATE_JSON = {
     ],
 }
 
-PROCESSED_A1B = ("def solve(data):\n    total = sum(data)\n    return total / len(data)\n"
-                 "# a fully distinct final line\n")
-PROCESSED_A1C = ("# another docstring header\nimport numpy as np\n"
-                 "result = np.array([1, 2])\n")
+PROCESSED_A1B = (
+    "def solve(data):\n    total = sum(data)\n    return total / len(data)\n"
+    "# a fully distinct final line\n"
+)
+PROCESSED_A1C = (
+    "# another docstring header\nimport numpy as np\nresult = np.array([1, 2])\n"
+)
 
 
 def _write_pairs(assignment_dir: Path, payload: dict) -> None:
@@ -118,8 +121,7 @@ def _make_fixture(assignments_dir: Path) -> None:
     # the panes read the root [plagiarism] section directly); display
     # threshold 0.9 -> 90% flag threshold for the panes
     (course_dir / "config.toml").write_text(
-        "[fetch]\ncourse_id = 111111\n"
-        "[plagiarism]\ndisplay_threshold = 0.9\n",
+        "[fetch]\ncourse_id = 111111\n[plagiarism]\ndisplay_threshold = 0.9\n",
         encoding="utf-8",
     )
     for name, aid in ((A1, 1001), (A2, 1002)):
@@ -164,7 +166,12 @@ def _make_fixture(assignments_dir: Path) -> None:
     )
     write_aliases(
         course_dir / A1 / "alias.toml",
-        students={"a1b": "Alice A", "a1c": "Bob B", "a1f": "Frank F", "333333": "Doe, Jane"},
+        students={
+            "a1b": "Alice A",
+            "a1c": "Bob B",
+            "a1f": "Frank F",
+            "333333": "Doe, Jane",
+        },
     )
     write_aliases(
         course_dir / A2 / "alias.toml",
@@ -283,7 +290,12 @@ def _check_pairs_pane(screen: PlagiarismScreen) -> None:
     assert table.row_count == 3, table.row_count
     labels = [str(c.label) for c in table.columns.values()]
     assert labels == [
-        "Assignment", "Student A", "Student B", "sim %", "overlap", "Flag"
+        "Assignment",
+        "Student A",
+        "Student B",
+        "sim %",
+        "overlap",
+        "Flag",
     ], labels
     # sorted by sim desc: 91.2 (FLAG, threshold 90%), then 72.0, then 65.5
     assert cell(table, 0, 0) == "First Assignment", cell(table, 0, 0)
@@ -301,7 +313,9 @@ def _check_pairs_pane(screen: PlagiarismScreen) -> None:
     assert cell(table, 2, 5) == "-", cell(table, 2, 5)
 
 
-async def _check_compare_pane(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> None:
+async def _check_compare_pane(
+    screen: PlagiarismScreen, pilot: Pilot, app: TataApp
+) -> None:
     assert not hasattr(plag_mod, "CompareModal"), "CompareModal must be gone"
     table = screen.query_one("#pairs-table", DataTable)
     pane = screen.query_one("#cmp-pane", Horizontal)
@@ -325,7 +339,9 @@ async def _check_compare_pane(screen: PlagiarismScreen, pilot: Pilot, app: TataA
 
     # row 2: below-threshold pair -> pane updates, no red markup
     table.move_cursor(row=2)
-    await wait_for(pilot, lambda: "Eve E" in str(screen.query_one("#cmp-title", Static).content))
+    await wait_for(
+        pilot, lambda: "Eve E" in str(screen.query_one("#cmp-title", Static).content)
+    )
     assert pane.display
     title = str(screen.query_one("#cmp-title", Static).content)
     assert "FLAG" not in title, title
@@ -344,13 +360,18 @@ async def _check_no_course_state(screen: PlagiarismScreen, app: TataApp) -> None
     await asyncio.sleep(0.05)
     empty = screen.query_one("#plag-empty", Static)
     assert empty.display
-    assert str(empty.content) == "No course selected. Open Dashboard and enter a course first.", str(empty.content)
+    assert (
+        str(empty.content)
+        == "No course selected. Open Dashboard and enter a course first."
+    ), str(empty.content)
     _set_state(app)
     screen.reload_all()
     await asyncio.sleep(0.05)
 
 
-async def _check_error_states(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> None:
+async def _check_error_states(
+    screen: PlagiarismScreen, pilot: Pilot, app: TataApp
+) -> None:
     course = app.state.current_course
     assert course is not None
     course_dir = course.config_path.parent
@@ -369,7 +390,9 @@ async def _check_error_states(screen: PlagiarismScreen, pilot: Pilot, app: TataA
         await _go_tab(screen, pilot, "pane-aggregate")
         empty = screen.query_one("#agg-empty", Static)
         assert empty.display
-        assert str(empty.content) == "No aggregate report yet. Run (a).", str(empty.content)
+        assert str(empty.content) == "No aggregate report yet. Run (a).", str(
+            empty.content
+        )
 
         # corrupt pairs JSON -> per-assignment error; assignments pane shows
         # the note under the table, the good assignment still renders
@@ -419,9 +442,12 @@ def _fake_detect(
     output: Path | None = None,
     quiet: bool = False,
 ) -> dict:
-    _detect_calls.append(
-        {"path": config_path, "aggregate": aggregate, "output": output, "quiet": quiet}
-    )
+    _detect_calls.append({
+        "path": config_path,
+        "aggregate": aggregate,
+        "output": output,
+        "quiet": quiet,
+    })
     time.sleep(0.3)
     print(f"[done] {config_path.name}")
     return {
@@ -499,11 +525,22 @@ def _check_late_alias_resolution(app: TataApp) -> None:
     assert course is not None
     assignments_dir = state.assignments_dir
     course_name = course.dir_name
-    assert pair_side_name(assignments_dir, course_name, a_info, "333333_LATE_0.ipynb") == "Doe, Jane"
-    assert pair_side_name(assignments_dir, course_name, a_info, "333333_0.ipynb") == "Doe, Jane"
-    assert pair_side_name(assignments_dir, course_name, a_info, "333333_LATE_1.txt") == "Doe, Jane"
+    assert (
+        pair_side_name(assignments_dir, course_name, a_info, "333333_LATE_0.ipynb")
+        == "Doe, Jane"
+    )
+    assert (
+        pair_side_name(assignments_dir, course_name, a_info, "333333_0.ipynb")
+        == "Doe, Jane"
+    )
+    assert (
+        pair_side_name(assignments_dir, course_name, a_info, "333333_LATE_1.txt")
+        == "Doe, Jane"
+    )
     # unaliased stem falls back to the raw stem (unchanged)
-    assert pair_side_name(assignments_dir, course_name, a_info, "999999.ipynb") == "999999"
+    assert (
+        pair_side_name(assignments_dir, course_name, a_info, "999999.ipynb") == "999999"
+    )
 
 
 async def check_screen(app: TataApp, pilot: Pilot) -> None:

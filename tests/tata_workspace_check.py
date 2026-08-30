@@ -90,20 +90,22 @@ async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
     assert incr.display
     line = str(incr.content)
     assert "To run:" in line, line
-    assert "Skip" not in line, line  # F8: formerly double-counted (processed+done+scored)
+    assert "Skip" not in line, (
+        line
+    )  # F8: formerly double-counted (processed+done+scored)
     assert "No change:" in line, line
     await pilot.press("i")
 
 
-async def _wait_modal_focused(
-    app: TataApp, pilot: Pilot, button_id: str
-) -> None:
+async def _wait_modal_focused(app: TataApp, pilot: Pilot, button_id: str) -> None:
     """Wait until the ConfirmationModal is up AND its first button is focused
     (enter would otherwise be swallowed by the widget focused below)."""
     await wait_for(
         pilot,
-        lambda: isinstance(app.screen, tw.ConfirmationModal)
-        and app.screen.query_one(f"Button#{button_id}").has_focus,
+        lambda: (
+            isinstance(app.screen, tw.ConfirmationModal)
+            and app.screen.query_one(f"Button#{button_id}").has_focus
+        ),
     )
 
 

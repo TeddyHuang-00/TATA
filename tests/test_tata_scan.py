@@ -18,23 +18,33 @@ def _write_pairs(assignment_dir: Path, pairs: list) -> None:
 def test_dirty_max_similarity_pct_does_not_crash(tmp_path: Path) -> None:
     """MAJOR-2: strings/None/non-dict entries must not crash the scan."""
     a1 = tmp_path / "a1"
-    _write_pairs(a1, [
-        {"test_file": "a", "reference_file": "b", "max_similarity_pct": "95.0"},
-        {"test_file": "a", "reference_file": "c", "max_similarity_pct": None},
-        {"test_file": "a", "reference_file": "d", "max_similarity_pct": "not-a-number"},
-        "not-a-dict",
-        {},
-    ])
+    _write_pairs(
+        a1,
+        [
+            {"test_file": "a", "reference_file": "b", "max_similarity_pct": "95.0"},
+            {"test_file": "a", "reference_file": "c", "max_similarity_pct": None},
+            {
+                "test_file": "a",
+                "reference_file": "d",
+                "max_similarity_pct": "not-a-number",
+            },
+            "not-a-dict",
+            {},
+        ],
+    )
     assert _flagged_pairs(a1) == 1  # only the "95.0" string counts
 
 
 def test_display_threshold_boundary(tmp_path: Path) -> None:
     """80.0 counts as flagged, 79.9 does not (display threshold, not z-alpha)."""
     a1 = tmp_path / "a1"
-    _write_pairs(a1, [
-        {"test_file": "a", "reference_file": "b", "max_similarity_pct": 80.0},
-        {"test_file": "a", "reference_file": "c", "max_similarity_pct": 79.9},
-    ])
+    _write_pairs(
+        a1,
+        [
+            {"test_file": "a", "reference_file": "b", "max_similarity_pct": 80.0},
+            {"test_file": "a", "reference_file": "c", "max_similarity_pct": 79.9},
+        ],
+    )
     assert _flagged_pairs(a1) == 1
 
 
@@ -50,10 +60,13 @@ def test_course_config_display_threshold_drives_flags(tmp_path: Path) -> None:
         "[plagiarism]\ndisplay_threshold = 0.9\n", encoding="utf-8"
     )
     (a1 / "config.toml").write_text("", encoding="utf-8")
-    _write_pairs(a1, [
-        {"test_file": "a", "reference_file": "b", "max_similarity_pct": 90.0},
-        {"test_file": "a", "reference_file": "c", "max_similarity_pct": 89.0},
-    ])
+    _write_pairs(
+        a1,
+        [
+            {"test_file": "a", "reference_file": "b", "max_similarity_pct": 90.0},
+            {"test_file": "a", "reference_file": "c", "max_similarity_pct": 89.0},
+        ],
+    )
     courses = scan_courses(tmp_path / "data")
     assert len(courses) == 1
     assert courses[0].flagged_pairs == 1, courses[0].flagged_pairs
@@ -77,7 +90,9 @@ def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> No
         encoding="utf-8",
     )
     (a1 / "config.toml").write_text("", encoding="utf-8")
-    _write_pairs(a1, [{"test_file": "a", "reference_file": "b", "max_similarity_pct": 90.0}])
+    _write_pairs(
+        a1, [{"test_file": "a", "reference_file": "b", "max_similarity_pct": 90.0}]
+    )
     assert _plagiarism_threshold_pct(course / "config.toml") == DISPLAY_THRESHOLD_PCT
     courses = scan_courses(tmp_path / "data")  # must not raise
     assert len(courses) == 1

@@ -359,7 +359,9 @@ def _load_toml(config_path: Path) -> dict:
         raise ValueError(msg) from exc
 
 
-def load_root_section[T: BaseModel](path: Path, section: str, model: type[T]) -> T | None:
+def load_root_section[T: BaseModel](
+    path: Path, section: str, model: type[T]
+) -> T | None:
     """Load one section of a config.toml into a pydantic model.
 
     None when the file or the section is missing/empty; ValueError (with the

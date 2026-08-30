@@ -32,8 +32,7 @@ def _write_chain(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (assignments / "111111" / "a1" / "alias.toml").write_text(
-        '[assignment]\n"222222" = "Local Assign"\n'
-        '[student]\n"3" = "Local Three"\n',
+        '[assignment]\n"222222" = "Local Assign"\n[student]\n"3" = "Local Three"\n',
         encoding="utf-8",
     )
     return assignments
@@ -41,13 +40,11 @@ def _write_chain(tmp_path: Path) -> Path:
 
 def test_precedence_global_course_assignment(tmp_path: Path) -> None:
     assignments = _write_chain(tmp_path)
-    aliases = load_alias_chain(
-        [
-            assignments / "alias.toml",
-            assignments / "111111" / "alias.toml",
-            assignments / "111111" / "a1" / "alias.toml",
-        ]
-    )
+    aliases = load_alias_chain([
+        assignments / "alias.toml",
+        assignments / "111111" / "alias.toml",
+        assignments / "111111" / "a1" / "alias.toml",
+    ])
     # closer wins per key
     assert lookup(aliases, "course", "111111") == "Course 111111"
     assert lookup(aliases, "assignment", "222222") == "Local Assign"
@@ -59,16 +56,13 @@ def test_precedence_global_course_assignment(tmp_path: Path) -> None:
 def test_display_names_and_fallbacks(tmp_path: Path) -> None:
     assignments = _write_chain(tmp_path)
     # course: alias wins over dir_name; fallback = dir_name (no id / unknown id)
-    assert (
-        course_display_name(assignments, "111111", 111111) == "Course 111111"
-    )
+    assert course_display_name(assignments, "111111", 111111) == "Course 111111"
     assert course_display_name(assignments, "111111", None) == "111111"
     assert course_display_name(assignments, "111111", 999) == "111111"
     assert course_display_name(assignments, "no-aliases-dir", 1) == "no-aliases-dir"
     # assignment: alias wins; fallback = dir_name
     assert (
-        assignment_display_name(assignments, "111111", "a1", 222222)
-        == "Local Assign"
+        assignment_display_name(assignments, "111111", "a1", 222222) == "Local Assign"
     )
     assert assignment_display_name(assignments, "111111", "a1", None) == "a1"
     assert assignment_display_name(assignments, "111111", "a1", 999) == "a1"
@@ -142,14 +136,14 @@ def _make_course_tree(tmp_path: Path) -> Path:
         '[fetch]\nassignment_id = 222222\nmode = "text"\n', encoding="utf-8"
     )
     (course / "assignment-one" / "roster.csv").write_text(
-        'user_id,user_name,sortable_name,file\n'
+        "user_id,user_name,sortable_name,file\n"
         '100,"Alpha, A",Alpha A,100.txt\n'
         '200,"Q""ued, Name","Q"" Name",200.txt\n',
         encoding="utf-8",
     )
     (course / "config.toml").write_text(
-        '[fetch]\ncourse_id = 111111\n'
-        '[[fetch.assignments]]\nassignment_id = 222222\n'
+        "[fetch]\ncourse_id = 111111\n"
+        "[[fetch.assignments]]\nassignment_id = 222222\n"
         'out = "assignment-one/raw"\n',
         encoding="utf-8",
     )
@@ -160,7 +154,9 @@ def test_migrate_dry_run_reports_only(tmp_path: Path) -> None:
     course = _make_course_tree(tmp_path)
     actions = migrate_course_to_ids(course, dry_run=True)
     assert len(actions) == 4
-    assert any("rename" in a and "assignment-one" in a and "222222" in a for a in actions)
+    assert any(
+        "rename" in a and "assignment-one" in a and "222222" in a for a in actions
+    )
     assert any('patch "assignment-one/raw" -> "222222/raw"' in a for a in actions)
     assert any('"222222" = "assignment-one"' in a for a in actions)
     assert any("roster.csv" in a and "delete" in a for a in actions)

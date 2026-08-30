@@ -13,7 +13,9 @@ from src.assignment_config import (
 )
 
 
-def test_root_config_detection(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_root_config_detection(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(tmp_path, "data/config.toml", "[fetch]\ncourse_id = 1\n")
     write_tree(tmp_path, "data/a/config.toml", grading_config)
     root = tmp_path / "data" / "config.toml"
@@ -24,7 +26,9 @@ def test_root_config_detection(tmp_path: Path, write_tree: Callable[[Path, str, 
     assert find_root_config(root) is None
 
 
-def test_layered_merge_root_defaults_assignment_overrides(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_layered_merge_root_defaults_assignment_overrides(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(
         tmp_path,
         "data/config.toml",
@@ -53,7 +57,9 @@ def test_layered_merge_root_defaults_assignment_overrides(tmp_path: Path, write_
     assert cfg.fetch.course_id == 111111
 
 
-def test_standalone_assignment_config_without_root(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_standalone_assignment_config_without_root(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(
         tmp_path,
         "data/a/config.toml",
@@ -65,7 +71,9 @@ def test_standalone_assignment_config_without_root(tmp_path: Path, write_tree: C
     assert cfg.fetch.assignment_id == 9
 
 
-def test_root_config_plagiarism_defaults_merge(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_root_config_plagiarism_defaults_merge(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(
         tmp_path,
         "data/config.toml",
@@ -78,7 +86,9 @@ def test_root_config_plagiarism_defaults_merge(tmp_path: Path, write_tree: Calla
     assert cfg.plagiarism.pairwise_alpha == pytest.approx(0.01)  # default
 
 
-def test_root_config_alone_invalid_for_stages(tmp_path: Path, write_tree: Callable[[Path, str, str], Path]) -> None:
+def test_root_config_alone_invalid_for_stages(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
     write_tree(tmp_path, "data/config.toml", "[fetch]\ncourse_id = 1\n")
     with pytest.raises(ValueError, match="Missing required config fields"):
         load_assignment_file(tmp_path / "data" / "config.toml")

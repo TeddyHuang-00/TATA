@@ -182,7 +182,9 @@ def pair_side_name(
 # ---------- aggregate JSON writer (used by the [a] job) ----------
 
 
-def _aggregate_rows(course_dir: Path, alpha: float, floor: float, cap: float) -> list[dict]:
+def _aggregate_rows(
+    course_dir: Path, alpha: float, floor: float, cap: float
+) -> list[dict]:
     """Full combined pair ranking (shared core in plagiarism_aggregate)."""
     return aggregate_pair_rows(course_dir, alpha, floor, cap)
 
@@ -241,7 +243,9 @@ def run_aggregate_job(config_path: Path) -> dict | None:
 # ---------- side resolution (shared by the compare pane) ----------
 
 
-def _resolve_side(assignment_dir: Path, file_name: str) -> tuple[Path | None, Path | None]:
+def _resolve_side(
+    assignment_dir: Path, file_name: str
+) -> tuple[Path | None, Path | None]:
     """(raw, processed) for one compare side; code submissions carry a
     ``<assignment>__<stem>`` prefix handled by stripping segments."""
     stem = Path(file_name).stem
@@ -255,9 +259,7 @@ def _resolve_side(assignment_dir: Path, file_name: str) -> tuple[Path | None, Pa
     return None, None
 
 
-def _side_lines(
-    assignment_dir: Path, file_name: str, overlap_lines: set[int]
-) -> str:
+def _side_lines(assignment_dir: Path, file_name: str, overlap_lines: set[int]) -> str:
     """Numbered file lines; lines in ``overlap_lines`` rendered red."""
     raw, processed = _resolve_side(assignment_dir, file_name)
     result = preview_content(raw, processed)
@@ -340,10 +342,14 @@ class PlagiarismScreen(JobHost):
                 yield DataTable(id="agg-table", cursor_type="row", zebra_stripes=True)
                 yield Static("", id="agg-empty", markup=True)
             with TabPane("Assignments", id="pane-assignments"):
-                yield DataTable(id="assign-table", cursor_type="row", zebra_stripes=True)
+                yield DataTable(
+                    id="assign-table", cursor_type="row", zebra_stripes=True
+                )
                 yield Static("", id="assign-empty", markup=True)
             with TabPane("Students", id="pane-students"):
-                yield DataTable(id="students-table", cursor_type="row", zebra_stripes=True)
+                yield DataTable(
+                    id="students-table", cursor_type="row", zebra_stripes=True
+                )
                 yield Static("", id="students-empty", markup=True)
             with TabPane("Pairs", id="pane-pairs"):
                 yield DataTable(id="pairs-table", cursor_type="row", zebra_stripes=True)
@@ -416,9 +422,7 @@ class PlagiarismScreen(JobHost):
             empty.styles.height = "1fr"
             empty.styles.content_align = ("center", "middle")
             empty.styles.opacity = 0.6
-            empty.update(
-                "No course selected. Open Dashboard and enter a course first."
-            )
+            empty.update("No course selected. Open Dashboard and enter a course first.")
             empty.display = True
             return
 
@@ -496,15 +500,11 @@ class PlagiarismScreen(JobHost):
         for a in state.assignments:
             pairs = by_assignment.get(a.dir_name, [])
             max_sim = max((_pair_pct(p) for p in pairs), default=0.0)
-            flagged = sum(
-                1 for p in pairs if _pair_pct(p) >= self._threshold_pct
-            )
+            flagged = sum(1 for p in pairs if _pair_pct(p) >= self._threshold_pct)
             rows.append((a, len(pairs), flagged, max_sim))
         rows.sort(key=lambda r: (-r[3], r[0].dir_name))
         if not rows:
-            self._show_pane_empty(
-                empty, table, "No assignments in this course."
-            )
+            self._show_pane_empty(empty, table, "No assignments in this course.")
             return
         table.add_columns("Assignment", "Pairs", "Flagged", "Max sim %")
         for index, (a, count, flagged, max_sim) in enumerate(rows):
@@ -528,9 +528,7 @@ class PlagiarismScreen(JobHost):
             # per-assignment load failures: note under the table (rows that
             # did load stay visible)
             empty.update(
-                "[dim]Load failed: "
-                + escape("; ".join(self._course_errors))
-                + "[/dim]"
+                "[dim]Load failed: " + escape("; ".join(self._course_errors)) + "[/dim]"
             )
             empty.styles.height = "auto"
             empty.display = True
@@ -665,15 +663,11 @@ class PlagiarismScreen(JobHost):
             self._show_pane_empty(empty, table, f"Load failed: {self._agg_error}")
             return
         if self._agg is None:
-            self._show_pane_empty(
-                empty, table, "No aggregate report yet. Run (a)."
-            )
+            self._show_pane_empty(empty, table, "No aggregate report yet. Run (a).")
             return
         rows = self._agg.get("pairs") or []
         if not rows:
-            self._show_pane_empty(
-                empty, table, "Aggregation done, 0 tested pairs."
-            )
+            self._show_pane_empty(empty, table, "Aggregation done, 0 tested pairs.")
             return
         alpha = float(self._agg.get("alpha") or AGG_ALPHA_FALLBACK)
         table.add_columns("Student A", "Student B", "raw sim", "z", "p", "Flag")
@@ -791,14 +785,10 @@ class PlagiarismScreen(JobHost):
         )
         assignment_dir = a.config_path.parent
         self.query_one("#cmp-left", Static).update(
-            _side_lines(
-                assignment_dir, str(pair.get("test_file")), overlap_lines
-            )
+            _side_lines(assignment_dir, str(pair.get("test_file")), overlap_lines)
         )
         self.query_one("#cmp-right", Static).update(
-            _side_lines(
-                assignment_dir, str(pair.get("reference_file")), overlap_lines
-            )
+            _side_lines(assignment_dir, str(pair.get("reference_file")), overlap_lines)
         )
         pane.display = True
 

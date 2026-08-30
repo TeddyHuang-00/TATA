@@ -43,14 +43,20 @@ def _write_three_level(
     return global_cfg, course_cfg, assignment_cfg
 
 
-def test_is_course_config_three_level(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
-    global_cfg, course_cfg, assignment_cfg = _write_three_level(tmp_path, write_tree, grading_config)
+def test_is_course_config_three_level(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
+    global_cfg, course_cfg, assignment_cfg = _write_three_level(
+        tmp_path, write_tree, grading_config
+    )
     assert is_course_config(course_cfg)
     assert not is_course_config(global_cfg)
     assert not is_course_config(assignment_cfg)
 
 
-def test_is_course_config_two_level_root(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_is_course_config_two_level_root(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(tmp_path, "data/config.toml", "[fetch]\ncourse_id = 1\n")
     write_tree(tmp_path, "data/a/config.toml", grading_config)
     root = tmp_path / "data" / "config.toml"
@@ -58,27 +64,37 @@ def test_is_course_config_two_level_root(tmp_path: Path, write_tree: Callable[[P
     assert not is_global_config(root)
 
 
-def test_is_global_config_three_level(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
-    global_cfg, course_cfg, assignment_cfg = _write_three_level(tmp_path, write_tree, grading_config)
+def test_is_global_config_three_level(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
+    global_cfg, course_cfg, assignment_cfg = _write_three_level(
+        tmp_path, write_tree, grading_config
+    )
     assert is_global_config(global_cfg)
     assert not is_global_config(course_cfg)
     assert not is_global_config(assignment_cfg)
 
 
-def test_is_course_config_missing_file_is_false(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_is_course_config_missing_file_is_false(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(tmp_path, "data/a/config.toml", grading_config)
     root = tmp_path / "data" / "config.toml"
     assert not is_course_config(root)
     assert not is_global_config(root)
 
 
-def test_find_global_config(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_find_global_config(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     global_cfg, course_cfg, _ = _write_three_level(tmp_path, write_tree, grading_config)
     assert find_global_config(course_cfg) == global_cfg
     assert find_global_config(global_cfg) is None
 
 
-def test_three_layer_merge_precedence(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_three_layer_merge_precedence(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(
         tmp_path,
         "data/config.toml",
@@ -109,7 +125,9 @@ def test_three_layer_merge_precedence(tmp_path: Path, write_tree: Callable[[Path
     assert cfg.plagiarism.copydetect_weight == pytest.approx(0.95)
 
 
-def test_three_layer_fetch_assignments_do_not_leak(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_three_layer_fetch_assignments_do_not_leak(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     write_tree(
         tmp_path,
         "data/config.toml",
@@ -144,7 +162,9 @@ def test_three_layer_fetch_assignments_do_not_leak(tmp_path: Path, write_tree: C
     ]
 
 
-def test_remember_container_writes_own_config(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_remember_container_writes_own_config(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     """C1 regression: -c points at a course config; course-level keys must
     land in that config itself (never climb up to the global) and its
     [[fetch.assignments]] list must survive."""
@@ -171,7 +191,9 @@ def test_remember_container_writes_own_config(tmp_path: Path, write_tree: Callab
     assert assignment_fetch["assignment_id"] == 42
 
 
-def test_remember_fetch_upsert_preserves_assignments(tmp_path: Path, write_tree: Callable[[Path, str, str], Path]) -> None:
+def test_remember_fetch_upsert_preserves_assignments(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
     """Upsert: only provided fields change; existing keys and the
     [[fetch.assignments]] list stay."""
     cfg = write_tree(
@@ -191,7 +213,9 @@ def test_remember_fetch_upsert_preserves_assignments(tmp_path: Path, write_tree:
     ]
 
 
-def test_nested_config_does_not_break_container_detection(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_nested_config_does_not_break_container_detection(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     """M1 regression: a nested config.toml (data/111111/a/solutions/)
     defeats the leaf heuristics (is_course_config/is_global_config both
     return False), but the container check (is_root_config) must stay True so
@@ -233,7 +257,9 @@ def test_nested_config_does_not_break_container_detection(tmp_path: Path, write_
     assert cfg.fetch.assignment_id == 42
 
 
-def test_load_config_fresh_course_self_evidence(tmp_path: Path, write_tree: Callable[[Path, str, str], Path]) -> None:
+def test_load_config_fresh_course_self_evidence(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
     """MAJOR-1: a freshly created course config — only [fetch] state +
     [[fetch.assignments]], no [grading], no subdirectory configs — defeats
     every structural heuristic and must not fall through to
@@ -252,12 +278,12 @@ def test_load_config_fresh_course_self_evidence(tmp_path: Path, write_tree: Call
     assert path == course_cfg
     assert fetch is not None
     assert fetch.course_id == 111111
-    assert [(e.assignment_id, e.out) for e in fetch.assignments] == [
-        (43, "hw1/raw")
-    ]
+    assert [(e.assignment_id, e.out) for e in fetch.assignments] == [(43, "hw1/raw")]
 
 
-def test_remember_nested_assignment_no_container_pollution(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_remember_nested_assignment_no_container_pollution(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     """M1 regression: data/111111/a/config.toml has a nested
     subdirectory config (a/solutions/config.toml), which made the
     structural container heuristics classify it as a container — _remember
@@ -280,9 +306,7 @@ def test_remember_nested_assignment_no_container_pollution(tmp_path: Path, write
 
     _remember(out, assignment_cfg, 111111, 42, "attach")
 
-    assignment_fetch = tomllib.loads(assignment_cfg.read_text())[
-        "fetch"
-    ]
+    assignment_fetch = tomllib.loads(assignment_cfg.read_text())["fetch"]
     assert assignment_fetch["assignment_id"] == 42
     assert "course_id" not in assignment_fetch
     assert "mode" not in assignment_fetch
@@ -292,7 +316,9 @@ def test_remember_nested_assignment_no_container_pollution(tmp_path: Path, write
 
 
 def test_retry_fetch_dedups_shared_assignment(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], write_tree: Callable[[Path, str, str], Path]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    write_tree: Callable[[Path, str, str], Path],
 ) -> None:
     """Mixed-tree retry: global (data/config.toml) and course
     configs both list assignment 9901 — the shared seen set must fetch it
@@ -330,12 +356,12 @@ def test_container_bad_toml_raises_guidance_not_bare_decode(
     with pytest.raises(ValueError, match="Invalid TOML") as excinfo:
         _classify_config(cont)
     assert not isinstance(excinfo.value, tomllib.TOMLDecodeError)
-    assert "Tip: start from data/example/config.toml" in str(
-        excinfo.value
-    )
+    assert "Tip: start from data/example/config.toml" in str(excinfo.value)
 
 
-def test_remember_fetch_inline_comment_table_header(tmp_path: Path, write_tree: Callable[[Path, str, str], Path]) -> None:
+def test_remember_fetch_inline_comment_table_header(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
     """MINOR-3: '[fetch] # ...' with an inline comment must still be
     recognized as the [fetch] table header; before the fix remember_fetch
     appended a second [fetch] block and produced invalid TOML."""
@@ -352,7 +378,9 @@ def test_remember_fetch_inline_comment_table_header(tmp_path: Path, write_tree: 
     assert data["fetch"]["assignment_id"] == 2
 
 
-def test_find_global_config_repo_root_poison_rejected(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_find_global_config_repo_root_poison_rejected(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     """MINOR-4: in the two-level layout the course config is
     data/config.toml; find_global_config climbs parent.parent to the
     repo root. A config.toml there must NOT be merged as a global layer —
@@ -378,7 +406,9 @@ def test_find_global_config_repo_root_poison_rejected(tmp_path: Path, write_tree
     assert cfg.fetch.course_id == 1
 
 
-def test_fetch_course_without_list_returns_false(tmp_path: Path, write_tree: Callable[[Path, str, str], Path]) -> None:
+def test_fetch_course_without_list_returns_false(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
     """MAJOR-2 semantic gate: a config with course_id but no
     [[fetch.assignments]] list (fresh course) yields False without touching
     the canvas (None passed just to prove it)."""
@@ -390,7 +420,9 @@ def test_fetch_course_without_list_returns_false(tmp_path: Path, write_tree: Cal
     assert _fetch_course(None, course_cfg, None, None) is False
 
 
-def test_remember_fresh_course_container(tmp_path: Path, write_tree: Callable[[Path, str, str], Path]) -> None:
+def test_remember_fresh_course_container(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
     """MAJOR-B: a fresh course config — only [fetch] state + its
     [[fetch.assignments]] list, no subdirectory configs — defeats all three
     structural heuristics; _remember must still treat it as a container
@@ -429,7 +461,9 @@ def test_fetch_course_missing_config_returns_false(tmp_path: Path) -> None:
     assert _fetch_course(None, missing, None, None) is False
 
 
-def test_load_config_container_without_fetch(tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str) -> None:
+def test_load_config_container_without_fetch(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
     """MINOR-1: container = cannot load as an assignment (no [grading]).
     A config with no [fetch] at all — a fresh course/global config — is
     still a container: _load_config returns (path, None) instead of

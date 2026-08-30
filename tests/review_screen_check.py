@@ -69,9 +69,7 @@ async def main() -> None:
                 "Zed, Z",
             ]
             # _LATE_N stem resolves to the base-uid alias, shown raw in the id
-            late = next(
-                s for s in review.students if s["student"] == "333333_LATE_0"
-            )
+            late = next(s for s in review.students if s["student"] == "333333_LATE_0")
             assert late["sortable_name"] == "Doe, Jane", late
             select = review.query_one("#student-select", Select)
             prompts = [str(prompt) for prompt, _ in select._options]  # type: ignore[attr-defined]

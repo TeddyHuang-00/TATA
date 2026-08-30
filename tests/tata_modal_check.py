@@ -29,8 +29,12 @@ async def _check_modal_centered(
 ) -> None:
     assert isinstance(app.screen, ConfirmationModal), type(app.screen)
     await pilot.pause()  # let the layout settle
-    assert app.screen.styles.align_horizontal == "center", app.screen.styles.align_horizontal
-    assert app.screen.styles.align_vertical == "middle", app.screen.styles.align_vertical
+    assert app.screen.styles.align_horizontal == "center", (
+        app.screen.styles.align_horizontal
+    )
+    assert app.screen.styles.align_vertical == "middle", (
+        app.screen.styles.align_vertical
+    )
     box = app.screen.query_one(".confirm-modal", Vertical)
     region = box.region
     width, height = size

@@ -15,7 +15,7 @@ from src.cli_options import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 ASSIGNMENT_CONFIG = (
-    '[grading]\n'
+    "[grading]\n"
     'rubric = "rubrics/a1.toml"\n'
     'system_prompt = "prompt/system.md"\n'
     'provider = "deepseek_chat_tool"\n'
@@ -118,9 +118,7 @@ def test_key_without_dot_rejected(tmp_path: Path) -> None:
 
 def test_dotted_key_sets_value(tmp_path: Path) -> None:
     cfg = _assignment_config(tmp_path)
-    proc = _run_main(
-        "config", "set", "-c", str(cfg), "grading.max_parallel_tasks", "4"
-    )
+    proc = _run_main("config", "set", "-c", str(cfg), "grading.max_parallel_tasks", "4")
     assert proc.returncode == 0
     assert "max_parallel_tasks = 4" in cfg.read_text(encoding="utf-8")
 

@@ -348,8 +348,10 @@ def _top_pairs(embs: np.ndarray) -> list[tuple[int, int, float]]:
 
 def _embedding_fresh(out_path: Path, processed_dir: Path) -> bool:
     mds = list(processed_dir.glob("*.md"))
-    return bool(mds) and out_path.exists() and out_path.stat().st_mtime >= max(
-        f.stat().st_mtime for f in mds
+    return (
+        bool(mds)
+        and out_path.exists()
+        and out_path.stat().st_mtime >= max(f.stat().st_mtime for f in mds)
     )
 
 
@@ -404,7 +406,9 @@ def _run_embedding(cfg: PlagiarismConfig) -> bool:
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"[plagiarism] embedding -> {out_path} ({len(items)} files, {len(rows)} pairs)")
+    print(
+        f"[plagiarism] embedding -> {out_path} ({len(items)} files, {len(rows)} pairs)"
+    )
     return True
 
 
@@ -444,7 +448,10 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
         "test_file_count": len(detector.test_files),
         "reference_file_count": len(detector.test_files),
         "pair_count": len(rows),
-        "weights": {"copydetect": cfg.copydetect_weight, "embedding": cfg.embedding_weight},
+        "weights": {
+            "copydetect": cfg.copydetect_weight,
+            "embedding": cfg.embedding_weight,
+        },
         "pairs": rows,
     }
     (cfg.output_dir / "all_pairs.json").write_text(
@@ -521,7 +528,9 @@ def _run_assignment(config_path: Path) -> dict:
 
     if _find_submissions(cfg):
         return _run_code_plagiarism(cfg, config_path, hook_runtime)
-    md_files = list(cfg.processed_dir.glob("*.md")) if cfg.processed_dir.exists() else []
+    md_files = (
+        list(cfg.processed_dir.glob("*.md")) if cfg.processed_dir.exists() else []
+    )
     if md_files:
         return _run_text_plagiarism(cfg)
     print(
@@ -572,7 +581,9 @@ def detect_plagiarism(
     # source of truth for the course), else every assignment dir below.
     listed: list[Path] | None = None
     if is_root:
-        root_fetch = load_root_section(resolved, "fetch", FetchSection) or FetchSection()
+        root_fetch = (
+            load_root_section(resolved, "fetch", FetchSection) or FetchSection()
+        )
         if root_fetch.assignments:
             listed = [
                 (resolved.parent / entry.out).parent for entry in root_fetch.assignments

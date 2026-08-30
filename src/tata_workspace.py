@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
 # ---------- shared display helpers (also imported by tata_app) ----------
 
+
 def is_displayed(widget: Widget) -> bool:
     """True when the widget and every ancestor has display enabled, and the
     widget is on the app's active screen.
@@ -668,7 +669,9 @@ class AssignmentScreen(JobHost):
 
     @override
     def job_finished(self, job: dict, summary: dict | None) -> None:
-        on_this_dir = self._info is not None and job.get("dir_name") == self._info.dir_name
+        on_this_dir = (
+            self._info is not None and job.get("dir_name") == self._info.dir_name
+        )
         if on_this_dir and is_displayed(self):
             self.focus_stage()
         self._rescan_after_job(job)

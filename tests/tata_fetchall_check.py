@@ -147,9 +147,9 @@ async def _check_fetch_all_failure(root: Path) -> None:
         assert "✓ Week [1]" in panel_text, panel_text
         assert "✓ 1003" in panel_text, panel_text
         assert "Fetch complete: 2/3 ok, 1 failed" in text(status), text(status)
-        assert any(
-            "1 failed" in msg and sev == "warning" for msg, sev in notices
-        ), notices
+        assert any("1 failed" in msg and sev == "warning" for msg, sev in notices), (
+            notices
+        )
 
 
 async def _check_fetch_all_empty(root: Path) -> None:
