@@ -251,15 +251,3 @@ def generate_grading_model(rubric_def: RubricDefinition) -> type[BaseModel]:
         "GradingResponse",
         **response_fields,
     )
-
-
-if __name__ == "__main__":
-    import json
-    from pathlib import Path
-
-    project_root = Path(__file__).resolve().parents[1]
-    schema_file = project_root / "config" / "rubric.schema.json"
-    with schema_file.open("w") as f:
-        json.dump(RubricDefinition.model_json_schema(), f, indent=4)
-
-    print(get_rubric_definition(project_root / "rubrics" / "example_rubric.toml"))

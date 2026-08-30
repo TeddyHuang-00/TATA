@@ -73,11 +73,3 @@ def get_providers() -> ProviderList:
     config = tomllib.loads(config_file.read_text())
 
     return ProviderList.model_validate(config)
-
-
-if __name__ == "__main__":
-    import json
-
-    schema_file = PROJECT_ROOT / "config" / "provider.schema.json"
-    with schema_file.open("w") as f:
-        json.dump(ProviderList.model_json_schema(), f, indent=4)
