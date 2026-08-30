@@ -24,7 +24,7 @@
 │ Pairs rows use <assignment>/plagiarism/all_pairs.json (Assignment/Student  │
 │ A/Student B/sim %/overlap/Flag columns); row selection renders #cmp-pane:  │
 │ ┌─ #cmp-pane (embedded, no modal)  0142.py ↔ 0156.py  sim 91.2%  ov 340 ─┐ │
-│ │ 0142.py (processed)    │ 0156.py (processed)    │  o=Open $EDITOR       │ │
+│ │ 0142.py (processed)    │ 0156.py (processed)    │                      │ │
 │ │ 1  def score(data):    │ 1  def score(data):    │ ...similar lines      │ │
 │ │ 2      agg = [...];    │ 2      agg = [...];    │ highlighted[reverse]  │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
@@ -42,7 +42,7 @@
 | 判定列 | 单元格 `Static`（`flag`/`flag-warn` class） | display 判定用 `display_threshold`（80%）；Aggregate 的 z/p 判定用聚合 `alpha` |
 | 顶部按钮 | `Button`×2（`plag-run` / `plag-aggregate`） | `[p]` 运行检测（单作业 copydetect，quiet）；`[a]` 运行聚合（`run_aggregate_job`：detect_plagiarism aggregate=True, quiet + `_write_aggregate_json`） |
 | 状态行 | `Static`（`#plag-status`） | 汇总：对总数 / display 疑点数 / 阈值（`display threshold N%`） |
-| 对比面板 | `#cmp-pane`（`Horizontal` 内 2×列，行高亮即时更新；**非 ModalScreen、no push_screen**） | 并排文本 + 相似片段高亮；`o` 打开 `$EDITOR`；复用 `preview_content`/`find_raw_file` |
+| 对比面板 | `#cmp-pane`（`Horizontal` 内 2×列，行高亮即时更新；**非 ModalScreen、no push_screen**） | 并排文本 + 相似片段高亮；复用 `preview_content`/`find_raw_file` |
 | （复用） | `RichLog` + `JobHost`（src/tata_jobs.py 共享协议） | 检测/聚合运行日志；进度走 JobHost 协议 |
 
 ## 3. z 分数双呈现设计（验收关键）
