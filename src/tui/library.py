@@ -1,6 +1,6 @@
 """TATA Library tab: rubric + prompt editing (F2).
 
-Hosted by :mod:`src.tui.tata_app` inside the Library TabPane (T4-d). Two inner
+Hosted by :mod:`src.tui.app` inside the Library TabPane (T4-d). Two inner
 TabPanes: *Rubrics* (:class:`RubricsPane`, migrated from the former
 ``RubricBuilderScreen`` — no Screen, no push_screen) and *Prompts*
 (:class:`PromptsPane`, TextArea over ``data/prompt/*.md``). Non-Screen widgets
@@ -35,10 +35,10 @@ from textual.widgets import (
 )
 
 from src.shared.rubric import Grading, Rating, RubricDefinition, get_rubric_definition
-from src.tui.tata_workspace import ConfirmationModal
+from src.tui.workspace import ConfirmationModal
 
 if TYPE_CHECKING:
-    from src.tui.tata_app import AppState
+    from src.tui.app import AppState
 
 #: Select value for the "New rubric…" file option (never a real file name).
 _NEW_VALUE = "__new__"
@@ -188,72 +188,7 @@ class RubricsPane(Vertical):
     tomlkit.
     """
 
-    DEFAULT_CSS = """
-RubricsPane {
-    height: 1fr;
-}
-RubricsPane > ScrollableContainer {
-    height: 1fr;
-}
-#rb-title {
-    height: auto;
-    padding: 0 0 1 0;
-}
-#rb-file-row {
-    height: 3;
-    padding: 0;
-}
-#rb-file {
-    height: 3;
-    width: 40;
-}
-#rb-filename {
-    height: 3;
-    width: 40;
-    margin: 0 0 0 2;
-    display: none;
-}
-#rb-error {
-    height: auto;
-    padding: 0 0 1 0;
-    color: $error;
-}
-#rb-criteria {
-    height: 12;
-    margin: 0 0 1 0;
-}
-#rb-form {
-    height: auto;
-}
-#rb-form Label {
-    color: $text-muted;
-    text-style: bold;
-}
-.rb-field {
-    height: auto;
-    padding: 0 0 1 0;
-}
-.rb-field Label {
-    height: 1;
-}
-.rb-field Input,
-.rb-field Select {
-    height: 3;
-}
-#rb-desc {
-    height: 5;
-}
-#rb-scale:disabled {
-    text-style: dim;
-}
-#rb-actions {
-    height: auto;
-    padding: 0 0 1 0;
-}
-#rb-actions Button {
-    margin: 0 1 0 0;
-}
-"""
+    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -722,43 +657,7 @@ RubricsPane > ScrollableContainer {
 class PromptsPane(Vertical):
     """Prompt file editor: Select over ``data/prompt/*.md`` + TextArea + Save."""
 
-    DEFAULT_CSS = """
-PromptsPane {
-    height: 1fr;
-}
-#pr-title {
-    height: auto;
-    padding: 0 0 1 0;
-}
-#pr-file-row {
-    height: 3;
-    padding: 0;
-}
-#pr-file {
-    height: 3;
-    width: 40;
-}
-#pr-filename {
-    height: 3;
-    width: 40;
-    margin: 0 0 0 2;
-    display: none;
-}
-#pr-status {
-    height: auto;
-    padding: 0 0 1 0;
-}
-#pr-text {
-    height: 1fr;
-    margin: 0 0 1 0;
-}
-#pr-actions {
-    height: auto;
-}
-#pr-actions Button {
-    margin: 0 1 0 0;
-}
-"""
+    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -1010,25 +909,7 @@ PromptsPane {
 class LibraryScreen(Vertical):
     """Library tab container: Rubrics + Prompts sub-tab panes."""
 
-    DEFAULT_CSS = """
-#library-screen {
-    height: 1fr;
-    padding: 0 1;
-}
-#library-tabs {
-    height: 1fr;
-}
-#library-tabs > ContentSwitcher {
-    height: 1fr;
-}
-#library-tabs TabPane {
-    height: 1fr;
-    padding: 1 2;
-}
-#library-tabs TabPane > ScrollableContainer {
-    height: 1fr;
-}
-"""
+    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
 
     def __init__(self, state: AppState) -> None:
         super().__init__(id="library-screen")

@@ -1,7 +1,7 @@
 """Shared JobHandle protocol for the job-running screens (design 99 §3.1).
 
-The Assignment workspace (``src.tui.tata_workspace``) and the Plagiarism screen
-(``src.tui.tata_plagiarism``) both run long stage jobs the same way: a worker
+The Assignment workspace (``src.tui.workspace``) and the Plagiarism screen
+(``src.tui.plagiarism``) both run long stage jobs the same way: a worker
 thread runs the existing synchronous stage function with stdout/stderr
 redirected into a ``queue.Queue``; a 0.1 s timer on the main thread drains
 the queue into a RichLog and refreshes the busy row.  Worker threads never

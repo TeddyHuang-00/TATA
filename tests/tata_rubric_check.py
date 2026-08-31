@@ -1,8 +1,8 @@
 """Runnable headless check for the Rubrics pane (Library tab, F2).
 
-Mounts the full :class:`src.tata_app.TataApp` over a tmp fixture
+Mounts the full :class:`src.tui.app.TataApp` over a tmp fixture
 (data/rubrics empty or with one sample file), switches to the Library tab and
-drives :class:`src.tata_library.RubricsPane` directly (no push_screen).
+drives :class:`src.tui.library.RubricsPane` directly (no push_screen).
 Asserts:
 
 - the rubric file Select lists the library plus a "New rubric…" option, and
@@ -28,9 +28,9 @@ from pathlib import Path
 
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.rubric import RubricDefinition, get_rubric_definition
-from src.tui.tata_app import TataApp
-from src.tui.tata_library import FileNameModal, RubricsPane
-from src.tui.tata_workspace import ConfirmationModal
+from src.tui.app import TataApp
+from src.tui.library import FileNameModal, RubricsPane
+from src.tui.workspace import ConfirmationModal
 from textual.containers import ScrollableContainer
 from textual.pilot import Pilot
 from textual.widgets import DataTable, Input, Select, Static, TextArea

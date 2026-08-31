@@ -1,5 +1,20 @@
 # DECISIONS.md
 
+
+## TUI module renames + TCSS consolidation
+
+**Date:** 2026-08-31
+**Status:** Accepted
+**Files:** `src/tui/*.py`, `src/tui/styles/*.tcss`, `pyproject.toml`, `HERMES.md`
+
+In the context of the `tata_` prefix adding noise to every TUI import and CSS living both in files and inline `DEFAULT_CSS` class attributes (four blocks across `library.py`/`settings.py`), and TUI being the primary surface for TATA development,
+facing inconsistent styling sources and verbose module names, with no value in the prefix (no other module family named `tata_*` remains),
+we decided for renaming the seven `tata_*.py` TUI modules to short names (`src/tui/app.py`, `workspace.py`, `plagiarism.py`, `jobs.py`, `settings.py`, `scan.py`, `library.py`) and moving all Textual CSS under `src/tui/styles/` (`app.tcss`, `score_review.tcss`, `library.tcss`, `settings.tcss`),
+and neglected keeping the prefix or per-widget CSS in Python,
+to achieve uniform styling location and shorter module paths,
+accepting that widget `DEFAULT_CSS` now loads via `Path(__file__).parent / "styles" / ...` at class definition time (same content, byte-identical CSS),
+because class names (`TataApp`, screens, panes) and test-file names (`tata_*_check.py`) stay untouched, and the headless test checks are the gate for the behavior contract.
+
 ## Layered assignment config
 
 **Date:** 2026-08-28

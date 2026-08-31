@@ -234,7 +234,7 @@ class ScoreReviewScreen(Screen):
     the CLI entry point keeps the original full-screen ``Viewer(App)`` shell.
     """
 
-    CSS_PATH = "score_review.tcss"
+    CSS_PATH = "styles/score_review.tcss"
     BINDINGS: ClassVar = [
         ("left", "prev", "Prev"),
         ("right", "next", "Next"),

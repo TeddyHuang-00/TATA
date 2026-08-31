@@ -37,7 +37,7 @@ def test_checkbox_bool_writes_bare_true(tmp_path: Path) -> None:
     ``edit_config``; a quoted string would break the processing section
     model (bool field rejects str).
     """
-    from src.tui.tata_settings import SettingsScreen
+    from src.tui.settings import SettingsScreen
 
     cfg = tmp_path / "config.toml"
     cfg.write_text("[processing]\n", encoding="utf-8")

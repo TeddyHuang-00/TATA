@@ -1,6 +1,6 @@
 """Runnable headless check for the Library tab (F2).
 
-Mounts the full :class:`src.tata_app.TataApp` over a tmp fixture
+Mounts the full :class:`src.tui.app.TataApp` over a tmp fixture
 (data/rubrics + data/prompt), switches to the Library tab and asserts:
 
 - the shell has four tabs; the Library tab hosts Rubrics + Prompts sub-tab
@@ -22,9 +22,9 @@ import tempfile
 from pathlib import Path
 
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src.tui.tata_app import TataApp
-from src.tui.tata_library import FileNameModal, LibraryScreen, PromptsPane, RubricsPane
-from src.tui.tata_workspace import ConfirmationModal
+from src.tui.app import TataApp
+from src.tui.library import FileNameModal, LibraryScreen, PromptsPane, RubricsPane
+from src.tui.workspace import ConfirmationModal
 from textual.widgets import Input, Select, Static, TabbedContent, TabPane, TextArea
 
 SAMPLE_TOML = (

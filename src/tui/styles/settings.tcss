@@ -1,0 +1,107 @@
+/* SettingsScreen */
+#settings-screen {
+    height: 1fr;
+    padding: 0 1;
+}
+#settings-top {
+    height: 3;
+    padding: 0 1;
+}
+#settings-title {
+    height: 3;
+    width: auto;
+    padding: 0 1 0 0;
+}
+#ctx-select {
+    height: 3;
+    width: 52;
+}
+#ctx-hint {
+    height: auto;
+    padding: 0 0 1 0;
+    color: $warning;
+}
+#settings-tabs {
+    height: 1fr;
+}
+#settings-tabs > ContentSwitcher {
+    height: 1fr;
+}
+#settings-tabs TabPane {
+    height: 1fr;
+    padding: 1 2;
+}
+#settings-tabs TabPane > ScrollableContainer {
+    height: 1fr;
+}
+#grading-registry {
+    height: 8;
+    overflow-y: auto;
+    padding: 0 0 1 0;
+    color: $text-muted;
+}
+#canvas-env,
+#canvas-fetch-list {
+    height: auto;
+    padding: 0 0 1 0;
+}
+#btn-test-canvas {
+    width: auto;
+    margin: 0 0 1 0;
+}
+#settings-actions {
+    height: auto;
+    padding: 1 0 0 0;
+}
+#settings-actions Button {
+    margin: 0 1 0 0;
+}
+#settings-status {
+    height: auto;
+    padding: 0 1 1 1;
+    border-top: solid $primary;
+    color: $text-muted;
+}
+.settings-field {
+    height: auto;
+    padding: 0 0 1 0;
+}
+.settings-field Label {
+    height: 1;
+    color: $text-muted;
+    text-style: bold;
+}
+.settings-field > Input,
+.settings-field > Select,
+.settings-field > Checkbox {
+    height: 3;
+    width: 1fr;
+}
+.field-heading {
+    height: 1;
+}
+.field-heading Label {
+    width: 1fr;
+}
+.field-heading Button {
+    height: 1;
+    width: 4;
+    margin: 0 0 0 1;
+    padding: 0;
+}
+#prompt-list {
+    height: auto;
+}
+.prompt-row {
+    height: 1;
+}
+.prompt-row Checkbox {
+    height: 1;
+    width: 1fr;
+}
+.prompt-row Button {
+    height: 1;
+    width: 3;
+    margin: 0 0 0 1;
+    padding: 0;
+}

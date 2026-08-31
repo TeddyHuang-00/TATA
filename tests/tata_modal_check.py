@@ -19,10 +19,10 @@ from pathlib import Path
 
 from e2e_common import COURSE, make_course, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.aliases import load_alias_file
-from src.tui import tata_workspace as tw
-from src.tui.tata_app import AssignmentSetupModal, DashboardScreen, TataApp
-from src.tui.tata_scan import CourseInfo
-from src.tui.tata_workspace import AssignmentScreen, ConfirmationModal
+from src.tui import workspace as tw
+from src.tui.app import AssignmentSetupModal, DashboardScreen, TataApp
+from src.tui.scan import CourseInfo
+from src.tui.workspace import AssignmentScreen, ConfirmationModal
 from textual.containers import Vertical
 from textual.pilot import Pilot
 from textual.widgets import (
@@ -75,9 +75,9 @@ class _FakeProviders:
 
 @contextmanager
 def _fake_providers(names: list[str]) -> Iterator[None]:
-    """Patch ``src.tata_app.get_providers`` (the repo provider.toml is not a
+    """Patch ``src.tui.app.get_providers`` (the repo provider.toml is not a
     fixture); restores on exit."""
-    import src.tui.tata_app as ta
+    import src.tui.app as ta
 
     orig = ta.get_providers
     ta.get_providers = lambda: _FakeProviders(names)

@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.tui.tata_scan import _flagged_pairs
+from src.tui.scan import _flagged_pairs
 
 
 def _write_pairs(assignment_dir: Path, pairs: list) -> None:
@@ -51,7 +51,7 @@ def test_display_threshold_boundary(tmp_path: Path) -> None:
 def test_course_config_display_threshold_drives_flags(tmp_path: Path) -> None:
     """Course [plagiarism] display_threshold (0.9) flags a 90% pair — the
     same threshold the Plagiarism pane uses (single display-threshold source)."""
-    from src.tui.tata_scan import scan_courses
+    from src.tui.scan import scan_courses
 
     course = tmp_path / "data" / "c1"
     a1 = course / "a1"
@@ -76,7 +76,7 @@ def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> No
     """M1 regression: wrong-typed [plagiarism] display_threshold must not
     crash _plagiarism_threshold_pct/scan_courses; threshold falls back to the
     default 80.0 (dirty-data tolerance doctrine)."""
-    from src.tui.tata_scan import (
+    from src.tui.scan import (
         DISPLAY_THRESHOLD_PCT,
         _plagiarism_threshold_pct,
         scan_courses,
@@ -101,7 +101,7 @@ def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> No
 
 def test_assignment_id_from_numeric_dir_name(tmp_path: Path) -> None:
     """Assignment identity = the numeric dir name; non-numeric dirs -> None."""
-    from src.tui.tata_scan import scan_assignments
+    from src.tui.scan import scan_assignments
 
     course = tmp_path / "data" / "111111"
     for name in ("222222", "legacy-name"):
@@ -116,7 +116,7 @@ def test_assignment_id_from_numeric_dir_name(tmp_path: Path) -> None:
 def test_raw_count_counts_student_folders_once(tmp_path: Path) -> None:
     """SUBMIT-ALL: raw counts top-level ITEMS — a multi-file student folder
     is one submission, dot-entries (.fetch-cache.json) are excluded."""
-    from src.tui.tata_scan import scan_assignments
+    from src.tui.scan import scan_assignments
 
     course = tmp_path / "data" / "111111"
     a1 = course / "222222"
@@ -138,7 +138,7 @@ def test_raw_count_counts_student_folders_once(tmp_path: Path) -> None:
 
 def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     """MINOR-7: a .env missing either key must not short-circuit the walk."""
-    from src.tui.tata_app import _env_status
+    from src.tui.app import _env_status
 
     root = tmp_path / "proj"
     root.mkdir()

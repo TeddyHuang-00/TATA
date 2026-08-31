@@ -1,10 +1,10 @@
 """S1 Assignment workspace (T4b): the six-stage workbench.
 
-Third dashboard level, hosted inside :class:`src.tui.tata_app.DashboardScreen`
+Third dashboard level, hosted inside :class:`src.tui.app.DashboardScreen`
 (the workspace is not its own Tab — design 02 v1.1). All UI copy is English.
 
 Long jobs use the JobHandle protocol (design 99 §3.1), shared with the
-Plagiarism screen via :class:`src.tui.tata_jobs.JobHost` (worker thread, log
+Plagiarism screen via :class:`src.tui.jobs.JobHost` (worker thread, log
 queue, 0.1 s drain; see that module for the contract):
 a worker thread runs the existing synchronous stage functions with
 stdout/stderr redirected into a ``queue.Queue``; a 0.1 s timer on the main
@@ -50,14 +50,14 @@ from src.shared.grading import grade_assignment
 from src.shared.processing import preprocess_assignment
 from src.shared.scoring import score_assignment
 from src.tui.score_review import open_score_review
-from src.tui.tata_jobs import JobHost
-from src.tui.tata_scan import AssignmentInfo, count_files, count_recursive
+from src.tui.jobs import JobHost
+from src.tui.scan import AssignmentInfo, count_files, count_recursive
 
 if TYPE_CHECKING:
-    from src.tui.tata_app import AppState
+    from src.tui.app import AppState
 
 
-# ---------- shared display helpers (also imported by tata_app) ----------
+# ---------- shared display helpers (also imported by app) ----------
 
 
 def is_displayed(widget: Widget) -> bool:
@@ -233,7 +233,7 @@ class AssignmentScreen(JobHost):
     """Third dashboard level: 6 stage buttons + config panel + live log.
 
     Owns the JobHandle state (queue + cancel event + progress) via
-    :class:`src.tui.tata_jobs.JobHost`. The worker thread is a Textual
+    :class:`src.tui.jobs.JobHost`. The worker thread is a Textual
     ``run_worker(thread=True, group='stage', exclusive=True)`` so only one
     stage job runs at a time.
     """
@@ -620,7 +620,7 @@ class AssignmentScreen(JobHost):
             if action is not None:
                 action()
 
-    # ---------- job protocol (shared core in src.tui.tata_jobs.JobHost) ----------
+    # ---------- job protocol (shared core in src.tui.jobs.JobHost) ----------
 
     def _config_path(self) -> Path | None:
         return self._info.config_path if self._info is not None else None

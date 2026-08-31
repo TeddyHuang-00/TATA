@@ -14,12 +14,12 @@ import tempfile
 from pathlib import Path
 
 from e2e_common import COURSE, make_course, text, wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src.tui.tata_app import TataApp
-from src.tui.tata_library import LibraryScreen
-from src.tui.tata_plagiarism import PlagiarismScreen
-from src.tui.tata_scan import scan_assignments, scan_courses
-from src.tui.tata_settings import SettingsScreen
-from src.tui.tata_workspace import AssignmentScreen
+from src.tui.app import TataApp
+from src.tui.library import LibraryScreen
+from src.tui.plagiarism import PlagiarismScreen
+from src.tui.scan import scan_assignments, scan_courses
+from src.tui.settings import SettingsScreen
+from src.tui.workspace import AssignmentScreen
 from textual.widgets import DataTable, Static, TabbedContent
 
 COURSE_A = COURSE

@@ -1,6 +1,6 @@
 """Runnable headless check for the TATA Settings screen (S5, T6b).
 
-Mounts :class:`src.tata_settings.SettingsScreen` in a minimal test App (the
+Mounts :class:`src.tui.settings.SettingsScreen` in a minimal test App (the
 TataApp wiring lands in T6c) over a tmp three-layer fixture (global /
 course / assignment ``config.toml``) and asserts:
 
@@ -29,9 +29,9 @@ import tomlkit
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.assignment_config import load_assignment_file
 from src.shared.config_edit import dump_toml
-from src.tui.tata_app import AppState
-from src.tui.tata_scan import scan_courses
-from src.tui.tata_settings import SettingsScreen, _PromptCheckList
+from src.tui.app import AppState
+from src.tui.scan import scan_courses
+from src.tui.settings import SettingsScreen, _PromptCheckList
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static, TabbedContent

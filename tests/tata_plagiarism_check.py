@@ -22,9 +22,9 @@ import time
 from pathlib import Path
 
 from e2e_common import cell, spy_notify, wait_for, write_aliases  # isort: skip - seeds repo-root sys.path before src imports
-from src.tui import tata_plagiarism as plag_mod
-from src.tui.tata_app import TataApp
-from src.tui.tata_plagiarism import PlagiarismScreen, pair_side_name
+from src.tui import plagiarism as plag_mod
+from src.tui.app import TataApp
+from src.tui.plagiarism import PlagiarismScreen, pair_side_name
 from textual.app import ComposeResult, Screen
 from textual.containers import Horizontal
 from textual.pilot import Pilot

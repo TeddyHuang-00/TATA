@@ -3,9 +3,9 @@
 Four-tab shell (Dashboard / Plagiarism / Library / Settings) with the S1
 three-level
 dashboard (Global -> Course -> Assignment placeholder) on top of
-:mod:`src.tui.tata_scan`. All UI copy is English.
+:mod:`src.tui.scan`. All UI copy is English.
 
-Run: ``uv run python src/tata_app.py``
+Run: ``uv run python src/tui/app.py``
 """
 
 from __future__ import annotations
@@ -58,17 +58,17 @@ from src.shared.cli_options import FetchCliOptions
 from src.shared.config_edit import edit_config
 from src.shared.provider import get_providers
 from src.tui.score_review import open_score_review
-from src.tui.tata_library import LibraryScreen
-from src.tui.tata_plagiarism import PlagiarismScreen, run_aggregate_job
-from src.tui.tata_scan import (
+from src.tui.library import LibraryScreen
+from src.tui.plagiarism import PlagiarismScreen, run_aggregate_job
+from src.tui.scan import (
     AssignmentInfo,
     CourseInfo,
     _plagiarism_threshold_pct,
     scan_assignments,
     scan_courses,
 )
-from src.tui.tata_settings import SettingsScreen
-from src.tui.tata_workspace import (
+from src.tui.settings import SettingsScreen
+from src.tui.workspace import (
     AssignmentScreen,
     ConfirmationModal,
     fmt_last_run,
@@ -1282,7 +1282,7 @@ class TataApp(App[None]):
     """TATA Workbench shell: Header + 4 work tabs + Footer."""
 
     TITLE = "TATA Workbench"
-    CSS_PATH = "tata_app.tcss"
+    CSS_PATH = "styles/app.tcss"
     BINDINGS: ClassVar = [
         Binding("q", "quit", "Quit"),
         Binding("?", "toggle_help", "Keys"),

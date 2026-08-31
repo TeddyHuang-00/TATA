@@ -1,6 +1,6 @@
 """Core config editing: comment-preserving field write-back + validation.
 
-Extracted from the Textual settings screen (:mod:`src.tui.tata_settings`) so the
+Extracted from the Textual settings screen (:mod:`src.tui.settings`) so the
 CLI and the TUI share the same writer and validation. No Textual imports.
 """
 

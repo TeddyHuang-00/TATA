@@ -8,7 +8,7 @@ context ``Select``. The read path reuses :mod:`src.shared.assignment_config`
 edited keys** into the target file and validate the result with the same
 pydantic models before persisting (design 05 §4). All UI copy is English.
 
-Hosted by :mod:`src.tui.tata_app` (T6c) inside the Settings TabPane; this module
+Hosted by :mod:`src.tui.app` (T6c) inside the Settings TabPane; this module
 deliberately does not import or modify that file (the ``AppState`` type is
 imported under TYPE_CHECKING only, breaking the circular import).
 
@@ -52,7 +52,7 @@ from src.shared.config_edit import edit_config, read_config, validate_config_edi
 from src.shared.provider import ProviderInfo, get_providers
 
 if TYPE_CHECKING:
-    from src.tui.tata_app import AppState
+    from src.tui.app import AppState
 
 # (fqid, kind) for every text field; ``section.key`` is both the TOML path and
 # the widget id suffix. ``prompt`` is a str-or-list-of-str field (system_prompt);
@@ -290,114 +290,7 @@ class SettingsScreen(Vertical):
         Binding("4", "tab_paths", "Paths"),
     ]
 
-    DEFAULT_CSS = """
-#settings-screen {
-    height: 1fr;
-    padding: 0 1;
-}
-#settings-top {
-    height: 3;
-    padding: 0 1;
-}
-#settings-title {
-    height: 3;
-    width: auto;
-    padding: 0 1 0 0;
-}
-#ctx-select {
-    height: 3;
-    width: 52;
-}
-#ctx-hint {
-    height: auto;
-    padding: 0 0 1 0;
-    color: $warning;
-}
-#settings-tabs {
-    height: 1fr;
-}
-#settings-tabs > ContentSwitcher {
-    height: 1fr;
-}
-#settings-tabs TabPane {
-    height: 1fr;
-    padding: 1 2;
-}
-#settings-tabs TabPane > ScrollableContainer {
-    height: 1fr;
-}
-#grading-registry {
-    height: 8;
-    overflow-y: auto;
-    padding: 0 0 1 0;
-    color: $text-muted;
-}
-#canvas-env,
-#canvas-fetch-list {
-    height: auto;
-    padding: 0 0 1 0;
-}
-#btn-test-canvas {
-    width: auto;
-    margin: 0 0 1 0;
-}
-#settings-actions {
-    height: auto;
-    padding: 1 0 0 0;
-}
-#settings-actions Button {
-    margin: 0 1 0 0;
-}
-#settings-status {
-    height: auto;
-    padding: 0 1 1 1;
-    border-top: solid $primary;
-    color: $text-muted;
-}
-.settings-field {
-    height: auto;
-    padding: 0 0 1 0;
-}
-.settings-field Label {
-    height: 1;
-    color: $text-muted;
-    text-style: bold;
-}
-.settings-field > Input,
-.settings-field > Select,
-.settings-field > Checkbox {
-    height: 3;
-    width: 1fr;
-}
-.field-heading {
-    height: 1;
-}
-.field-heading Label {
-    width: 1fr;
-}
-.field-heading Button {
-    height: 1;
-    width: 4;
-    margin: 0 0 0 1;
-    padding: 0;
-}
-#prompt-list {
-    height: auto;
-}
-.prompt-row {
-    height: 1;
-}
-.prompt-row Checkbox {
-    height: 1;
-    width: 1fr;
-}
-.prompt-row Button {
-    height: 1;
-    width: 3;
-    margin: 0 0 0 1;
-    padding: 0;
-}
-"""
+    DEFAULT_CSS = (Path(__file__).parent / "styles" / "settings.tcss").read_text()
 
     def __init__(self, state: AppState) -> None:
         super().__init__(id="settings-screen")

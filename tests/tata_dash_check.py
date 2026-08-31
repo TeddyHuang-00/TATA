@@ -30,9 +30,9 @@ from rich.text import Text as RichText
 from src import cli as main_mod
 from src.shared.aliases import load_alias_file
 from src.shared.cli_options import FetchCliOptions
-from src.tui import tata_app as tata_app_mod
+from src.tui import app as tata_app_mod
 from src.tui.score_review import ScoreReviewScreen
-from src.tui.tata_app import (
+from src.tui.app import (
     AliasEditorModal,
     AssignmentSetupModal,
     DashboardScreen,
@@ -40,9 +40,9 @@ from src.tui.tata_app import (
     ImportCourseModal,
     TataApp,
 )
-from src.tui.tata_plagiarism import PlagiarismScreen
-from src.tui.tata_settings import SettingsScreen
-from src.tui.tata_workspace import ConfirmationModal
+from src.tui.plagiarism import PlagiarismScreen
+from src.tui.settings import SettingsScreen
+from src.tui.workspace import ConfirmationModal
 from textual.containers import Vertical
 from textual.pilot import Pilot
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
@@ -134,9 +134,9 @@ class _FakeProviders:
 
 @contextmanager
 def _fake_providers(names: list[str]) -> Iterator[None]:
-    """Patch ``src.tata_app.get_providers`` (repo provider.toml is not a
+    """Patch ``src.tui.app.get_providers`` (repo provider.toml is not a
     fixture); restores on exit."""
-    import src.tui.tata_app as ta
+    import src.tui.app as ta
 
     orig = ta.get_providers
     ta.get_providers = lambda: _FakeProviders(names)
