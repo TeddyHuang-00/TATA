@@ -27,6 +27,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
+    Checkbox,
     DataTable,
     Footer,
     Header,
@@ -38,10 +39,17 @@ from textual.widgets import (
 )
 
 from src import cli as main_mod
-from src.aliases import assignment_display_name, course_display_name
+from src.aliases import (
+    assignment_display_name,
+    course_display_name,
+    seed_assignment_alias,
+    seed_course_alias,
+)
 from src.assignment_config import FetchSection
 from src.canvas_fetch import list_assignments, list_courses
 from src.cli_options import FetchCliOptions
+from src.config_edit import edit_config
+from src.provider import get_providers
 from src.score_review import open_score_review
 from src.tata_plagiarism import PlagiarismScreen, run_aggregate_job
 from src.tata_scan import (
@@ -495,12 +503,36 @@ class DashboardScreen(Vertical):
         )
 
     def _on_assignment_imported(self, value: object) -> None:
-        aid = value if isinstance(value, int) else None
-        if aid is None:
-            return
+        match value:
+            case (aid, name) if isinstance(aid, int):
+                pass
+            case _:
+                return
         course = self.state.current_course
         if course is None or course.course_id is None:
             return
+        self.app.push_screen(
+            AssignmentSetupModal(self.state),
+            callback=partial(self._on_assignment_setup, aid, name),
+        )
+
+    def _on_assignment_setup(self, aid: int, name: str | None, value: object) -> None:
+        if not isinstance(value, dict):
+            return  # setup cancelled
+        course = self.state.current_course
+        if course is None or course.course_id is None:
+            return
+        config_dir = self.state.assignments_dir / course.dir_name / str(aid)
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "config.toml"
+        config_path.write_text(
+            "# schema: ../../config/assignment.schema.json\n", encoding="utf-8"
+        )
+        edit_config(config_path, {"grading": value})
+        if name:
+            seed_assignment_alias(
+                self.state.assignments_dir / course.dir_name, aid, name
+            )
         self._start_job(
             "fetch",
             partial(self._fetch_one, course, aid),
@@ -930,6 +962,9 @@ class ImportCourseModal(_ImportBase):
             tomlkit.dumps(tomlkit.item({"fetch": {"course_id": course_id}})),
             encoding="utf-8",
         )
+        name = next((n for cid, n in self._items if cid == course_id), None)
+        if name:
+            seed_course_alias(self.state.assignments_dir, course_id, name)
         state = self.state
         state.refresh_courses()
         state.current_course = next(
@@ -1014,7 +1049,115 @@ class ImportAssignmentModal(_ImportBase):
         if (course_dir / str(aid)).exists():
             self.app.notify(f"Already imported: {aid}", severity="error")
             return
-        self.dismiss(aid)
+        name = next((n for id_, n in self._items if id_ == aid), None)
+        self.dismiss((aid, name))
+
+
+class AssignmentSetupModal(_ImportBase):
+    """Quick setup after picking an assignment: rubric / prompt(s) / provider.
+
+    Reads the local libraries (data/rubrics/*.toml, data/prompt/*.md) and the
+    provider registry (config/provider.toml) synchronously. Import dismisses
+    with ``{"rubric": "rubrics/<file>", "system_prompt": ["prompt/<file>",
+    ...], "provider": "<name>"}`` (the Dashboard writes config.toml + aliases);
+    Cancel dismisses None. Import stays disabled while no prompt is checked
+    or any library is empty.
+    """
+
+    def __init__(self, state: AppState) -> None:
+        super().__init__(state)
+        data_dir = state.assignments_dir
+        self._rubrics = sorted(p.name for p in (data_dir / "rubrics").glob("*.toml"))
+        self._prompts = sorted(p.name for p in (data_dir / "prompt").glob("*.md"))
+        try:
+            providers = get_providers().providers
+        except Exception:
+            providers = {}
+        self._providers = sorted(providers)
+        errors = []
+        if not self._rubrics:
+            errors.append(
+                "No rubrics found in data/rubrics — build one in Settings "
+                "(Rubric builder)."
+            )
+        if not self._prompts:
+            errors.append("No prompt files found in data/prompt.")
+        if not self._providers:
+            errors.append(
+                "No providers configured — add [providers] to config/provider.toml."
+            )
+        self._error = " ".join(errors) or None
+
+    @override
+    def compose(self) -> ComposeResult:
+        rubric_options = [(n, n) for n in self._rubrics] or [("No rubrics found", -1)]
+        provider_options = [(n, n) for n in self._providers] or [
+            ("No providers found", -1)
+        ]
+        with Vertical(classes="confirm-modal"):
+            yield Static("[b]Assignment quick setup[/b]")
+            if self._error:
+                yield Static(self._error, id="setup-error")
+            yield Static("Rubric", classes="setup-label")
+            yield Select(rubric_options, id="setup-rubric", allow_blank=False)
+            yield Static("Prompt(s) (multi-select)", classes="setup-label")
+            with Vertical(id="setup-prompts"):
+                for i, name in enumerate(self._prompts):
+                    yield Checkbox(name, value=True, id=f"prompt-{i}")
+            yield Static("Provider", classes="setup-label")
+            yield Select(provider_options, id="setup-provider", allow_blank=False)
+            with Horizontal(classes="modal-actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button(
+                    "Import",
+                    id="import",
+                    variant="primary",
+                    disabled=self._error is not None,
+                )
+
+    def on_mount(self) -> None:
+        self._update_import_enabled()
+
+    def _selected_prompts(self) -> list[str]:
+        container = self.query_one("#setup-prompts", Vertical)
+        return [
+            str(checkbox.label)
+            for checkbox in container.query(Checkbox)
+            if checkbox.value
+        ]
+
+    def _update_import_enabled(self) -> None:
+        self.query_one("#import", Button).disabled = (
+            self._error is not None or not self._selected_prompts()
+        )
+
+    def on_checkbox_changed(self, _event: Checkbox.Changed) -> None:
+        self._update_import_enabled()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+        elif event.button.id == "import":
+            self._do_import()
+
+    def _do_import(self) -> None:
+        rubric = self.query_one("#setup-rubric", Select).value
+        provider = self.query_one("#setup-provider", Select).value
+        prompts = self._selected_prompts()
+        if not isinstance(rubric, str) or not rubric:
+            self.app.notify("No rubric selected", severity="error")
+            return
+        if not isinstance(provider, str) or not provider:
+            self.app.notify("No provider selected", severity="error")
+            return
+        if not prompts:
+            self.app.notify("Select at least one prompt", severity="error")
+            return
+        self.dismiss({
+            "rubric": f"rubrics/{rubric}",
+            "system_prompt": [f"prompt/{p}" for p in prompts],
+            "provider": provider,
+        })
 
 
 class TataApp(App[None]):

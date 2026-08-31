@@ -275,6 +275,20 @@ def _seed_section(alias_path: Path, table: str, key: str, value: str) -> None:
     _write_doc(alias_path, doc)
 
 
+def seed_course_alias(assignments_dir: Path, course_id: int, name: str) -> None:
+    """Fill-missing ``[course] str(course_id) = name`` in the global
+    ``assignments_dir/alias.toml`` (create file/table when absent; a
+    pre-existing key — a manual edit — is never overwritten)."""
+    _seed_section(assignments_dir / "alias.toml", "course", str(course_id), name)
+
+
+def seed_assignment_alias(course_dir: Path, assignment_id: int, name: str) -> None:
+    """Fill-missing ``[assignment] str(assignment_id) = name`` in the course
+    ``course_dir/alias.toml`` (create file/table when absent; a pre-existing
+    key — a manual edit — is never overwritten)."""
+    _seed_section(course_dir / "alias.toml", "assignment", str(assignment_id), name)
+
+
 def _resolve_renames(
     course_dir: Path,
     course_config: Path,

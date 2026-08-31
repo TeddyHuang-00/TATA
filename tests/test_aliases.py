@@ -10,6 +10,8 @@ from src.aliases import (
     load_alias_file,
     lookup,
     migrate_course_to_ids,
+    seed_assignment_alias,
+    seed_course_alias,
     student_display_name,
     upsert_student_aliases,
 )
@@ -127,6 +129,65 @@ def test_upsert_creates_file_with_header(tmp_path: Path) -> None:
     # adding again does not duplicate
     upsert_student_aliases(root, {"42": "Doe, Jane"})
     assert load_alias_file(root / "alias.toml")["student"] == {"42": "Doe, Jane"}
+
+
+def test_seed_course_alias_fill_missing(tmp_path: Path) -> None:
+    assignments = tmp_path / "data"
+    assignments.mkdir()
+    (assignments / "alias.toml").write_text(
+        '# manual\n[course]\n"111111" = "Manual Name"\n[student]\n"1" = "One"\n',
+        encoding="utf-8",
+    )
+    seed_course_alias(assignments, 111111, "New Name")  # existing key untouched
+    seed_course_alias(assignments, 222222, "Second Course")  # new key added
+    text = (assignments / "alias.toml").read_text()
+    assert load_alias_file(assignments / "alias.toml")["course"] == {
+        "111111": "Manual Name",
+        "222222": "Second Course",
+    }
+    assert "New Name" not in text
+    assert load_alias_file(assignments / "alias.toml")["student"] == {"1": "One"}
+    assert "# manual" in text
+
+
+def test_seed_course_alias_creates_file_and_table(tmp_path: Path) -> None:
+    assignments = tmp_path / "data"
+    assignments.mkdir()
+    seed_course_alias(assignments, 111111, "New Course")
+    text = (assignments / "alias.toml").read_text()
+    assert text.startswith("# TATA alias.toml")
+    assert load_alias_file(assignments / "alias.toml")["course"] == {
+        "111111": "New Course"
+    }
+
+
+def test_seed_assignment_alias_fill_missing(tmp_path: Path) -> None:
+    course = tmp_path / "data" / "111111"
+    course.mkdir(parents=True)
+    (course / "alias.toml").write_text(
+        '[assignment]\n"222222" = "Manual Assign"\n[student]\n"1" = "One"\n',
+        encoding="utf-8",
+    )
+    seed_assignment_alias(course, 222222, "New Name")  # existing key untouched
+    seed_assignment_alias(course, 333333, "Second Assign")  # new key added
+    text = (course / "alias.toml").read_text()
+    assert load_alias_file(course / "alias.toml")["assignment"] == {
+        "222222": "Manual Assign",
+        "333333": "Second Assign",
+    }
+    assert "New Name" not in text
+    assert load_alias_file(course / "alias.toml")["student"] == {"1": "One"}
+
+
+def test_seed_assignment_alias_creates_file_and_table(tmp_path: Path) -> None:
+    course = tmp_path / "data" / "111111"
+    course.mkdir(parents=True)
+    seed_assignment_alias(course, 222222, "New Assignment")
+    text = (course / "alias.toml").read_text()
+    assert text.startswith("# TATA alias.toml")
+    assert load_alias_file(course / "alias.toml")["assignment"] == {
+        "222222": "New Assignment"
+    }
 
 
 def _make_course_tree(tmp_path: Path) -> Path:
