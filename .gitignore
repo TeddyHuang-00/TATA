@@ -7,6 +7,9 @@ data/*
 
 __pycache__/
 .vscode
+
+# Hermes and agent files
 .hermes/
 .hermesignore
 HERMES.md
+plans/
