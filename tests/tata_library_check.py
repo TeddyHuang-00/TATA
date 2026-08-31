@@ -58,7 +58,7 @@ def _build_fixture(root: Path) -> None:
     (course / "000001").mkdir()
     (course / "000001" / "config.toml").write_text(
         '[grading]\nrubric = "rubrics/sample.toml"\n'
-        'system_prompt = ["prompt/hello.md"]\n',
+        'system_prompt = ["prompt/hello.md", "prompt/lab.md"]\n',
         encoding="utf-8",
     )
 
@@ -194,6 +194,7 @@ async def _check_prompt_rename(root: Path) -> None:
         app.screen.query_one("#fnm-input", Input).value = "renamed"
         await pilot.click("#ok")
         await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+        assert "reference prompt/lab.md" in _modal_message(app)
         await pilot.click("#rename")
         await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
         await pilot.pause()
@@ -203,6 +204,12 @@ async def _check_prompt_rename(root: Path) -> None:
         ) == PROMPT_TWO
         assert file_select.value == "renamed.md"
         assert editor.text == PROMPT_TWO
+        config_text = (root / "data" / "c1" / "000001" / "config.toml").read_text(
+            encoding="utf-8"
+        )
+        assert "prompt/renamed.md" in config_text
+        assert "prompt/hello.md" in config_text
+        assert "prompt/lab.md" not in config_text
 
 
 async def main() -> None:

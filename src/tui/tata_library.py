@@ -10,6 +10,7 @@ them — lesson c9272e81). All UI copy is English.
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
@@ -75,6 +76,71 @@ def _referencing_configs(data_dir: Path, needle: str) -> list[Path]:
             if needle in text:
                 hits.append(path)
     return hits
+
+
+def _grading_reference_configs(data_dir: Path, old: str) -> list[Path]:
+    """Parse-based scan: config.toml files whose ``[grading]`` section
+    references ``old`` (rubric or a system_prompt entry). Same path patterns
+    as :func:`_referencing_configs`; unreadable/unparseable files are skipped.
+    """
+    hits: list[Path] = []
+    for pattern in ("*/config.toml", "*/*/config.toml"):
+        for path in data_dir.glob(pattern):
+            try:
+                doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+            except (OSError, tomlkit.exceptions.ParseError):
+                continue
+            grading = doc.get("grading")
+            if not isinstance(grading, MutableMapping):
+                continue
+            if grading.get("rubric") == old:
+                hits.append(path)
+                continue
+            prompts = grading.get("system_prompt")
+            if (isinstance(prompts, list) and old in prompts) or (
+                isinstance(prompts, str) and prompts == old
+            ):
+                hits.append(path)
+    return hits
+
+
+def _rewrite_grading_refs(
+    data_dir: Path, old: str, new: str
+) -> tuple[list[Path], list[Path]]:
+    """Rewrite ``old`` -> ``new`` in every referencing config's ``[grading]``
+    (rubric, and every system_prompt list member). Returns (changed, failed).
+    """
+    changed: list[Path] = []
+    failed: list[Path] = []
+    for path in _grading_reference_configs(data_dir, old):
+        try:
+            doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+        except (OSError, tomlkit.exceptions.ParseError):
+            failed.append(path)
+            continue
+        grading = doc.get("grading")
+        if not isinstance(grading, MutableMapping):
+            failed.append(path)
+            continue
+        if grading.get("rubric") == old:
+            grading["rubric"] = new
+        prompts = grading.get("system_prompt")
+        if isinstance(prompts, list):
+            for i, item in enumerate(prompts):
+                if item == old:
+                    prompts[i] = new
+        elif isinstance(prompts, str) and prompts == old:
+            grading["system_prompt"] = new
+        out = tomlkit.dumps(doc)
+        if not out.endswith("\n"):
+            out += "\n"
+        try:
+            path.write_text(out, encoding="utf-8")
+        except OSError:
+            failed.append(path)
+        else:
+            changed.append(path)
+    return changed, failed
 
 
 class FileNameModal(ModalScreen[str | None]):
@@ -577,13 +643,14 @@ RubricsPane > ScrollableContainer {
         if (self._rubrics_dir() / new).exists():
             self._show_error(f"A rubric named {new} already exists")
             return
-        refs = _referencing_configs(self.state.assignments_dir, f"rubrics/{current}")
+        refs = _grading_reference_configs(
+            self.state.assignments_dir, f"rubrics/{current}"
+        )
         message = f"Rename {current} to {new}?"
         if refs:
             message += (
                 f"\n\n{len(refs)} assignment config(s) reference rubrics/{current}."
-                " They are NOT updated automatically — re-point them after"
-                " renaming (Settings/Import)."
+                f" They will be updated to rubrics/{new}."
             )
         self.app.push_screen(
             ConfirmationModal("Rename rubric", message, [("Rename", "rename")]),
@@ -608,7 +675,23 @@ RubricsPane > ScrollableContainer {
         self.query_one("#rb-file", Select).set_options(self._file_options())
         self.query_one("#rb-file", Select).value = new
         self._on_file_change(new)
-        self.app.notify(f"Renamed rubric: {new}", severity="success")
+        changed, failed = _rewrite_grading_refs(
+            self.state.assignments_dir, f"rubrics/{old}", f"rubrics/{new}"
+        )
+        if failed:
+            self.app.notify(
+                f"Renamed to {new} but could not update {len(failed)} config "
+                f"reference(s): {', '.join(p.name for p in failed)}",
+                severity="warning",
+            )
+        if changed:
+            self.app.notify(
+                f"Renamed rubric: {new} · updated {len(changed)} config "
+                "reference(s)",
+                severity="success",
+            )
+        else:
+            self.app.notify(f"Renamed rubric: {new}", severity="success")
 
     def _select_first_file(self) -> None:
         """Point the Select at the first remaining file, or New when empty."""
@@ -856,13 +939,14 @@ PromptsPane {
         if (self._prompts_dir() / new).exists():
             self._set_status(f"[red]A prompt named {new} already exists[/red]")
             return
-        refs = _referencing_configs(self.state.assignments_dir, f"prompt/{current}")
+        refs = _grading_reference_configs(
+            self.state.assignments_dir, f"prompt/{current}"
+        )
         message = f"Rename {current} to {new}?"
         if refs:
             message += (
                 f"\n\n{len(refs)} assignment config(s) reference prompt/{current}."
-                " They are NOT updated automatically — re-point them after"
-                " renaming (Settings/Import)."
+                f" They will be updated to prompt/{new}."
             )
         self.app.push_screen(
             ConfirmationModal("Rename prompt", message, [("Rename", "rename")]),
@@ -888,7 +972,23 @@ PromptsPane {
         self.query_one("#pr-file", Select).value = new
         self._on_file_change(new)
         self._set_status(f"[green]Renamed: {new}[/green]")
-        self.app.notify(f"Renamed prompt: {new}", severity="success")
+        changed, failed = _rewrite_grading_refs(
+            self.state.assignments_dir, f"prompt/{old}", f"prompt/{new}"
+        )
+        if failed:
+            self.app.notify(
+                f"Renamed to {new} but could not update {len(failed)} config "
+                f"reference(s): {', '.join(p.name for p in failed)}",
+                severity="warning",
+            )
+        if changed:
+            self.app.notify(
+                f"Renamed prompt: {new} · updated {len(changed)} config "
+                "reference(s)",
+                severity="success",
+            )
+        else:
+            self.app.notify(f"Renamed prompt: {new}", severity="success")
 
     def _select_first_file(self) -> None:
         """Point the Select at the first remaining file, or New when empty."""

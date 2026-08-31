@@ -287,6 +287,11 @@ async def _check_rename(root: Path) -> None:
         ) == SAMPLE_TOML
         assert file_select.value == "renamed.toml"
         assert pane.query_one("#rb-criteria", DataTable).row_count == 1
+        config = (root / "data" / "c1" / "000001" / "config.toml").read_text(
+            encoding="utf-8"
+        )
+        assert 'rubric = "rubrics/renamed.toml"' in config
+        assert "rubrics/sample.toml" not in config
 
 
 async def main() -> None:
