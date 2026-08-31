@@ -24,13 +24,16 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+import tomlkit
+
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.assignment_config import load_assignment_file
 from src.config_edit import dump_toml
 from src.tata_app import AppState
 from src.tata_scan import scan_courses
-from src.tata_settings import SettingsScreen
+from src.tata_settings import SettingsScreen, _PromptCheckList
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Checkbox, Input, Select, Static, TabbedContent
 
 GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndisplay_threshold = 0.75\n"
@@ -89,6 +92,23 @@ def _build_fixture(root: Path) -> None:
     a_dir = course_dir / "a1"
     a_dir.mkdir()
     (a_dir / "config.toml").write_text(ASSIGNMENT_TOML, encoding="utf-8")
+    rubrics = root / "data" / "rubrics"
+    rubrics.mkdir()
+    rubric_toml = (
+        "# schema: ../../config/rubric.schema.json\n"
+        "[[criterion]]\n"
+        'name = "Reflection"\n'
+        'desc = "A generic description."\n'
+        "pts = 10\n"
+        'rating = "ternary"\n'
+        'grading = "standard"\n'
+    )
+    (rubrics / "a1.toml").write_text(rubric_toml, encoding="utf-8")
+    (rubrics / "a2.toml").write_text(rubric_toml, encoding="utf-8")
+    prompts = root / "data" / "prompt"
+    prompts.mkdir()
+    (prompts / "system.md").write_text("# System prompt\n", encoding="utf-8")
+    (prompts / "lab.md").write_text("# Lab prompt\n", encoding="utf-8")
 
 
 def _make_state(root: Path, *, course: bool, assignment: bool) -> AppState:
@@ -105,6 +125,10 @@ def _make_state(root: Path, *, course: bool, assignment: bool) -> AppState:
 
 def _status_text(screen: SettingsScreen) -> str:
     return str(screen.query_one("#settings-status", Static).content)
+
+
+def _field_label(screen: SettingsScreen, fqid: str) -> str:
+    return str(screen._field_label(fqid).content)
 
 
 def _check_dump_roundtrip() -> None:
@@ -146,9 +170,10 @@ async def _check_no_course(root: Path) -> None:
         assert screen.available_contexts() == ["global"]
         assert [v for v, _ in screen.context_options()] == ["global"]
         assert screen.query_one("#ctx-select", Select).value == "global"
-        assert screen.query_one("#f-grading-rubric", Input).disabled
+        assert screen.query_one("#f-grading-rubric", Select).disabled
         assert screen.query_one("#f-fetch-course_id", Input).disabled
         assert screen.query_one("#f-assignment-raw_dir", Input).disabled
+        assert screen.query_one("#f-grading-system_prompt", _PromptCheckList).disabled
         # global config exists -> the Global [plagiarism] defaults are editable
         assert not screen.query_one("#f-plagiarism-copydetect_weight", Input).disabled
         hint = screen.query_one("#ctx-hint", Static)
@@ -173,7 +198,8 @@ async def _check_course_only(root: Path) -> None:
         course_id = screen.query_one("#f-fetch-course_id", Input)
         assert not course_id.disabled
         assert course_id.value == "111111"
-        assert screen.query_one("#f-grading-rubric", Input).disabled
+        assert screen.query_one("#f-grading-rubric", Select).disabled
+        assert screen.query_one("#f-grading-system_prompt", _PromptCheckList).disabled
         assert screen.query_one("#f-assignment-raw_dir", Input).disabled
         assert not screen.query_one("#f-plagiarism-copydetect_weight", Input).disabled
         assert "1001" in str(screen.query_one("#canvas-fetch-list", Static).content)
@@ -195,7 +221,7 @@ async def _check_assignment_load_and_save(root: Path) -> None:
         await pilot.pause()
         assert screen.current_context == "assignment"
 
-        rubric = screen.query_one("#f-grading-rubric", Input)
+        rubric = screen.query_one("#f-grading-rubric", Select)
         assert not rubric.disabled
         assert rubric.value == "rubrics/a1.toml"
         assert screen.query_one("#f-grading-provider", Select).value == "ollama"
@@ -210,6 +236,16 @@ async def _check_assignment_load_and_save(root: Path) -> None:
             is False
         )
 
+        # prompt checklist reflects the effective value (str -> one checked box)
+        checklist = screen.query_one("#f-grading-system_prompt", _PromptCheckList)
+        assert checklist.value == ["prompt/system.md"]
+        assert not checklist.disabled
+        # inherited badge: keys set in the LOCAL assignment config have none;
+        # display_threshold only exists in the global layer -> badge.
+        assert "(inherited)" not in _field_label(screen, "plagiarism.copydetect_weight")
+        assert "(inherited)" not in _field_label(screen, "grading.rubric")
+        assert "(inherited)" in _field_label(screen, "plagiarism.display_threshold")
+
         copydetect.value = "0.8"
         screen.query_one("#f-plagiarism-embedding_weight", Input).value = "0.2"
         await pilot.press("ctrl+s")
@@ -220,12 +256,32 @@ async def _check_assignment_load_and_save(root: Path) -> None:
         assert _close(saved["plagiarism"]["embedding_weight"], 0.2)
         assert saved["plagiarism"]["extensions"] == [".py"]
         assert saved["grading"]["rubric"] == "rubrics/a1.toml"
+        assert saved["grading"]["system_prompt"] == "prompt/system.md"  # unchanged
         # the saved file parses through the existing layered loader
         parsed = load_assignment_file(assignment_cfg)
         assert _close(
             parsed.plagiarism.copydetect_weight + parsed.plagiarism.embedding_weight,
             1.0,
         )
+
+        # check a second prompt + save a key that was inherited: the local
+        # config now carries it, so the badge disappears after re-render.
+        prompt_container = checklist.query_one("#prompt-list", Vertical)
+        lab_checkbox = next(
+            cb for cb in prompt_container.query(Checkbox) if str(cb.label) == "lab.md"
+        )
+        lab_checkbox.value = True
+        display = screen.query_one("#f-plagiarism-display_threshold", Input)
+        display.value = "0.78"
+        await pilot.press("ctrl+s")
+        await wait_for(pilot, lambda: "Saved to" in _status_text(screen))
+        saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
+        assert saved["grading"]["system_prompt"] == [
+            "prompt/lab.md",
+            "prompt/system.md",
+        ]
+        assert _close(saved["plagiarism"]["display_threshold"], 0.78)
+        assert "(inherited)" not in _field_label(screen, "plagiarism.display_threshold")
 
 
 async def _check_validation_reset(root: Path) -> None:
@@ -249,8 +305,8 @@ async def _check_validation_reset(root: Path) -> None:
         saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
         assert _close(saved["plagiarism"]["copydetect_weight"], 0.8)  # unchanged
 
-        rubric = screen.query_one("#f-grading-rubric", Input)
-        rubric.value = "zzz.toml"
+        rubric = screen.query_one("#f-grading-rubric", Select)
+        rubric.value = "rubrics/a2.toml"  # another existing option
         await pilot.press("r")
         await pilot.pause()
         assert rubric.value == "rubrics/a1.toml"
@@ -304,6 +360,34 @@ async def _check_global_edit(root: Path) -> None:
         assert _close(saved_global["plagiarism"]["embedding_weight"], 0.1)
 
 
+async def _check_rubric_not_in_list(root: Path) -> None:
+    """A rubric value missing from data/rubrics keeps itself + a suffix hint."""
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.set_context("assignment")
+        await pilot.pause()
+        cfg = root / _ASSIGNMENT_CFG
+        doc = tomlkit.parse(cfg.read_text(encoding="utf-8"))
+        doc["grading"]["rubric"] = "rubrics/ghost.toml"
+        cfg.write_text(tomlkit.dumps(doc), encoding="utf-8")
+        screen.action_reset()
+        await pilot.pause()
+        rubric = screen.query_one("#f-grading-rubric", Select)
+        assert rubric.value == "rubrics/ghost.toml"
+        hint = next(
+            (
+                str(label)
+                for label, value in rubric._options
+                if value == "rubrics/ghost.toml"
+            ),
+            "",
+        )
+        assert "not in list" in hint, hint
+
+
 async def _check_weights_course_global(root: Path) -> None:
     """Course/global: editing one weight uses the effective layer (M4)."""
     state = _make_state(root, course=True, assignment=True)
@@ -348,6 +432,7 @@ async def main() -> None:
         await _check_validation_reset(root)
         await _check_course_edit(root)
         await _check_global_edit(root)
+        await _check_rubric_not_in_list(root)
         await _check_weights_course_global(root)
     print("tata settings check OK")
 

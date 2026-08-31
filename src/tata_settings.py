@@ -50,15 +50,15 @@ from src.assignment_config import (
 from src.canvas_fetch import list_courses, load_env
 from src.config_edit import edit_config, read_config, validate_config_edits
 from src.provider import ProviderInfo, get_providers
+from src.tata_rubric import RubricBuilderScreen
 
 if TYPE_CHECKING:
     from src.tata_app import AppState
 
 # (fqid, kind) for every text field; ``section.key`` is both the TOML path and
-# the widget id suffix. ``prompt`` is a str-or-list-of-str field (system_prompt,
-# rubric); ``list`` is a comma-separated extensions-style field.
+# the widget id suffix. ``prompt`` is a str-or-list-of-str field (system_prompt);
+# ``list`` is a comma-separated extensions-style field.
 _FIELD_SPECS: tuple[tuple[str, str], ...] = (
-    ("grading.rubric", "prompt"),
     ("grading.system_prompt", "prompt"),
     ("grading.max_parallel_tasks", "int"),
     ("fetch.course_id", "int"),
@@ -79,8 +79,9 @@ _FIELD_SPECS: tuple[tuple[str, str], ...] = (
     ("assignment.reference_file", "str"),
 )
 
-# (fqid) Select fields: provider (assignment context).
-_SELECT_SPECS: tuple[str, ...] = ("grading.provider",)
+# (fqid) Select fields: provider (from config/provider.toml) and rubric (from
+# data/rubrics), both dynamic lists.
+_SELECT_SPECS: tuple[str, ...] = ("grading.provider", "grading.rubric")
 
 # (fqid, label) Checkbox fields (design 05 §④ — the six common switches).
 _CHECKBOX_SPECS: tuple[tuple[str, str], ...] = (
@@ -112,6 +113,82 @@ def _read_registry() -> dict[str, ProviderInfo]:
         return {}
 
 
+class _PromptCheckList(Vertical):
+    """Checkbox list for ``grading.system_prompt`` (one box per prompt file).
+
+    Exposes ``value: list[str]`` ("prompt/<file>"), ``set_value`` and the
+    standard ``disabled`` attribute so the settings plumbing treats it like
+    any other field widget. The checkboxes are rebuilt by :meth:`_refresh_files`
+    whenever the set of ``data/prompt/*.md`` files changes.
+    """
+
+    def __init__(self, assignments_dir: Path, label: str) -> None:
+        super().__init__(classes="settings-field")
+        self._assignments_dir = assignments_dir
+        self._base_label = label
+        self._files: list[str] = []
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield Label(self._base_label, id="label-grading-system-prompt")
+        yield Vertical(id="prompt-list")
+
+    @override
+    def on_mount(self) -> None:
+        self._refresh_files()
+
+    def watch_disabled(self, disabled: bool) -> None:
+        for widget in self.walk_children():
+            widget.disabled = disabled
+
+    def _refresh_files(self) -> None:
+        """Rebuild the checkboxes (and the empty-dir hint) from disk.
+
+        No-op when the file set is unchanged, so existing checked states
+        survive ``_load_context`` re-runs.
+        """
+        files = sorted(p.name for p in (self._assignments_dir / "prompt").glob("*.md"))
+        container = self.query_one("#prompt-list", Vertical)
+        if files == self._files and container.children:
+            return
+        self._files = files
+        container.remove_children()
+        if not files:
+            container.mount(
+                Static("No prompt files found in data/prompt.", id="prompt-empty")
+            )
+        else:
+            container.mount(*[
+                Checkbox(name, value=False, id=f"cb-prompt-{index}")
+                for index, name in enumerate(files)
+            ])
+        for widget in container.children:
+            widget.disabled = self.disabled
+
+    @property
+    def value(self) -> list[str]:
+        """Checked prompt paths, e.g. ``["prompt/system.md"]``."""
+        container = self.query_one("#prompt-list", Vertical)
+        return [
+            f"prompt/{checkbox.label}"
+            for checkbox in container.query(Checkbox)
+            if checkbox.value
+        ]
+
+    def set_value(self, value: object) -> None:
+        """Check the boxes matching ``value`` (str or list of str of paths)."""
+        if isinstance(value, str):
+            items = [value]
+        elif isinstance(value, (list, tuple)):
+            items = [str(item) for item in value]
+        else:
+            items = []
+        selected = set(items)
+        container = self.query_one("#prompt-list", Vertical)
+        for checkbox in container.query(Checkbox):
+            checkbox.value = f"prompt/{checkbox.label}" in selected
+
+
 class _LField(Vertical):
     """Label + Input/Select/Checkbox pair (small compose helper)."""
 
@@ -140,6 +217,7 @@ class SettingsScreen(Vertical):
         Binding("r", "reset", "Reset"),
         Binding("e", "edit_config", "Edit config"),
         Binding("t", "test_canvas", "Test Canvas"),
+        Binding("b", "rubric_builder", "Rubric builder"),
         Binding("1", "tab_grading", "Grading"),
         Binding("2", "tab_canvas", "Canvas"),
         Binding("3", "tab_plagiarism", "Plagiarism"),
@@ -187,6 +265,10 @@ class SettingsScreen(Vertical):
     width: auto;
     margin: 0 0 1 0;
 }
+#btn-rubric-builder {
+    width: auto;
+    margin: 0 0 1 0;
+}
 #settings-actions {
     height: auto;
     padding: 1 0 0 0;
@@ -219,8 +301,9 @@ class SettingsScreen(Vertical):
         super().__init__(id="settings-screen")
         self.state = state
         self._ctx: str = ""  # unset until on_mount sets the initial context
-        self._widgets: dict[str, Input | Select | Checkbox] = {}
+        self._widgets: dict[str, Input | Select | Checkbox | _PromptCheckList] = {}
         self._loaded: dict[str, str] = {}
+        self._base_labels: dict[str, str] = {}
         self._result = ""
         self._registry: dict[str, ProviderInfo] = {}
         self._global_exists = False
@@ -247,15 +330,15 @@ class SettingsScreen(Vertical):
                     "provider (from config/provider.toml, read-only registry)",
                     self._select("grading.provider"),
                 )
-                yield _LField("rubric", self._input("grading.rubric"))
                 yield _LField(
-                    "system_prompt (comma-separated file paths)",
-                    self._input("grading.system_prompt"),
+                    "rubric (from data/rubrics)", self._select("grading.rubric")
                 )
+                yield self._prompt_checklist("grading.system_prompt")
                 yield _LField(
                     "max_parallel_tasks (1..10)",
                     self._input("grading.max_parallel_tasks"),
                 )
+                yield Button("Rubric builder…", id="btn-rubric-builder")
             with TabPane("Canvas", id="tab-canvas"):
                 yield Static("", id="canvas-env")
                 yield Static("", id="canvas-fetch-list")
@@ -327,6 +410,14 @@ class SettingsScreen(Vertical):
 
     def _checkbox(self, fqid: str) -> Checkbox:
         widget = Checkbox("", id=_field_widget_id(fqid))
+        self._widgets[fqid] = widget
+        return widget
+
+    def _prompt_checklist(self, fqid: str) -> _PromptCheckList:
+        widget = _PromptCheckList(
+            self.state.assignments_dir, "system_prompt (multi-select)"
+        )
+        widget.id = _field_widget_id(fqid)
         self._widgets[fqid] = widget
         return widget
 
@@ -467,21 +558,76 @@ class SettingsScreen(Vertical):
                 self._set_select_options(
                     widget, fqid, str(value) if value is not None else ""
                 )
+            if isinstance(widget, _PromptCheckList):
+                widget._refresh_files()
             self._set_widget_value(widget, kind, value)
             self._loaded[fqid] = self._value_str(widget)
             widget.disabled = not self._writable(section)
+        self._apply_badges()
         self._render_statics()
         self._update_status()
 
+    # ---------- inherited badges ----------
+
+    def _local_keys(self) -> frozenset[str]:
+        """fqids present (non-None) in the raw LOCAL assignment config.
+
+        Read via :func:`read_config` on the assignment's own config.toml —
+        NOT the layered merged view: a global/course value for a key the
+        assignment never sets is what the "(inherited)" badge means.
+        """
+        assignment = self.state.current_assignment
+        if assignment is None:
+            return frozenset()
+        raw = read_config(assignment.config_path)
+        local: set[str] = set()
+        for fqid, (section, key, _kind) in self._specs.items():
+            section_data = raw.get(section)
+            if isinstance(section_data, dict) and section_data.get(key) is not None:
+                local.add(fqid)
+        return frozenset(local)
+
+    def _field_label(self, fqid: str) -> Label:
+        widget = self._widgets[fqid]
+        owner = widget if isinstance(widget, _PromptCheckList) else widget.parent
+        return owner.query_one(Label)
+
+    def _apply_badges(self) -> None:
+        """Append the ``(inherited)`` badge in the assignment context.
+
+        Assignment context shows the layered effective values; a key that is
+        only set in a higher layer (or absent) gets the badge on its label.
+        Other contexts show plain labels.
+        """
+        local = self._local_keys() if self._ctx == "assignment" else None
+        for fqid in self._specs:
+            label = self._field_label(fqid)
+            base = self._base_labels.get(fqid)
+            if base is None:
+                base = str(label.content)
+                self._base_labels[fqid] = base
+            if local is not None and fqid not in local:
+                label.update(f"{base} [dim](inherited)[/dim]")
+            else:
+                label.update(base)
+
     def _set_select_options(self, widget: Select, fqid: str, current: str) -> None:
-        if fqid != "grading.provider":  # only provider is a Select field
+        if fqid == "grading.provider":
+            names = sorted(self._registry)
+            options = [(name, name) for name in names]
+            empty_label = "(no available provider)"
+        elif fqid == "grading.rubric":
+            names = sorted(
+                p.name for p in (self.state.assignments_dir / "rubrics").glob("*.toml")
+            )
+            options = [(f"rubrics/{name}", f"rubrics/{name}") for name in names]
+            empty_label = "No rubrics found — create one in Rubric builder"
+        else:
             return
-        names = sorted(self._registry)
-        options = [(name, name) for name in names]
-        if current and current not in names:
-            options.append((f"{current} (not in registry)", current))
+        if current and current not in {value for _, value in options}:
+            options.append((f"{current} (not in list)", current))
         if not options:
-            options = [("(no available provider)", "")]
+            options = [(empty_label, "")]
         widget.set_options(options)
         values = {value for _, value in widget._options if value is not Select.NULL}
         if current in values:
@@ -489,9 +635,11 @@ class SettingsScreen(Vertical):
 
     @staticmethod
     def _set_widget_value(
-        widget: Input | Select | Checkbox, kind: str, value: object
+        widget: Input | Select | Checkbox | _PromptCheckList, kind: str, value: object
     ) -> None:
-        if isinstance(widget, Checkbox):
+        if isinstance(widget, _PromptCheckList):
+            widget.set_value(value)
+        elif isinstance(widget, Checkbox):
             widget.value = bool(value)
         elif not isinstance(widget, Select):
             widget.value = SettingsScreen._format_value(kind, value)
@@ -521,7 +669,9 @@ class SettingsScreen(Vertical):
         return str(value)
 
     @staticmethod
-    def _value_str(widget: Input | Select | Checkbox) -> str:
+    def _value_str(widget: Input | Select | Checkbox | _PromptCheckList) -> str:
+        if isinstance(widget, _PromptCheckList):
+            return ",".join(widget.value)
         if isinstance(widget, Checkbox):
             return "true" if widget.value else "false"
         if isinstance(widget, Select):
@@ -652,11 +802,15 @@ class SettingsScreen(Vertical):
             current = self._value_str(widget)
             if current == self._loaded.get(fqid):
                 continue
-            try:
-                value = self._parse(kind, current)
-            except ValueError:
-                errors.append(f"Invalid value for '{section}.{key}': {current!r}")
-                continue
+            if isinstance(widget, _PromptCheckList):
+                # Always a list; validated (non-empty) downstream.
+                value: object = widget.value
+            else:
+                try:
+                    value = self._parse(kind, current)
+                except ValueError:
+                    errors.append(f"Invalid value for '{section}.{key}': {current!r}")
+                    continue
             edits.setdefault(section, {})[key] = value
         return edits, errors
 
@@ -777,6 +931,17 @@ class SettingsScreen(Vertical):
     def action_tab_grading(self) -> None:
         self._set_tab("tab-grading")
 
+    def action_rubric_builder(self) -> None:
+        """Open the rubric builder; refresh lists when it closes."""
+        self.app.push_screen(
+            RubricBuilderScreen(self.state),
+            callback=self._on_rubric_builder_closed,
+        )
+
+    def _on_rubric_builder_closed(self, _result: object) -> None:
+        self._load_context()
+        self._set_result("[dim]Rubric builder closed — lists reloaded[/dim]")
+
     def action_tab_canvas(self) -> None:
         self._set_tab("tab-canvas")
 
@@ -814,3 +979,5 @@ class SettingsScreen(Vertical):
             self.action_reset()
         elif button_id == "btn-test-canvas":
             self.action_test_canvas()
+        elif button_id == "btn-rubric-builder":
+            self.action_rubric_builder()
