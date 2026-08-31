@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, ClassVar, override
 from canvasapi import Canvas
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.widgets import (
     Button,
     Checkbox,
@@ -224,20 +224,22 @@ class SettingsScreen(Vertical):
         Binding("4", "tab_paths", "Paths"),
     ]
 
-    CSS = """
+    DEFAULT_CSS = """
 #settings-screen {
     height: 1fr;
     padding: 0 1;
 }
 #settings-top {
-    height: auto;
-    padding: 1 0;
+    height: 3;
+    padding: 0 1;
 }
 #settings-title {
+    height: 3;
     width: auto;
     padding: 0 1 0 0;
 }
 #ctx-select {
+    height: 3;
     width: 52;
 }
 #ctx-hint {
@@ -248,11 +250,19 @@ class SettingsScreen(Vertical):
 #settings-tabs {
     height: 1fr;
 }
+#settings-tabs > ContentSwitcher {
+    height: 1fr;
+}
 #settings-tabs TabPane {
+    height: 1fr;
     padding: 1 2;
 }
+#settings-tabs TabPane > ScrollableContainer {
+    height: 1fr;
+}
 #grading-registry {
-    height: auto;
+    height: 8;
+    overflow-y: auto;
     padding: 0 0 1 0;
     color: $text-muted;
 }
@@ -287,12 +297,14 @@ class SettingsScreen(Vertical):
     padding: 0 0 1 0;
 }
 .settings-field Label {
+    height: 1;
     color: $text-muted;
     text-style: bold;
 }
 .settings-field Input,
 .settings-field Select,
 .settings-field Checkbox {
+    height: 3;
     width: 1fr;
 }
 """
@@ -324,7 +336,7 @@ class SettingsScreen(Vertical):
             yield Select([("Global", "global")], id="ctx-select", allow_blank=False)
         yield Static("", id="ctx-hint")
         with TabbedContent(id="settings-tabs"):
-            with TabPane("Grading", id="tab-grading"):
+            with TabPane("Grading", id="tab-grading"), ScrollableContainer():
                 yield Static("", id="grading-registry")
                 yield _LField(
                     "provider (from config/provider.toml, read-only registry)",
@@ -339,7 +351,7 @@ class SettingsScreen(Vertical):
                     self._input("grading.max_parallel_tasks"),
                 )
                 yield Button("Rubric builder…", id="btn-rubric-builder")
-            with TabPane("Canvas", id="tab-canvas"):
+            with TabPane("Canvas", id="tab-canvas"), ScrollableContainer():
                 yield Static("", id="canvas-env")
                 yield Static("", id="canvas-fetch-list")
                 yield _LField(
@@ -347,7 +359,7 @@ class SettingsScreen(Vertical):
                     self._input("fetch.course_id"),
                 )
                 yield Button("Test Canvas connection", id="btn-test-canvas")
-            with TabPane("Plagiarism", id="tab-plagiarism"):
+            with TabPane("Plagiarism", id="tab-plagiarism"), ScrollableContainer():
                 yield _LField(
                     "copydetect_weight (0..1)",
                     self._input("plagiarism.copydetect_weight"),
@@ -378,7 +390,7 @@ class SettingsScreen(Vertical):
                     "extensions (comma-separated, e.g. .py, .ipynb)",
                     self._input("plagiarism.extensions"),
                 )
-            with TabPane("Paths / Advanced", id="tab-paths"):
+            with TabPane("Paths / Advanced", id="tab-paths"), ScrollableContainer():
                 yield _LField("raw_dir", self._input("assignment.raw_dir"))
                 yield _LField("processed_dir", self._input("assignment.processed_dir"))
                 yield _LField("graded_dir", self._input("assignment.graded_dir"))

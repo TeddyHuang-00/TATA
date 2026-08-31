@@ -33,8 +33,8 @@ from src.tata_app import AppState
 from src.tata_scan import scan_courses
 from src.tata_settings import SettingsScreen, _PromptCheckList
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Checkbox, Input, Select, Static, TabbedContent
+from textual.containers import ScrollableContainer, Vertical
+from textual.widgets import Button, Checkbox, Input, Select, Static, TabbedContent
 
 GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndisplay_threshold = 0.75\n"
 
@@ -421,6 +421,62 @@ async def _check_weights_course_global(root: Path) -> None:
         assert _close(saved_global["plagiarism"]["copydetect_weight"], 0.9)
 
 
+async def _check_layout(root: Path) -> None:
+    """P3: context select visible, panes scroll, widgets fixed-height, actions pinned."""
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.set_context("assignment")
+        await pilot.pause()
+
+        # (a) the context Select renders a real value inside the viewport
+        ctx = screen.query_one("#ctx-select", Select)
+        assert str(ctx.value) == "assignment"
+        assert ctx.visible
+        region = ctx.region  # Textual 8: region is relative to the Screen
+        assert region.y >= 0, region
+        assert region.bottom <= 44, region
+        assert region.width > 0, region
+        assert region.height >= 3, region
+
+        # (b) every TabPane's content lives in a ScrollableContainer
+        tabs = screen.query_one("#settings-tabs", TabbedContent)
+        for pane_id in ("tab-grading", "tab-canvas", "tab-plagiarism", "tab-paths"):
+            assert tabs.query_one(
+                f"#{pane_id} ScrollableContainer", ScrollableContainer
+            )
+
+        # (c) Save/Reset stay inside the viewport (not pushed below the fold)
+        for btn_id in ("btn-save", "btn-reset"):
+            btn = screen.query_one(f"#{btn_id}", Button)
+            assert btn.visible
+            region = btn.region
+            assert region.y >= 0, region
+            assert region.bottom <= 44, region
+
+        # (d) fixed widget heights (label 1 / input-select 3) per active tab
+        assert screen.query_one("#f-grading-rubric", Select).region.height >= 3
+        screen.action_tab_plagiarism()
+        await pilot.pause()
+        assert (
+            screen.query_one("#f-plagiarism-copydetect_weight", Input).region.height
+            >= 3
+        )
+        screen.action_tab_paths()
+        await pilot.pause()
+        assert (
+            screen.query_one(
+                "#f-processing-remove_base64_images", Checkbox
+            ).region.height
+            >= 3
+        )
+
+        # (e) the provider registry block is capped
+        assert screen.query_one("#grading-registry", Static).region.height <= 8
+
+
 async def main() -> None:
     _check_dump_roundtrip()
     with tempfile.TemporaryDirectory() as tmp:
@@ -434,6 +490,7 @@ async def main() -> None:
         await _check_global_edit(root)
         await _check_rubric_not_in_list(root)
         await _check_weights_course_global(root)
+        await _check_layout(root)
     print("tata settings check OK")
 
 

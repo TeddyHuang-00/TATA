@@ -17,7 +17,7 @@ import tomlkit
 from pydantic import ValidationError
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Input, Label, Select, Static, TextArea
 
@@ -50,13 +50,15 @@ class RubricBuilderScreen(Screen[None]):
     padding: 0 0 1 0;
 }
 #rb-file-row {
-    height: auto;
-    padding: 0 0 1 0;
+    height: 3;
+    padding: 0;
 }
 #rb-file {
+    height: 3;
     width: 40;
 }
 #rb-filename {
+    height: 3;
     width: 40;
     margin: 0 0 0 2;
     display: none;
@@ -80,6 +82,13 @@ class RubricBuilderScreen(Screen[None]):
 .rb-field {
     height: auto;
     padding: 0 0 1 0;
+}
+.rb-field Label {
+    height: 1;
+}
+.rb-field Input,
+.rb-field Select {
+    height: 3;
 }
 #rb-desc {
     height: 5;
@@ -116,45 +125,48 @@ class RubricBuilderScreen(Screen[None]):
 
     @override
     def compose(self) -> ComposeResult:
-        yield Static("[b]Rubric builder[/b]", id="rb-title")
-        with Horizontal(id="rb-file-row"):
-            yield Select(self._file_options(), id="rb-file", allow_blank=False)
-            yield Input("", placeholder="new rubric filename", id="rb-filename")
-        yield Static("", id="rb-error")
-        yield DataTable(id="rb-criteria")
-        with Vertical(id="rb-form"):
-            yield Label("Criterion")
-            with Vertical(classes="rb-field"):
-                yield Label("name")
-                yield Input(id="rb-name")
-            with Vertical(classes="rb-field"):
-                yield Label("desc")
-                yield TextArea("", id="rb-desc")
-            with Vertical(classes="rb-field"):
-                yield Label("rating")
-                yield Select(
-                    [(v, v) for v in _RATING_VALUES], id="rb-rating", allow_blank=False
-                )
-            with Vertical(classes="rb-field"):
-                yield Label("grading")
-                yield Select(
-                    [(v, v) for v in _GRADING_VALUES],
-                    id="rb-grading",
-                    allow_blank=False,
-                )
-            with Vertical(classes="rb-field"):
-                yield Label("pts")
-                yield Input(id="rb-pts")
-            with Vertical(classes="rb-field"):
-                yield Label("custom_scale (comma-separated; grading=custom only)")
-                yield Input("", placeholder="0.0, 0.5, 1.0", id="rb-scale")
-        with Horizontal(id="rb-actions"):
-            yield Button("Edit", id="rb-edit")
-            yield Button("Remove", id="rb-remove", disabled=True)
-            yield Button("Add", id="rb-add", variant="primary")
-            yield Button("Update", id="rb-update", disabled=True)
-            yield Button("Save rubric", id="rb-save")
-        yield Static("[dim]Esc closes without saving.[/dim]", id="rb-hint")
+        with ScrollableContainer():
+            yield Static("[b]Rubric builder[/b]", id="rb-title")
+            with Horizontal(id="rb-file-row"):
+                yield Select(self._file_options(), id="rb-file", allow_blank=False)
+                yield Input("", placeholder="new rubric filename", id="rb-filename")
+            yield Static("", id="rb-error")
+            yield DataTable(id="rb-criteria")
+            with Vertical(id="rb-form"):
+                yield Label("Criterion")
+                with Vertical(classes="rb-field"):
+                    yield Label("name")
+                    yield Input(id="rb-name")
+                with Vertical(classes="rb-field"):
+                    yield Label("desc")
+                    yield TextArea("", id="rb-desc")
+                with Vertical(classes="rb-field"):
+                    yield Label("rating")
+                    yield Select(
+                        [(v, v) for v in _RATING_VALUES],
+                        id="rb-rating",
+                        allow_blank=False,
+                    )
+                with Vertical(classes="rb-field"):
+                    yield Label("grading")
+                    yield Select(
+                        [(v, v) for v in _GRADING_VALUES],
+                        id="rb-grading",
+                        allow_blank=False,
+                    )
+                with Vertical(classes="rb-field"):
+                    yield Label("pts")
+                    yield Input(id="rb-pts")
+                with Vertical(classes="rb-field"):
+                    yield Label("custom_scale (comma-separated; grading=custom only)")
+                    yield Input("", placeholder="0.0, 0.5, 1.0", id="rb-scale")
+            with Horizontal(id="rb-actions"):
+                yield Button("Edit", id="rb-edit")
+                yield Button("Remove", id="rb-remove", disabled=True)
+                yield Button("Add", id="rb-add", variant="primary")
+                yield Button("Update", id="rb-update", disabled=True)
+                yield Button("Save rubric", id="rb-save")
+            yield Static("[dim]Esc closes without saving.[/dim]", id="rb-hint")
 
     @override
     def on_mount(self) -> None:
