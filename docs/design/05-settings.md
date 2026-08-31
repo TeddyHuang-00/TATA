@@ -4,6 +4,7 @@
 > v1.1 变更：写入目标由「根配置/作业配置」两层改为**三层**：global config（`data/config.toml`，可选，跨课程默认）、**course config**（`data/<course>/config.toml`：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖）、assignment config（`data/<course>/<name>/config.toml`：`[grading]`/`[plagiarism]`/`[assignment]`/`[processing]`）；.env 仍全局
 > 上下文来源：`state.current_course` / `state.current_assignment`；从 S1 三层的 `cfg`/`g` 进入时预置（Global 视图 `g`→Global 上下文；Course 视图 `cfg`→Course 上下文；Assignment 视图 `e`→Assignment 上下文）
 > 保存逻辑：全屏右侧显示「将写入: 文件路径」；内容经 `load_assignment_file` 校验通过才落盘（pydantic 错误逐条展示）
+> v2 (2026-09-01 update)：rubric/prompt/provider 三字段全部改为本地库枚举（Select / 多选框）；Assignment 上下文显示 `(inherited)` 继承徽章；新增 RubricBuilderScreen（§7）；布局契约与 `DEFAULT_CSS` 陷阱见 §8
 
 ---
 
@@ -20,8 +21,9 @@
 │  │ model         [deepseek-chat               ]   temperature [ 0.20 ]     │
 │  │ mode          (•) chat   ( ) reasoning    │   max_parallel [ 10 ]      │
 │  │ ────────────────────────────────────────────                            │
-│  │ rubric        [rubrics/example_rubric.toml ]                            │
-│  │ system_prompt [prompt/system.md            ]  (comma-separated)         │
+│  │ rubric        [Select: data/rubrics/*.toml] (inherited)                 │
+│  │ system_prompt [☑ prompt/system.md  ☑ prompt/grade.md …]                 │
+│  │                [Rubric builder…]  (Grading tab)                         │
 │  │ ────────────────────────────────────────────                            │
 │  │ Will write: data/271218/1-10-my-ai-start/…/config.toml [grading] │
 ├──┴─────────────────────────────────────────────────────────────────────────┤
@@ -63,7 +65,10 @@
 | provider | `Select` | `grading.provider` |
 | base_url / api_key / model / mode / temperature | `Input`/`Select`/`RadioSet`/`Input` | **已确认（2026-08-29）：`config/provider.toml` 的 `[providers.<name>]` 注册表**（`src/provider.py` `get_providers()` 读取；api_key 写 `${ENV}` 占位符而非明文）。编辑语义：全局生效，提示「保存将更新所有作业的 provider 选项」；刷新注册表按钮对应重新 `get_providers()` |
 | max_parallel_tasks | `Input`(数字) | `grading.max_parallel_tasks`（1..10） |
-| rubric / system_prompt | `Input` | `grading.rubric` 键（`rubric` / `system_prompt`） |
+| rubric | `Select`（枚举 `data/rubrics/*.toml`，值 `"rubrics/<file>"`） | `grading.rubric` |
+| system_prompt | `_PromptCheckList`（检查框列表，枚举 `data/prompt/*.md`，值 `"prompt/<file>"`，多选） | `grading.system_prompt`（str 或 list） |
+
+> **Assignment 上下文继承徽章（v2）**：键未在**本地 assignment config.toml 原始文件**（`read_config(assignment.config_path)`）中显式设置时，字段标签追加 `(inherited)` 徽章。local 键集来自原始文件而非 global/course 分层合并视图——合并值照常作为字段值显示，但徽章指明「此值来自上层继承」；本地已设置则无徽章。
 
 ### ② Canvas（course config + .env）
 | 字段 | 控件 | 写入 |
@@ -115,6 +120,7 @@
 | `1`–`4` | Jump to tab ①–④ | |
 | `ctrl+s` | Save current tab | 校验语义见 §4 |
 | `r` | Reset to disk values | 弹确认（覆盖未保存改动） |
+| `b` | Open Rubric builder | Grading Tab 按钮「Rubric builder…」等价 |
 | `e` | Open config file in `$EDITOR` | 深度编辑放行（v1 不做 TUI 全量编辑） |
 | `t` | Test Canvas connection | 仅 Canvas Tab |
 | `esc` | Back — confirm if unsaved changes | |
@@ -132,3 +138,47 @@
 | **错误态·校验失败** | Modal 错误列表（见 §4）；例：「grading.max_parallel_tasks: Input should be less than or equal to 10」「plagiarism weights: sum 1.20 ≠ 1.00」 |
 | **错误态·写盘失败(权限)** | `notify(error, "写入失败: <err>")`；不丢输入（field 内容保留，可重试） |
 | **错误态·schema 生成失败** | notify(error) + 日志区（本屏右下固定 1 条 RichLog 摘要）记录堆栈首行 |
+
+## 7. Rubric builder（v2 新增，2026-09-01）
+
+`RubricBuilderScreen`（`src/tata_rubric.py`）—— 与 Settings **平级的独立 pushed Screen**（同 ScoreReviewScreen 模式），入口：Grading Tab 按钮「Rubric builder…」（`btn-rubric-builder`）或 `b` 绑定（`action_rubric_builder`）。Esc 关闭**不保存**。
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│ [b]Rubric builder                                            esc=Back      │
+├────────────────────────────────────────────────────────────────────────────┤
+│ File: [existing.toml ▾]  [new rubric filename___]   (New rubric… 时显示)   │
+│ (error line, red, optional)                                              │
+│ DataTable: name | rating | grading | pts   # 现有准则                     │
+│ ── form（一次一条）──                                                      │
+│ name / desc(TextArea,h5) / rating Select / grading Select / pts Input /   │
+│ custom_scale(comma-separated, 仅 grading=custom 可用)                      │
+│ [Edit] [Remove] [Add] [Update] [Save rubric]                              │
+│ Esc closes without saving.                                                │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **文件**：Select = 现有 `data/rubrics/*.toml` + 「New rubric…」（显示 filename Input）；载入选中的 rubric（`get_rubric_definition`；失败 → 红色错误行，屏幕存活）
+- **准则编辑**：一次一条 —— Edit（选中行载入表单）/ Remove / Add / Update；表单校验 name 必填、pts 数值、custom_scale 仅 grading=custom（否则 Input 禁用 dim）
+- **Save rubric**：`RubricDefinition.model_validate` 全量校验（pydantic 错误逐条展示 + notify(error)）→ 写 `data/rubrics/<name>.toml`（tomlkit `[[criterion]]` AoT；首行 `# schema: ../../config/rubric.schema.json`；无 criteria 时报错「Add at least one criterion」）→ notify(success) + pop
+- **返回刷新**：`_on_rubric_builder_closed` → `_load_context()` 重新枚举 rubric/prompt 列表，新建/修改的 rubric 立即出现在 Grading Tab Select
+- UI 文案全英文
+
+## 8. v2 布局契约与 CSS 陷阱（2026-09-01）
+
+### 8.1 布局契约（c9272e81 修正）
+
+| 容器 | 契约 | 备注 |
+|------|------|------|
+| `#settings-top` | `height: 3` | 顶栏（标题 + 上下文 Select），与字段行同高 |
+| `#ctx-select` | `height: 3; width: 52` | **v1.1 曾无高度 → Select 渲染高度为 0，「Context: 」显示空白**；修复后固定 |
+| TabPane 内容 | 每个 TabPane 包一层 `ScrollableContainer`，链式 `height: 1fr`（TabPane 1fr → ContentSwitcher 1fr → ScrollableContainer 1fr） | 整页不滚，内容区滚 |
+| provider 注册表 | `#grading-registry { height: 8; overflow-y: auto }` | 超 8 行内部滚动，不再撑破布局 |
+| 字段 | Input/Select/Checkbox `height: 3`、Label `height: 1`（`.settings-field`） | 统一 |
+| Save/Reset + `#settings-status` | 底部固定，**在滚动区之外**（`#settings-actions`/`#settings-status` 不嵌套在 TabPane/Scrollable 内） | 动作与校验结果永远可见 |
+
+### 8.2 Textual 8.2.8 CSS gotcha（新增样式必读）
+
+> **Textual 8.2.8 对非 Screen 的 widget 忽略 `CSS` classvar —— 必须用 `DEFAULT_CSS`。**
+> `SettingsScreen` 是 `Vertical`（非 Screen），所以 c9272e81 之前其类内 `CSS = """…"""` **从未生效**（顶栏/字段/滚动布局全丢）——这就是「Context: 」空白与布局塌陷的根因。改用 `DEFAULT_CSS` 后恢复。
+> 真正的 Screen（`RubricBuilderScreen`、各 ModalScreen）用 `CSS` 则正常。**规则：目标类继承自 `Screen` → `CSS`；其他 widget → `DEFAULT_CSS`。**

@@ -3,6 +3,7 @@
 > 职责：三层 drill-down 工作台 —— **Global（课程一览）→ Course（课程作业一览 + 跨作业操作）→ Assignment（作业工作台，即原 S2 内容）**
 > 版本变更（v1.1 多课程支持）：Dashboard 吸收原 S2 Pipeline Tab；`data/` 目录插入 course 层（`data/<course>/<assignment>`）；配置分层 global→course→assignment
 > v1.1 (2026-08-30 update)：Assignment 工作台移除查重 stage（查重仅剩 Course 层 `p` 与 S4 tab），新增 `score review` 按钮（push_screen ScoreReviewScreen）；S4 重构为 course 级 4-tab（详见 04）
+> v2 (2026-09-01 update)：导入作业改为两段式 **pick → quick-setup modal → config+aliases → fetch**（ImportAssignmentModal + AssignmentSetupModal，见 §6.2）；导入课程同步种子 `[course]` 别名（seed_course_alias，fill-missing，见 §6.1）
 > 对应 CLI：`fetch`、`plagiarism --aggregate`、帮助、`list_courses/list_assignments`
 
 ---
@@ -89,7 +90,7 @@
 
 | 动作 | 键 | 等价 CLI | 行为 |
 |------|----|---------|------|
-| 导入作业 | `c` | `fetch` 交互选择 | Modal 选 Canvas 作业 → 单作业 fetch → 写 course config 的 `[[fetch.assignments]]`（`id` 条目） |
+| 导入作业 | `c` | `fetch` 交互选择 | ImportAssignmentModal 选 Canvas 作业 → AssignmentSetupModal（rubric Select 自 `data/rubrics/*.toml`、prompt 多选框自 `data/prompt/*.md`、provider Select 自注册表；默认 第一个/全选/第一个；空库或无勾选 prompt 时 Import 禁用）→ 写 `data/<course>/<id>/config.toml`（`[grading]` + schema 头）+ 种子 `[assignment]` 别名 → 单作业 fetch → 重扫 |
 | fetch 全部 | `F` | `fetch -c data/<course>/config.toml` | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」 |
 | 查重+聚合 | `p` | `plagiarism -c data/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏 |
 | 课程配置 | `cfg` | — | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖） |
@@ -121,8 +122,8 @@ Assignment 层新增职责（相对 v1 的 S2）：
 | `↑/↓` 或 `j/k` | S1 全层 | Move selection | DataTable 原生 |
 | `enter` | Global/Course | Drill down one level | Global→Course→Assignment; inside Assignment 'enter' unused (02 has no enter binding) |
 | `esc` / `backspace` | Course/Assignment | Drill up one level | Assignment→Course→Global; at Global top esc closes Modal or is ignored |
-| `c` | Global | Import course | Modal: pick Canvas course → create `data/<dir>/config.toml` → enter Course view |
-| `c` | Course | Import assignment | Modal: pick assignment → fetch → append to course config (`id` entry) |
+| `c` | Global | Import course | Modal: pick Canvas course → create `data/<dir>/config.toml` + seed `[course]` alias (fill-missing) → enter Course view |
+| `c` | Course | Import assignment | Modal: pick assignment → AssignmentSetupModal quick setup (rubric/prompt/provider) → write `data/<course>/<id>/config.toml` + seed `[assignment]` alias → fetch job → rescan |
 | `F` | Course | Fetch all | Per-assignment cache skip (`.fetch-cache.json`) |
 | `p` | Course | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to S4 |
 | `cfg` | Course | Course config | Switch to S5 (context=Course) |
@@ -138,6 +139,7 @@ Assignment 层新增职责（相对 v1 的 S2）：
 ```
 [c] → Modal「Import course from Canvas」: Select(list_courses)     # 后台线程预载
     → 确认: 创建 data/<dir>/config.toml（[fetch].course_id=…）
+       + seed_course_alias（fill-missing：data/alias.toml 的 [course] 表写入 Canvas 课程名，已有别名不覆盖）
        <dir> 默认 = course_id（如 "271218"），Modal 内 Input 可自定义（唯一性校验：重名报错）
     → 进入 Course 视图（若该课程已有作业目录则扫描显示；否则空态提示 [c] 导入作业）
 ```
@@ -145,9 +147,19 @@ Assignment 层新增职责（相对 v1 的 S2）：
 
 ### 6.2 导入作业 / fetch 全部 / 查重+聚合（course 内）
 ```
-Course 视图 [c] → Modal(Canvas 作业 Select)
-    → 确认 → job: _run_fetch(单作业 FetchCliOptions) → remember_fetch 写 course config 清单
-    → 完成 notify + 重扫
+Course 视图 [c] → ImportAssignmentModal(Canvas 作业 Select)      # 后台线程预载；目录已存在(重复导入)报错
+    → (aid, name) → AssignmentSetupModal「Assignment quick setup」（v2 新）
+         rubric:   Select 枚举 data/rubrics/*.toml（值 "rubrics/<file>"），默认第一个
+         prompt(s): Checkbox 多选 data/prompt/*.md（值 "prompt/<file>"），默认全选
+         provider: Select 枚举 config/provider.toml 注册表，默认第一个
+         Import 禁用条件：任一库为空（rubrics/prompt/provider）或未勾选任何 prompt
+    → 确认 → 创建 data/<course>/<dir>/config.toml，首行 "# schema: ../../config/assignment.schema.json"
+             + [grading] = { rubric, system_prompt[], provider }
+             # 写入目标：assignment 级 config（非 course config 的 [[fetch.assignments]]）
+    → seed_assignment_alias（course 级 data/<course>/alias.toml 的 [assignment] 表，fill-missing）
+    → job: _run_fetch(FetchCliOptions(course, assignment, config=course_config))
+    → fetch 完成后 M3 追加：course config 的 [[fetch.assignments]] 补 { id: <aid> }（dedup，供 F 拉取）
+    → 完成 notify + 重扫（_rescan_course）
 Course 视图 [F] → Confirm Modal「Fetch course 6 assignments (126 submissions, cached skipped)」
     → job: _run_fetch(FetchCliOptions(config=course_config))   # 等价 CLI course config fetch
     → 完成 notify(成功 N/失败 M) + 行徽章更新
