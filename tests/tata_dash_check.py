@@ -380,9 +380,9 @@ async def _check_alias_brackets() -> None:
 
 
 async def _check_alias_editor_course() -> None:
-    """Course level `a` -> AliasEditorModal: add an alias -> Save -> the
-    global data/alias.toml is updated and the dashboard display refreshes;
-    esc cancels without writing."""
+    """Global level `a` -> AliasEditorModal: edit the selected course's
+    single alias -> Save -> global data/alias.toml updated + display
+    refreshes; esc cancels without writing."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         make_course(root / "data", assignments={"a1": 1001})
@@ -391,54 +391,40 @@ async def _check_alias_editor_course() -> None:
             table = app.query_one("#dashboard-table", DataTable)
             await wait_for(pilot, lambda: table.row_count == 1)
             table.focus()
-            # global level `a`: warn, no modal
-            await pilot.press("a")
-            await pilot.pause()
-            assert not isinstance(app.screen, AliasEditorModal)
-            await pilot.press("enter")
-            await pilot.pause()
-            assert app.state.dashboard_level == "course"
             await pilot.press("a")
             await wait_for(pilot, lambda: isinstance(app.screen, AliasEditorModal))
             modal = app.screen
             assert isinstance(modal, AliasEditorModal)
-            assert text(modal.query_one("#alias-empty", Static)) == (
-                "No course aliases yet."
-            )
-            # add row: key + name
-            modal.query_one("#alias-new-key", Input).value = "111111"
-            modal.query_one("#alias-new-name", Input).value = "Renamed Course"
+            assert text(modal.query_one(".alias-key", Static)) == "111111"
+            name_input = modal.query_one("#alias-name", Input)
+            assert name_input.value == ""  # no alias yet
+            name_input.value = "Renamed Course"
             modal.query_one("#save", Button).press()
             await wait_for(pilot, lambda: not isinstance(app.screen, AliasEditorModal))
             aliases = load_alias_file(root / "data" / "alias.toml")
             assert aliases["course"]["111111"] == "Renamed Course"
-            breadcrumb = text(app.query_one("#breadcrumb", Static))
-            assert "Renamed Course" in breadcrumb, breadcrumb
-            # back to global: the course-name cell now shows the alias
-            await pilot.press("escape")
             await pilot.pause()
             assert cell(table, 0, 0) == "Renamed Course", cell(table, 0, 0)
             # esc cancels: no write
             table.focus()
-            await pilot.press("enter")
-            await pilot.pause()
             await pilot.press("a")
             await wait_for(pilot, lambda: isinstance(app.screen, AliasEditorModal))
             modal = app.screen
             assert isinstance(modal, AliasEditorModal)
-            modal.query_one("#alias-new-key", Input).value = "222222"
-            modal.query_one("#alias-new-name", Input).value = "Should Not Save"
+            assert text(modal.query_one(".alias-key", Static)) == "111111"
+            modal.query_one("#alias-name", Input).value = "Should Not Save"
             await pilot.press("escape")
             await wait_for(pilot, lambda: not isinstance(app.screen, AliasEditorModal))
             aliases = load_alias_file(root / "data" / "alias.toml")
-            assert "222222" not in aliases.get("course", {})
+            assert aliases["course"]["111111"] == "Renamed Course"
 
 
 async def _check_alias_editor_assignment() -> None:
-    """Assignment level: the workspace Aliases button -> AliasEditorModal
-    (edits the course alias.toml [assignment] table): rename -> Save -> file
-    + ws topbar refresh; empty name deletes the alias (display falls back to
-    the dir name). `a` stays Analyze here (no alias modal)."""
+    """Course level `a` -> AliasEditorModal: edit the selected assignment's
+    single alias (course alias.toml [assignment]): rename -> Save -> file +
+    table refresh; empty name deletes the alias (display falls back to the
+    dir name). `a` stays Analyze at the workspace level (covered by
+    tata_workspace_check)."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         make_course(root / "data", assignments={"a1": 1001})
@@ -456,37 +442,34 @@ async def _check_alias_editor_assignment() -> None:
             assert app.state.dashboard_level == "course"
             assert cell(table, 0, 0) == "My Alias", cell(table, 0, 0)
             table.move_cursor(row=0)
-            await pilot.press("enter")
             await pilot.pause()
-            assert app.state.dashboard_level == "assignment"
-            # assignment aliases open from the workspace button (`a` = Analyze)
-            await pilot.click("#ws-aliases")
+            await pilot.press("a")
             await wait_for(pilot, lambda: isinstance(app.screen, AliasEditorModal))
             modal = app.screen
             assert isinstance(modal, AliasEditorModal)
-            assert not modal.query_one("#alias-empty", Static).display
             assert "a1" in text(modal.query_one(".alias-key", Static))
-            name_input = next(iter(modal.query(Input)))  # first row's name
+            name_input = modal.query_one("#alias-name", Input)
             assert name_input.value == "My Alias"
             name_input.value = "Renamed Alias"
             modal.query_one("#save", Button).press()
             await wait_for(pilot, lambda: not isinstance(app.screen, AliasEditorModal))
             aliases = load_alias_file(root / "data" / COURSE / "alias.toml")
             assert aliases["assignment"]["a1"] == "Renamed Alias"
-            wait_for_breadcrumb = text(app.query_one("#ws-topbar", Static))
-            assert "Renamed Alias" in wait_for_breadcrumb, wait_for_breadcrumb
+            await pilot.pause()
+            assert cell(table, 0, 0) == "Renamed Alias", cell(table, 0, 0)
             # empty name deletes the alias -> display falls back to dir name
-            await pilot.click("#ws-aliases")
+            table.focus()
+            await pilot.press("a")
             await wait_for(pilot, lambda: isinstance(app.screen, AliasEditorModal))
             modal = app.screen
             assert isinstance(modal, AliasEditorModal)
-            next(iter(modal.query(Input))).value = ""
+            modal.query_one("#alias-name", Input).value = ""
             modal.query_one("#save", Button).press()
             await wait_for(pilot, lambda: not isinstance(app.screen, AliasEditorModal))
             aliases = load_alias_file(root / "data" / COURSE / "alias.toml")
             assert not aliases.get("assignment", {})
-            topbar = text(app.query_one("#ws-topbar", Static))
-            assert "a1" in topbar, topbar  # fallback to the dir name
+            await pilot.pause()
+            assert cell(table, 0, 0) == "a1", cell(table, 0, 0)
 
 
 async def main() -> None:

@@ -303,22 +303,6 @@ async def _check_analyze_key(app: TataApp, pilot: Pilot) -> None:
         tw.analyze_assignment = orig
 
 
-async def _check_aliases_button(app: TataApp, pilot: Pilot) -> None:
-    """The workspace Aliases button opens AliasEditorModal for this
-    assignment's [assignment] table; esc cancels (no write)."""
-    ws = app.query_one(AssignmentScreen)
-    await pilot.click("#ws-aliases")
-    await wait_for(pilot, lambda: isinstance(app.screen, AliasEditorModal))
-    modal = app.screen
-    assert isinstance(modal, AliasEditorModal), type(app.screen)
-    assert modal.alias_path.name == "alias.toml"
-    assert modal.section == "assignment"
-    await pilot.press("escape")
-    await wait_for(pilot, lambda: not isinstance(app.screen, AliasEditorModal))
-    assert len(app.screen_stack) == 1
-    assert ws.display
-
-
 async def _check_help_and_back(app: TataApp, pilot: Pilot) -> None:
     from textual.widgets import HelpPanel
 
@@ -348,7 +332,6 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_fetch_gate(app, pilot)
     await _check_score_review(app, pilot)
     await _check_analyze_key(app, pilot)
-    await _check_aliases_button(app, pilot)
     await _check_help_and_back(app, pilot)
 
 

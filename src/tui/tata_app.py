@@ -177,9 +177,9 @@ class DashboardScreen(Vertical):
         Binding("backspace", "go_up", "Up one level"),
         Binding("r", "rescan", "Rescan"),
         Binding("c", "import_item", "Import"),
-        # Course level: `a` = Aliases. No priority — at assignment level the
-        # workspace (AssignmentScreen) owns `a` = Analyze (T4b design); the
-        # assignment alias editor opens from the workspace's Aliases button.
+        # `a` = Aliases for the selected item: global level edits the
+        # course's alias, course level the assignment's. No priority — at
+        # assignment level the workspace (AssignmentScreen) owns `a` = Analyze.
         Binding("a", "edit_aliases", "Aliases"),
         Binding("g", "global_config", "Global config"),
         Binding("o", "course_config", "Course config"),
@@ -552,26 +552,48 @@ class DashboardScreen(Vertical):
     # ---------- actions: aliases ----------
 
     def action_edit_aliases(self) -> None:
-        """Open AliasEditorModal for the course alias table (course-level `a`).
+        """Open AliasEditorModal for the selected item's single alias.
 
-        Edits the global ``data/alias.toml`` ``[course]`` table — the same
-        file ``seed_course_alias`` writes. Assignment-level aliases are
-        edited from the workspace's Aliases button (which passes
-        ``<course>/alias.toml`` + ``[assignment]``).
+        Global level edits the selected course's ``[course]`` entry in
+        ``data/alias.toml``; course level the selected assignment's
+        ``[assignment]`` entry in ``<course>/alias.toml``. At the assignment
+        level ``a`` belongs to the workspace (Analyze) and does nothing here.
         """
         state = self.state
-        if state.dashboard_level != "course":
-            self.app.notify("Select a course above to edit aliases", severity="warning")
+        item = self._selected()
+        if item is None:
             return
-        course = state.current_course
-        if course is None or course.course_id is None:
-            self.app.notify("Current course has no course_id", severity="error")
-            return
-        modal = AliasEditorModal(
-            state.assignments_dir / "alias.toml",
-            "course",
-            "Course aliases",
-        )
+        if state.dashboard_level == "global":
+            assert isinstance(item, CourseInfo)  # global rows are courses
+            if item.course_id is None:
+                self.app.notify(
+                    "Selected course has no course_id", severity="error"
+                )
+                return
+            modal = AliasEditorModal(
+                state.assignments_dir / "alias.toml",
+                "course",
+                str(item.course_id),
+                "Course alias",
+            )
+        elif state.dashboard_level == "course":
+            assert isinstance(item, AssignmentInfo)  # course rows are assignments
+            key = (
+                str(item.assignment_id)
+                if item.assignment_id is not None
+                else item.dir_name
+            )
+            course = state.current_course
+            if course is None:
+                return
+            modal = AliasEditorModal(
+                state.assignments_dir / course.dir_name / "alias.toml",
+                "assignment",
+                key,
+                "Assignment alias",
+            )
+        else:
+            return  # assignment level: the workspace owns `a` (Analyze)
         self.app.push_screen(modal, callback=self._on_aliases_saved)
 
     def _on_aliases_saved(self, value: object) -> None:
@@ -1200,49 +1222,41 @@ class AssignmentSetupModal(_ImportBase):
 
 
 class AliasEditorModal(ModalScreen[bool | None]):
-    """Edit one alias.toml table: rows of key (read-only) -> name (editable
-    Input), plus one add row. Save writes every row through
-    :func:`src.shared.aliases.set_alias` (an empty name deletes the key); esc
-    cancels without writing. Dismisses True on save, None on cancel.
+    """Edit one alias.toml entry: read-only key + editable name Input
+    (initial value = the current alias name, empty if absent). Save writes
+    the entry through :func:`src.shared.aliases.set_alias` (an empty name
+    deletes the key); esc cancels without writing. Dismisses True on save,
+    None on cancel.
 
-    Course level passes the global ``data/alias.toml`` + ``[course]``;
-    assignment level ``<course>/alias.toml`` + ``[assignment]`` — the same
-    files the seed functions write.
+    Callers pass the alias path/section/key of the selected item: course
+    entries live in ``data/alias.toml`` ``[course]``, assignment entries in
+    ``<course>/alias.toml`` ``[assignment]``.
     """
 
     BINDINGS: ClassVar = [Binding("escape", "close", "Close", show=False)]
 
-    def __init__(self, alias_path: Path, section: str, title: str) -> None:
+    def __init__(self, alias_path: Path, section: str, key: str, title: str) -> None:
         super().__init__()
         self.alias_path = alias_path
         self.section = section
+        self._key = key
         self._title = title
-        self._rows: list[tuple[str, Input]] = []
 
     @override
     def compose(self) -> ComposeResult:
         with Vertical(classes="confirm-modal"):
             yield Static(f"[b]{self._title}[/b]")
-            yield Static(f"No {self.section} aliases yet.", id="alias-empty")
-            with Vertical(id="alias-rows"):
-                for key, name in sorted(
-                    load_alias_file(self.alias_path).get(self.section, {}).items()
-                ):
-                    with Horizontal(classes="alias-row"):
-                        yield Static(key, classes="alias-key")
-                        entry = Input(value=name)
-                        self._rows.append((key, entry))
-                        yield entry
-            with Horizontal(classes="alias-row"):  # add row
-                yield Input(placeholder="Add key (id)", id="alias-new-key")
-                yield Input(placeholder="Add name", id="alias-new-name")
+            with Horizontal(classes="alias-row"):
+                yield Static(self._key, classes="alias-key")
+                yield Input(
+                    value=load_alias_file(self.alias_path)
+                    .get(self.section, {})
+                    .get(self._key, ""),
+                    id="alias-name",
+                )
             with Horizontal(classes="modal-actions"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Save", id="save", variant="primary")
-
-    @override
-    def on_mount(self) -> None:
-        self.query_one("#alias-empty", Static).display = not self._rows
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -1254,20 +1268,13 @@ class AliasEditorModal(ModalScreen[bool | None]):
             self._do_save()
 
     def _do_save(self) -> None:
-        entries = [(key, name.value.strip()) for key, name in self._rows]
-        new_key = self.query_one("#alias-new-key", Input).value.strip()
-        if new_key:
-            entries.append((
-                new_key,
-                self.query_one("#alias-new-name", Input).value.strip(),
-            ))
+        name = self.query_one("#alias-name", Input).value.strip()
         try:
-            for key, name in entries:
-                set_alias(self.alias_path, self.section, key, name)
+            set_alias(self.alias_path, self.section, self._key, name)
         except ValueError as exc:
             self.app.notify(str(exc), severity="error")
             return
-        self.app.notify("Aliases saved", severity="information")
+        self.app.notify("Alias saved", severity="information")
         self.dismiss(True)
 
 

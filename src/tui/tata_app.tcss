@@ -170,9 +170,3 @@ ModalScreen {
 .alias-row Input {
     width: 1fr;
 }
-
-#alias-empty {
-    height: auto;
-    margin: 1 0 0 0;
-    color: $text-muted;
-}

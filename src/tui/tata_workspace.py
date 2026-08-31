@@ -288,7 +288,6 @@ class AssignmentScreen(JobHost):
                     )
             with Vertical(id="config-panel"):
                 yield Static("Parsing config…", id="config-body", markup=True)
-                yield Button("Aliases", id="ws-aliases")
         with Horizontal(id="ws-progress"):
             yield Static("", id="ws-progress-text", markup=True)
             yield ProgressBar(show_eta=False)
@@ -598,29 +597,6 @@ class AssignmentScreen(JobHost):
         panel = self.query_one("#config-panel", Vertical)
         panel.display = not panel.display
 
-    # ---------- aliases ----------
-
-    def _open_aliases(self) -> None:
-        """Open AliasEditorModal for this assignment's ``[assignment]`` table."""
-        from src.tui.tata_app import (  # ruff: ignore[import-outside-top-level] — lazy: tata_app imports this module
-            AliasEditorModal,
-        )
-
-        state = self.state
-        course = state.current_course
-        if course is None:
-            return
-        modal = AliasEditorModal(
-            state.assignments_dir / course.dir_name / "alias.toml",
-            "assignment",
-            "Assignment aliases",
-        )
-        self.app.push_screen(modal, callback=self._on_aliases_saved)
-
-    def _on_aliases_saved(self, value: object) -> None:
-        if value:
-            self.render_all()  # display names may have changed
-
     def action_rescan(self) -> None:
         state = self.state
         if state.current_course is not None:
@@ -638,9 +614,6 @@ class AssignmentScreen(JobHost):
         button_id = event.button.id
         if button_id == "ws-cancel":
             self.action_cancel_job()
-            return
-        if button_id == "ws-aliases":
-            self._open_aliases()
             return
         if button_id and button_id.startswith("stage-"):
             action = getattr(self, f"action_run_{button_id[6:]}", None)
