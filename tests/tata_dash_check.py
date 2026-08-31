@@ -11,8 +11,10 @@ Run: uv run tests/tata_dash_check.py
 from __future__ import annotations
 
 import asyncio
+import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from e2e_common import (  # isort: skip - seeds repo-root sys.path before src imports
@@ -29,6 +31,7 @@ from src import cli as main_mod, tata_app as tata_app_mod
 from src.cli_options import FetchCliOptions
 from src.score_review import ScoreReviewScreen
 from src.tata_app import (
+    AssignmentSetupModal,
     DashboardScreen,
     ImportAssignmentModal,
     ImportCourseModal,
@@ -37,8 +40,9 @@ from src.tata_app import (
 from src.tata_plagiarism import PlagiarismScreen
 from src.tata_settings import SettingsScreen
 from src.tata_workspace import ConfirmationModal
+from textual.containers import Vertical
 from textual.pilot import Pilot
-from textual.widgets import DataTable, Select, Static
+from textual.widgets import Button, Checkbox, DataTable, Select, Static
 
 
 def _fix(root: Path, *, env: bool = False) -> None:
@@ -118,8 +122,35 @@ async def _check_import_course_modal_with_env(
             monkeypatch(tata_app_mod, "list_courses", orig_list_courses)
 
 
+class _FakeProviders:
+    """Deterministic provider registry stand-in for the setup modal."""
+
+    def __init__(self, names: list[str]) -> None:
+        self.providers = {n: object() for n in names}
+
+
+@contextmanager
+def _fake_providers(names: list[str]) -> Iterator[None]:
+    """Patch ``src.tata_app.get_providers`` (repo provider.toml is not a
+    fixture); restores on exit."""
+    import src.tata_app as ta
+
+    orig = ta.get_providers
+    ta.get_providers = lambda: _FakeProviders(names)
+    try:
+        yield
+    finally:
+        ta.get_providers = orig
+
+
 async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
-    """Course + c: ImportAssignmentModal; confirmed import calls main._run_fetch."""
+    """Course + c: ImportAssignmentModal -> AssignmentSetupModal (defaults
+    confirmed) -> import calls main._run_fetch."""
+    data = app.state.assignments_dir
+    (data / "rubrics").mkdir()
+    (data / "rubrics" / "alpha.toml").write_text("", encoding="utf-8")
+    (data / "prompt").mkdir()
+    (data / "prompt" / "p1.md").write_text("", encoding="utf-8")
     calls: list[FetchCliOptions] = []
     orig_fetch = main_mod._run_fetch
 
@@ -128,22 +159,41 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
 
     main_mod._run_fetch = fake_fetch
     try:
-        await pilot.press("c")
-        await wait_for(pilot, lambda: isinstance(app.screen, ImportAssignmentModal))
-        modal = app.screen
-        assert isinstance(modal, ImportAssignmentModal)
-        await wait_for(pilot, lambda: modal.query_one(Select).value == 777)
-        # no mode radio set anymore — import fetches auto-collect-all
-        await pilot.pause()
-        await pilot.click("#import")
-        await wait_for(pilot, lambda: bool(calls))
-        await wait_for(pilot, lambda: app.query_one(DashboardScreen)._job is None)
-        assert len(calls) == 1
-        arg = calls[0]
-        assert arg.course == 111111
-        assert arg.assignment == 777
-        status = text(app.query_one("#dash-status", Static))
-        assert "Done in" in status, status
+        with _fake_providers(["gamma", "delta"]):
+            await pilot.press("c")
+            await wait_for(pilot, lambda: isinstance(app.screen, ImportAssignmentModal))
+            modal = app.screen
+            assert isinstance(modal, ImportAssignmentModal)
+            await wait_for(pilot, lambda: modal.query_one(Select).value == 777)
+            await pilot.click("#import")
+            # setup modal: first rubric/provider, prompts all checked by default
+            await wait_for(pilot, lambda: isinstance(app.screen, AssignmentSetupModal))
+            setup = app.screen
+            assert isinstance(setup, AssignmentSetupModal)
+            rubric = setup.query_one("#setup-rubric", Select)
+            assert rubric.value == "alpha.toml"
+            provider = setup.query_one("#setup-provider", Select)
+            assert provider.value == "delta"
+            prompts = list(setup.query_one("#setup-prompts", Vertical).query(Checkbox))
+            assert [p.label for p in prompts] == ["p1.md"]
+            assert all(p.value for p in prompts)
+            assert not setup.query_one("#import", Button).disabled
+            await pilot.click("#import")
+            await wait_for(pilot, lambda: bool(calls))
+            await wait_for(pilot, lambda: app.query_one(DashboardScreen)._job is None)
+            assert len(calls) == 1
+            arg = calls[0]
+            assert arg.course == 111111
+            assert arg.assignment == 777
+            status = text(app.query_one("#dash-status", Static))
+            assert "Done in" in status, status
+            # The setup flow really leaves <course>/777/config.toml (config +
+            # alias writes are asserted in tata_modal_check._check_import_flow);
+            # drop it so the remaining key-wiring checks run on the standard
+            # 2-assignment fixture below.
+            shutil.rmtree(app.state.assignments_dir / COURSE / "777")
+            app.query_one(DashboardScreen)._rescan_course()
+            await pilot.pause()
     finally:
         main_mod._run_fetch = orig_fetch
 
