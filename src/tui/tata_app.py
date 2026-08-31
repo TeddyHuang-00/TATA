@@ -43,7 +43,7 @@ from textual.widgets import (
 )
 from textual_serve.server import Server
 
-from src import cli as main_mod
+from src import REPO_ROOT, cli as main_mod
 from src.shared.aliases import (
     assignment_display_name,
     course_display_name,
@@ -106,9 +106,7 @@ def _env_status(root_dir: Path) -> dict:
 class AppState:
     """Shared platform state (design 00 §5)."""
 
-    root_dir: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parent.parent
-    )
+    root_dir: Path = field(default_factory=lambda: REPO_ROOT)
     courses: list[CourseInfo] = field(default_factory=list)
     current_course: CourseInfo | None = None
     assignments: list[AssignmentInfo] = field(default_factory=list)

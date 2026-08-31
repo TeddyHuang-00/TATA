@@ -16,6 +16,8 @@ import anydoc
 from markitdown import MarkItDown, StreamInfo
 from nbconvert import MarkdownExporter
 
+from src import REPO_ROOT
+
 from .assignment_config import (
     ensure_assignment_dirs,
     load_assignment_file,
@@ -635,7 +637,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
     remove_nbconvert_assets = processing.remove_nbconvert_assets
     nbconvert_template = processing.nbconvert_template
 
-    default_template_dir = assignment_config_path.parents[2] / "templates"
+    default_template_dir = REPO_ROOT / "templates"
     nbconvert_template_dir = processing.nbconvert_template_dir
     if nbconvert_template_dir is not None:
         template_dir_path = (

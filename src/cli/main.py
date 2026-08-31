@@ -6,6 +6,7 @@ from pathlib import Path
 from canvasapi import Canvas
 from pydantic_settings import CliApp, get_subcommand
 
+from src import REPO_ROOT
 from src.cli.schema_tools import generate_all_schemas
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import (
@@ -67,8 +68,8 @@ def _format_job_summary(summary: dict) -> str:
 
 
 def _repo_root() -> Path:
-    """Repo root: this module lives in ``src/``, so one level up."""
-    return Path(__file__).resolve().parent.parent
+    """Repo root: anchored at ``src/__init__.py``."""
+    return REPO_ROOT
 
 
 def _root_fetch(cfg_path: Path) -> FetchSection | None:

@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import re
 import tomllib
-from pathlib import Path
 
 import dotenv
 from instructor import Mode
 from pydantic import BaseModel, Field
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from src import REPO_ROOT
+
+PROJECT_ROOT = REPO_ROOT
 
 # Load the environment variables from the .env file if it exists
 dotenv.load_dotenv(PROJECT_ROOT / ".env")
