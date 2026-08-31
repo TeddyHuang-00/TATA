@@ -4,9 +4,9 @@ import json
 import tomllib
 from pathlib import Path
 
-from src.aliases import load_alias_file
-from src.canvas_fetch import fetch_assignment, remember_course_fetch
-from src.processing import preprocess_assignment
+from src.shared.aliases import load_alias_file
+from src.shared.canvas_fetch import fetch_assignment, remember_course_fetch
+from src.shared.processing import preprocess_assignment
 
 
 class StubAtt:

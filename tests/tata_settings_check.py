@@ -27,11 +27,11 @@ from pathlib import Path
 import tomlkit
 
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src.assignment_config import load_assignment_file
-from src.config_edit import dump_toml
-from src.tata_app import AppState
-from src.tata_scan import scan_courses
-from src.tata_settings import SettingsScreen, _PromptCheckList
+from src.shared.assignment_config import load_assignment_file
+from src.shared.config_edit import dump_toml
+from src.tui.tata_app import AppState
+from src.tui.tata_scan import scan_courses
+from src.tui.tata_settings import SettingsScreen, _PromptCheckList
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static, TabbedContent
@@ -241,10 +241,12 @@ async def _check_assignment_load_and_save(root: Path) -> None:
         assert checklist.value == ["prompt/system.md"]
         assert not checklist.disabled
         # inherited badge: keys set in the LOCAL assignment config have none;
-        # display_threshold only exists in the global layer -> badge.
-        assert "(inherited)" not in _field_label(screen, "plagiarism.copydetect_weight")
-        assert "(inherited)" not in _field_label(screen, "grading.rubric")
-        assert "(inherited)" in _field_label(screen, "plagiarism.display_threshold")
+        # display_threshold comes from the global layer with its value shown.
+        assert "inherited" not in _field_label(screen, "plagiarism.copydetect_weight")
+        assert "inherited" not in _field_label(screen, "grading.rubric")
+        assert "inherited from global: 0.75" in _field_label(
+            screen, "plagiarism.display_threshold"
+        )
 
         copydetect.value = "0.8"
         screen.query_one("#f-plagiarism-embedding_weight", Input).value = "0.2"
@@ -277,11 +279,11 @@ async def _check_assignment_load_and_save(root: Path) -> None:
         await wait_for(pilot, lambda: "Saved to" in _status_text(screen))
         saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
         assert saved["grading"]["system_prompt"] == [
-            "prompt/lab.md",
             "prompt/system.md",
-        ]
+            "prompt/lab.md",
+        ]  # row order (config order), not alphabetical
         assert _close(saved["plagiarism"]["display_threshold"], 0.78)
-        assert "(inherited)" not in _field_label(screen, "plagiarism.display_threshold")
+        assert "inherited" not in _field_label(screen, "plagiarism.display_threshold")
 
 
 async def _check_validation_reset(root: Path) -> None:
@@ -477,6 +479,146 @@ async def _check_layout(root: Path) -> None:
         assert screen.query_one("#grading-registry", Static).region.height <= 8
 
 
+async def _check_prompt_order(root: Path) -> None:
+    """F4: prompt rows are 1 line high; reorder buttons drive value order."""
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.set_context("assignment")
+        await pilot.pause()
+        checklist = screen.query_one("#f-grading-system_prompt", _PromptCheckList)
+        rows = checklist.query_one("#prompt-list", Vertical)
+        # rows follow the effective config order (system.md first)
+        assert [str(cb.label) for cb in rows.query(Checkbox)] == [
+            "system.md",
+            "lab.md",
+        ]
+        assert checklist.value == ["prompt/system.md"]
+        # every row is 1 line high, no 3-row blank boxes
+        assert [row.region.height for row in rows.children] == [1, 1], [
+            row.region.height for row in rows.children
+        ]
+        # move the second row up: lab.md above system.md
+        await pilot.click("#up-prompt-1")
+        await pilot.pause()
+        assert [str(cb.label) for cb in rows.query(Checkbox)] == [
+            "lab.md",
+            "system.md",
+        ]
+        assert checklist.value == ["prompt/system.md"]  # checked box moved with its row
+        # check lab.md too; value order = row order
+        await pilot.click("#cb-prompt-0")
+        await pilot.pause()
+        assert checklist.value == ["prompt/lab.md", "prompt/system.md"]
+        # move the first row down; value order follows
+        await pilot.click("#down-prompt-0")
+        await pilot.pause()
+        assert [str(cb.label) for cb in rows.query(Checkbox)] == [
+            "system.md",
+            "lab.md",
+        ]
+        assert checklist.value == ["prompt/system.md", "prompt/lab.md"]
+        # save persists the row order
+        screen.action_save()
+        await pilot.pause()
+        saved = tomllib.loads((root / _ASSIGNMENT_CFG).read_text(encoding="utf-8"))
+        assert saved["grading"]["system_prompt"] == [
+            "prompt/system.md",
+            "prompt/lab.md",
+        ]
+
+
+async def _check_field_reset(root: Path) -> None:
+    """F5: per-field reset deletes the key; merge view falls back."""
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.set_context("assignment")
+        await pilot.pause()
+        # reset a locally set key: the key vanishes, the global value returns
+        screen.action_tab_plagiarism()
+        await pilot.pause()
+        await pilot.click("#reset-plagiarism-copydetect_weight")
+        await pilot.pause()
+        assignment_cfg = root / _ASSIGNMENT_CFG
+        saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
+        assert "copydetect_weight" not in saved["plagiarism"], saved["plagiarism"]
+        assert _close(saved["plagiarism"]["embedding_weight"], 0.05)  # others intact
+        assert saved["plagiarism"]["extensions"] == [".py"]
+        assert saved["grading"]["rubric"] == "rubrics/a1.toml"
+        copydetect = screen.query_one("#f-plagiarism-copydetect_weight", Input)
+        assert copydetect.value == "0.9"  # inherited from the global layer
+        assert "inherited from global: 0.9" in _field_label(
+            screen, "plagiarism.copydetect_weight"
+        )
+        # resetting a key that is not local is a no-op
+        await pilot.click("#reset-plagiarism-display_threshold")
+        await pilot.pause()
+        saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
+        assert "display_threshold" not in saved.get("plagiarism", {})
+        assert "no local value" in _status_text(screen)
+        # course layer: reset drops course_id, schema default (None) shows
+        screen.set_context("course")
+        await pilot.pause()
+        screen.action_tab_canvas()
+        await pilot.pause()
+        await pilot.click("#reset-fetch-course_id")
+        await pilot.pause()
+        course_cfg = root / _COURSE_CFG
+        saved_course = tomllib.loads(course_cfg.read_text(encoding="utf-8"))
+        assert "course_id" not in saved_course["fetch"], saved_course["fetch"]
+        assert len(saved_course["fetch"]["assignments"]) == 1
+        assert screen.query_one("#f-fetch-course_id", Input).value == ""
+        # global layer: reset falls back to the schema default
+        screen.set_context("global")
+        await pilot.pause()
+        screen.action_tab_plagiarism()
+        await pilot.pause()
+        await pilot.click("#reset-plagiarism-display_threshold")
+        await pilot.pause()
+        saved_global = tomllib.loads((root / _GLOBAL_CFG).read_text(encoding="utf-8"))
+        assert "display_threshold" not in saved_global["plagiarism"], saved_global
+        assert screen.query_one("#f-plagiarism-display_threshold", Input).value == "0.8"
+
+
+async def _check_inherited_values(root: Path) -> None:
+    """F6: inherited keys show the effective value + source in the badge."""
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.set_context("assignment")
+        await pilot.pause()
+        # fields display the layered MERGE values (load_assignment_file)
+        assert (
+            screen.query_one("#f-plagiarism-copydetect_weight", Input).value == "0.95"
+        )
+        assert (
+            screen.query_one("#f-plagiarism-display_threshold", Input).value == "0.75"
+        )
+        assert screen.query_one("#f-fetch-course_id", Input).value == "111111"
+        # badge names the source layer + the effective value
+        assert "inherited from global: 0.75" in _field_label(
+            screen, "plagiarism.display_threshold"
+        )
+        assert "inherited from course: 111111" in _field_label(
+            screen, "fetch.course_id"
+        )
+        # schema defaults are labelled as such; unset strings as (not set)
+        assert "default: template.ipynb" in _field_label(
+            screen, "plagiarism.template_file"
+        )
+        assert "(not set)" in _field_label(screen, "assignment.processed_dir")
+        # local keys keep plain labels
+        assert "inherited" not in _field_label(screen, "plagiarism.copydetect_weight")
+        assert "inherited" not in _field_label(screen, "grading.system_prompt")
+
+
 async def main() -> None:
     _check_dump_roundtrip()
     with tempfile.TemporaryDirectory() as tmp:
@@ -491,6 +633,11 @@ async def main() -> None:
         await _check_rubric_not_in_list(root)
         await _check_weights_course_global(root)
         await _check_layout(root)
+    for checker in (_check_prompt_order, _check_field_reset, _check_inherited_values):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _build_fixture(root)
+            await checker(root)
     print("tata settings check OK")
 
 

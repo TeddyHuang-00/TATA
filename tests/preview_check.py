@@ -18,8 +18,8 @@ import tempfile
 from pathlib import Path
 
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src.cli_options import ScoreReviewCliOptions
-from src.score_review import (
+from src.shared.cli_options import ScoreReviewCliOptions
+from src.tui.score_review import (
     Viewer,
     convert_preview,
     preview_content,

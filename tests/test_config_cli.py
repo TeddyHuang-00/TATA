@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from pydantic_settings import get_subcommand
-from src.cli_options import (
+from src.shared.cli_options import (
     ConfigCliOptions,
     ConfigSetCliOptions,
     TataCli,

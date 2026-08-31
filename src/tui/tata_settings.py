@@ -3,12 +3,12 @@
 The screen edits ``config.toml`` at three layers — global
 (``data/config.toml``), course (``data/<course>/config.toml``)
 and assignment (``data/<course>/<name>/config.toml``) — selected by a
-context ``Select``. The read path reuses :mod:`src.assignment_config`
+context ``Select``. The read path reuses :mod:`src.shared.assignment_config`
 (layered merge via :func:`load_assignment_file`); writes merge **only the
 edited keys** into the target file and validate the result with the same
 pydantic models before persisting (design 05 §4). All UI copy is English.
 
-Hosted by :mod:`src.tata_app` (T6c) inside the Settings TabPane; this module
+Hosted by :mod:`src.tui.tata_app` (T6c) inside the Settings TabPane; this module
 deliberately does not import or modify that file (the ``AppState`` type is
 imported under TYPE_CHECKING only, breaking the circular import).
 
@@ -42,18 +42,17 @@ from textual.widgets import (
     TabPane,
 )
 
-from src.assignment_config import (
+from src.shared.assignment_config import (
     FetchSection,
     PlagiarismSection,
     load_assignment_file,
 )
-from src.canvas_fetch import list_courses, load_env
-from src.config_edit import edit_config, read_config, validate_config_edits
-from src.provider import ProviderInfo, get_providers
-from src.tata_rubric import RubricBuilderScreen
+from src.shared.canvas_fetch import list_courses, load_env
+from src.shared.config_edit import edit_config, read_config, validate_config_edits
+from src.shared.provider import ProviderInfo, get_providers
 
 if TYPE_CHECKING:
-    from src.tata_app import AppState
+    from src.tui.tata_app import AppState
 
 # (fqid, kind) for every text field; ``section.key`` is both the TOML path and
 # the widget id suffix. ``prompt`` is a str-or-list-of-str field (system_prompt);
@@ -114,23 +113,33 @@ def _read_registry() -> dict[str, ProviderInfo]:
 
 
 class _PromptCheckList(Vertical):
-    """Checkbox list for ``grading.system_prompt`` (one box per prompt file).
+    """Checkbox list for ``grading.system_prompt`` (one row per prompt file).
 
-    Exposes ``value: list[str]`` ("prompt/<file>"), ``set_value`` and the
-    standard ``disabled`` attribute so the settings plumbing treats it like
-    any other field widget. The checkboxes are rebuilt by :meth:`_refresh_files`
-    whenever the set of ``data/prompt/*.md`` files changes.
+    Each row is a Checkbox plus up/down buttons; row order IS the value
+    order (the ``system_prompt`` list order is semantic). Exposes
+    ``value: list[str]`` ("prompt/<file>"), ``set_value`` and the standard
+    ``disabled`` attribute so the settings plumbing treats it like any
+    other field widget. Rows are rebuilt by :meth:`_refresh_files` whenever
+    the set of ``data/prompt/*.md`` files changes and by :meth:`set_value`
+    when the config order differs from the current row order.
     """
 
-    def __init__(self, assignments_dir: Path, label: str) -> None:
+    def __init__(
+        self, assignments_dir: Path, label: str, reset: Button | None = None
+    ) -> None:
         super().__init__(classes="settings-field")
         self._assignments_dir = assignments_dir
         self._base_label = label
         self._files: list[str] = []
+        self._checked: dict[str, bool] = {}
+        self._reset = reset
 
     @override
     def compose(self) -> ComposeResult:
-        yield Label(self._base_label, id="label-grading-system-prompt")
+        with Horizontal(classes="field-heading"):
+            yield Label(self._base_label, id="label-grading-system-prompt")
+            if self._reset is not None:
+                yield self._reset
         yield Vertical(id="prompt-list")
 
     @override
@@ -141,42 +150,82 @@ class _PromptCheckList(Vertical):
         for widget in self.walk_children():
             widget.disabled = disabled
 
-    def _refresh_files(self) -> None:
-        """Rebuild the checkboxes (and the empty-dir hint) from disk.
+    def _rebuild_rows(self) -> None:
+        """Rebuild all rows in ``self._files`` order.
 
-        No-op when the file set is unchanged, so existing checked states
-        survive ``_load_context`` re-runs.
+        ``value`` derives from the ``_files``/``_checked`` mirror, so the
+        rows are pure display. Textual defers remove/mount, and a query in
+        the same frame would still see the old boxes, so the mirror never
+        depends on DOM state.
+        """
+        container = self.query_one("#prompt-list", Vertical)
+        container.remove_children()
+        for index, name in enumerate(self._files):
+            checkbox = Checkbox(
+                name, value=self._checked.get(name, False), id=f"cb-prompt-{index}"
+            )
+            up = Button("▲", id=f"up-prompt-{index}", classes="prompt-arrow")
+            down = Button("▼", id=f"down-prompt-{index}", classes="prompt-arrow")
+            container.mount(Horizontal(checkbox, up, down, classes="prompt-row"))
+        if not self._files:
+            container.mount(
+                Static("No prompt files found in data/prompt.", id="prompt-empty")
+            )
+        for widget in container.walk_children():
+            widget.disabled = self.disabled
+
+    def _refresh_files(self) -> None:
+        """(Re)build the rows from disk; preserve checked state and row order.
+
+        No-op when the file set is unchanged, so existing checked states and
+        the user's ordering survive ``_load_context`` re-runs.
         """
         files = sorted(p.name for p in (self._assignments_dir / "prompt").glob("*.md"))
         container = self.query_one("#prompt-list", Vertical)
         if files == self._files and container.children:
             return
+        self._checked = {name: self._checked.get(name, False) for name in files}
         self._files = files
-        container.remove_children()
-        if not files:
-            container.mount(
-                Static("No prompt files found in data/prompt.", id="prompt-empty")
-            )
-        else:
-            container.mount(*[
-                Checkbox(name, value=False, id=f"cb-prompt-{index}")
-                for index, name in enumerate(files)
-            ])
-        for widget in container.children:
-            widget.disabled = self.disabled
+        self._rebuild_rows()
+
+    def _move_row(self, index: int, delta: int) -> None:
+        """Swap row ``index`` with its up/down neighbour (button action).
+
+        The buttons move any row, checked or not; the value order is the
+        row order, so reordering before/after checking both work.
+        """
+        target = index + delta
+        if not (0 <= target < len(self._files)):
+            return
+        self._files[index], self._files[target] = (
+            self._files[target],
+            self._files[index],
+        )
+        self._rebuild_rows()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id.startswith("up-prompt-"):
+            self._move_row(int(button_id.split("-")[-1]), -1)
+        elif button_id.startswith("down-prompt-"):
+            self._move_row(int(button_id.split("-")[-1]), 1)
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Keep the ``_checked`` mirror in step with user toggles."""
+        if event.checkbox.id and str(event.checkbox.id).startswith("cb-prompt-"):
+            self._checked[str(event.checkbox.label)] = bool(event.checkbox.value)
 
     @property
     def value(self) -> list[str]:
-        """Checked prompt paths, e.g. ``["prompt/system.md"]``."""
-        container = self.query_one("#prompt-list", Vertical)
-        return [
-            f"prompt/{checkbox.label}"
-            for checkbox in container.query(Checkbox)
-            if checkbox.value
-        ]
+        """Checked prompt paths in row order, e.g. ``["prompt/system.md"]``."""
+        return [f"prompt/{name}" for name in self._files if self._checked.get(name)]
 
     def set_value(self, value: object) -> None:
-        """Check the boxes matching ``value`` (str or list of str of paths)."""
+        """Check the boxes matching ``value`` (str or list of paths).
+
+        Rows are also reordered to match a list value's order, so saving an
+        unrelated key cannot silently reorder ``system_prompt``.
+        """
         if isinstance(value, str):
             items = [value]
         elif isinstance(value, (list, tuple)):
@@ -184,22 +233,40 @@ class _PromptCheckList(Vertical):
         else:
             items = []
         selected = set(items)
+        wanted = [
+            item.removeprefix("prompt/")
+            for item in items
+            if item.startswith("prompt/")
+            and item.removeprefix("prompt/") in self._files
+        ]
+        order = wanted + [name for name in sorted(self._files) if name not in wanted]
+        self._checked = {name: f"prompt/{name}" in selected for name in self._files}
         container = self.query_one("#prompt-list", Vertical)
+        if order != self._files or not container.children:
+            self._files = order
+            self._rebuild_rows()
+            return
         for checkbox in container.query(Checkbox):
-            checkbox.value = f"prompt/{checkbox.label}" in selected
+            checkbox.value = f"prompt/{checkbox.label!s}" in selected
 
 
 class _LField(Vertical):
     """Label + Input/Select/Checkbox pair (small compose helper)."""
 
-    def __init__(self, label: str, widget: Input | Select | Checkbox) -> None:
+    def __init__(
+        self, label: str, widget: Input | Select | Checkbox, reset: Button | None = None
+    ) -> None:
         super().__init__(classes="settings-field")
         self._label = label
         self._widget = widget
+        self._reset = reset
 
     @override
     def compose(self) -> ComposeResult:
-        yield Label(self._label)
+        with Horizontal(classes="field-heading"):
+            yield Label(self._label)
+            if self._reset is not None:
+                yield self._reset
         yield self._widget
 
 
@@ -217,7 +284,6 @@ class SettingsScreen(Vertical):
         Binding("r", "reset", "Reset"),
         Binding("e", "edit_config", "Edit config"),
         Binding("t", "test_canvas", "Test Canvas"),
-        Binding("b", "rubric_builder", "Rubric builder"),
         Binding("1", "tab_grading", "Grading"),
         Binding("2", "tab_canvas", "Canvas"),
         Binding("3", "tab_plagiarism", "Plagiarism"),
@@ -275,10 +341,6 @@ class SettingsScreen(Vertical):
     width: auto;
     margin: 0 0 1 0;
 }
-#btn-rubric-builder {
-    width: auto;
-    margin: 0 0 1 0;
-}
 #settings-actions {
     height: auto;
     padding: 1 0 0 0;
@@ -301,11 +363,39 @@ class SettingsScreen(Vertical):
     color: $text-muted;
     text-style: bold;
 }
-.settings-field Input,
-.settings-field Select,
-.settings-field Checkbox {
+.settings-field > Input,
+.settings-field > Select,
+.settings-field > Checkbox {
     height: 3;
     width: 1fr;
+}
+.field-heading {
+    height: 1;
+}
+.field-heading Label {
+    width: 1fr;
+}
+.field-heading Button {
+    height: 1;
+    width: 4;
+    margin: 0 0 0 1;
+    padding: 0;
+}
+#prompt-list {
+    height: auto;
+}
+.prompt-row {
+    height: 1;
+}
+.prompt-row Checkbox {
+    height: 1;
+    width: 1fr;
+}
+.prompt-row Button {
+    height: 1;
+    width: 3;
+    margin: 0 0 0 1;
+    padding: 0;
 }
 """
 
@@ -314,6 +404,8 @@ class SettingsScreen(Vertical):
         self.state = state
         self._ctx: str = ""  # unset until on_mount sets the initial context
         self._widgets: dict[str, Input | Select | Checkbox | _PromptCheckList] = {}
+        self._reset_buttons: dict[str, Button] = {}
+        self._reset_fqids: dict[str, str] = {}
         self._loaded: dict[str, str] = {}
         self._base_labels: dict[str, str] = {}
         self._result = ""
@@ -341,74 +433,122 @@ class SettingsScreen(Vertical):
                 yield _LField(
                     "provider (from config/provider.toml, read-only registry)",
                     self._select("grading.provider"),
+                    reset=self._reset_button("grading.provider"),
                 )
                 yield _LField(
-                    "rubric (from data/rubrics)", self._select("grading.rubric")
+                    "rubric (from data/rubrics)",
+                    self._select("grading.rubric"),
+                    reset=self._reset_button("grading.rubric"),
                 )
                 yield self._prompt_checklist("grading.system_prompt")
                 yield _LField(
                     "max_parallel_tasks (1..10)",
                     self._input("grading.max_parallel_tasks"),
+                    reset=self._reset_button("grading.max_parallel_tasks"),
                 )
-                yield Button("Rubric builder…", id="btn-rubric-builder")
             with TabPane("Canvas", id="tab-canvas"), ScrollableContainer():
                 yield Static("", id="canvas-env")
                 yield Static("", id="canvas-fetch-list")
                 yield _LField(
                     "course_id (Canvas course, numeric)",
                     self._input("fetch.course_id"),
+                    reset=self._reset_button("fetch.course_id"),
                 )
                 yield Button("Test Canvas connection", id="btn-test-canvas")
             with TabPane("Plagiarism", id="tab-plagiarism"), ScrollableContainer():
                 yield _LField(
                     "copydetect_weight (0..1)",
                     self._input("plagiarism.copydetect_weight"),
+                    reset=self._reset_button("plagiarism.copydetect_weight"),
                 )
                 yield _LField(
                     "embedding_weight (0..1)",
                     self._input("plagiarism.embedding_weight"),
+                    reset=self._reset_button("plagiarism.embedding_weight"),
                 )
                 yield _LField(
                     "display_threshold (0..1)",
                     self._input("plagiarism.display_threshold"),
+                    reset=self._reset_button("plagiarism.display_threshold"),
                 )
                 yield _LField(
-                    "pairwise_alpha (>0, <=1)", self._input("plagiarism.pairwise_alpha")
+                    "pairwise_alpha (>0, <=1)",
+                    self._input("plagiarism.pairwise_alpha"),
+                    reset=self._reset_button("plagiarism.pairwise_alpha"),
                 )
                 yield _LField(
                     "individual_alpha (>0, <=1)",
                     self._input("plagiarism.individual_alpha"),
+                    reset=self._reset_button("plagiarism.individual_alpha"),
                 )
                 yield _LField(
-                    "score_floor (0..0.5)", self._input("plagiarism.score_floor")
+                    "score_floor (0..0.5)",
+                    self._input("plagiarism.score_floor"),
+                    reset=self._reset_button("plagiarism.score_floor"),
                 )
-                yield _LField("score_cap (0.5..1)", self._input("plagiarism.score_cap"))
                 yield _LField(
-                    "embedding_model", self._input("plagiarism.embedding_model")
+                    "score_cap (0.5..1)",
+                    self._input("plagiarism.score_cap"),
+                    reset=self._reset_button("plagiarism.score_cap"),
+                )
+                yield _LField(
+                    "embedding_model",
+                    self._input("plagiarism.embedding_model"),
+                    reset=self._reset_button("plagiarism.embedding_model"),
                 )
                 yield _LField(
                     "extensions (comma-separated, e.g. .py, .ipynb)",
                     self._input("plagiarism.extensions"),
+                    reset=self._reset_button("plagiarism.extensions"),
                 )
             with TabPane("Paths / Advanced", id="tab-paths"), ScrollableContainer():
-                yield _LField("raw_dir", self._input("assignment.raw_dir"))
-                yield _LField("processed_dir", self._input("assignment.processed_dir"))
-                yield _LField("graded_dir", self._input("assignment.graded_dir"))
-                yield _LField("logs_dir", self._input("assignment.logs_dir"))
+                yield _LField(
+                    "raw_dir",
+                    self._input("assignment.raw_dir"),
+                    reset=self._reset_button("assignment.raw_dir"),
+                )
+                yield _LField(
+                    "processed_dir",
+                    self._input("assignment.processed_dir"),
+                    reset=self._reset_button("assignment.processed_dir"),
+                )
+                yield _LField(
+                    "graded_dir",
+                    self._input("assignment.graded_dir"),
+                    reset=self._reset_button("assignment.graded_dir"),
+                )
+                yield _LField(
+                    "logs_dir",
+                    self._input("assignment.logs_dir"),
+                    reset=self._reset_button("assignment.logs_dir"),
+                )
                 yield _LField(
                     "reference_file (optional)",
                     self._input("assignment.reference_file"),
+                    reset=self._reset_button("assignment.reference_file"),
                 )
                 yield _LField(
                     "template_file ([plagiarism])",
                     self._input("plagiarism.template_file"),
+                    reset=self._reset_button("plagiarism.template_file"),
                 )
                 for fqid, label in _CHECKBOX_SPECS:
-                    yield _LField(label, self._checkbox(fqid))
+                    yield _LField(
+                        label,
+                        self._checkbox(fqid),
+                        reset=self._reset_button(fqid),
+                    )
         with Horizontal(id="settings-actions"):
             yield Button("Save (ctrl+s)", id="btn-save", variant="primary")
             yield Button("Reset (r)", id="btn-reset")
         yield Static("", id="settings-status")
+
+    def _reset_button(self, fqid: str) -> Button:
+        """Small per-field reset button (deletes the key at this layer)."""
+        button = Button("↺", id=f"reset-{fqid.replace('.', '-')}")
+        self._reset_buttons[fqid] = button
+        self._reset_fqids[str(button.id)] = fqid
+        return button
 
     def _input(self, fqid: str) -> Input:
         widget = Input(id=_field_widget_id(fqid))
@@ -427,7 +567,9 @@ class SettingsScreen(Vertical):
 
     def _prompt_checklist(self, fqid: str) -> _PromptCheckList:
         widget = _PromptCheckList(
-            self.state.assignments_dir, "system_prompt (multi-select)"
+            self.state.assignments_dir,
+            "system_prompt (multi-select)",
+            reset=self._reset_button(fqid),
         )
         widget.id = _field_widget_id(fqid)
         self._widgets[fqid] = widget
@@ -574,7 +716,10 @@ class SettingsScreen(Vertical):
                 widget._refresh_files()
             self._set_widget_value(widget, kind, value)
             self._loaded[fqid] = self._value_str(widget)
-            widget.disabled = not self._writable(section)
+            writable = self._writable(section)
+            widget.disabled = not writable
+            if fqid in self._reset_buttons:
+                self._reset_buttons[fqid].disabled = not writable
         self._apply_badges()
         self._render_statics()
         self._update_status()
@@ -604,22 +749,53 @@ class SettingsScreen(Vertical):
         owner = widget if isinstance(widget, _PromptCheckList) else widget.parent
         return owner.query_one(Label)
 
+    def _inherit_source(self, section: str, key: str) -> str | None:
+        """Layer that actually provides a field's value: course, global, None.
+
+        None means the value is a pydantic schema default, not an inherited
+        layer value. Only called for keys absent from the local assignment
+        config.
+        """
+        course = self.state.current_course
+        if course is not None:
+            raw = self._read_raw(course.config_path)
+            if self._raw_key(raw, section, key):
+                return "course"
+        global_raw = self._read_raw(self._global_path())
+        if self._raw_key(global_raw, section, key):
+            return "global"
+        return None
+
+    @staticmethod
+    def _raw_key(raw: object, section: str, key: str) -> bool:
+        data = raw.get(section) if isinstance(raw, dict) else None
+        return isinstance(data, dict) and data.get(key) is not None
+
     def _apply_badges(self) -> None:
-        """Append the ``(inherited)`` badge in the assignment context.
+        """Append an inheritance badge to the label in the assignment context.
 
         Assignment context shows the layered effective values; a key that is
-        only set in a higher layer (or absent) gets the badge on its label.
-        Other contexts show plain labels.
+        not set in the local config gets a badge naming the source layer and
+        the effective value (or the schema default). Other contexts show
+        plain labels.
         """
         local = self._local_keys() if self._ctx == "assignment" else None
-        for fqid in self._specs:
+        for fqid, (section, key, _kind) in self._specs.items():
             label = self._field_label(fqid)
             base = self._base_labels.get(fqid)
             if base is None:
                 base = str(label.content)
                 self._base_labels[fqid] = base
             if local is not None and fqid not in local:
-                label.update(f"{base} [dim](inherited)[/dim]")
+                display = self._value_str(self._widgets[fqid])
+                source = self._inherit_source(section, key)
+                if source is not None:
+                    suffix = f" (inherited from {source}: {display})"
+                elif display:
+                    suffix = f" (default: {display})"
+                else:
+                    suffix = " (not set)"
+                label.update(f"{base} [dim]{suffix}[/dim]")
             else:
                 label.update(base)
 
@@ -633,7 +809,7 @@ class SettingsScreen(Vertical):
                 p.name for p in (self.state.assignments_dir / "rubrics").glob("*.toml")
             )
             options = [(f"rubrics/{name}", f"rubrics/{name}") for name in names]
-            empty_label = "No rubrics found — create one in Rubric builder"
+            empty_label = "No rubrics found — create one in the Library tab"
         else:
             return
         if current and current not in {value for _, value in options}:
@@ -827,7 +1003,7 @@ class SettingsScreen(Vertical):
         return edits, errors
 
     def _validate(self, edits: dict[str, dict[str, object]]) -> list[str]:
-        """Validate edits before writing (rules live in :mod:`src.config_edit`).
+        """Validate edits before writing (rules live in :mod:`src.shared.config_edit`).
 
         Assignment context validates the final layered merged view — identical
         to what ``load_assignment_file`` will parse after the write (per-key
@@ -881,6 +1057,32 @@ class SettingsScreen(Vertical):
         """Reload the current context's values from disk (design 05 §5 'r')."""
         self._load_context()
         self._set_result("[dim]Reloaded from disk[/dim]")
+
+    def action_reset_field(self, fqid: str) -> None:
+        """Delete ``section.key`` from the current layer config (F5).
+
+        The key disappears from the target TOML (not nulled), so the merge
+        view falls back to the upper layer (assignment context) or the schema
+        default (course/global context), and the inherited badge reappears.
+        """
+        target = self._target_path()
+        if target is None:
+            self._fail("Reset field", "no target config for the current context")
+            return
+        section, key, _kind = self._specs[fqid]
+        raw = self._read_raw(target)
+        if not self._raw_key(raw, section, key):
+            self._set_result(f"[dim]Reset {section}.{key}: no local value[/dim]")
+            return
+        try:
+            edit_config(target, {}, deletes={section: [key]})
+        except OSError as exc:
+            self._fail("Reset field", str(exc))
+            return
+        self._load_context()
+        self._set_result(
+            f"[dim]Reset {section}.{key} — value removed at this layer[/dim]"
+        )
 
     def action_edit_config(self) -> None:
         """Open the current context's config file in ``$EDITOR`` (design §5 'e')."""
@@ -943,17 +1145,6 @@ class SettingsScreen(Vertical):
     def action_tab_grading(self) -> None:
         self._set_tab("tab-grading")
 
-    def action_rubric_builder(self) -> None:
-        """Open the rubric builder; refresh lists when it closes."""
-        self.app.push_screen(
-            RubricBuilderScreen(self.state),
-            callback=self._on_rubric_builder_closed,
-        )
-
-    def _on_rubric_builder_closed(self, _result: object) -> None:
-        self._load_context()
-        self._set_result("[dim]Rubric builder closed — lists reloaded[/dim]")
-
     def action_tab_canvas(self) -> None:
         self._set_tab("tab-canvas")
 
@@ -991,5 +1182,5 @@ class SettingsScreen(Vertical):
             self.action_reset()
         elif button_id == "btn-test-canvas":
             self.action_test_canvas()
-        elif button_id == "btn-rubric-builder":
-            self.action_rubric_builder()
+        elif button_id in self._reset_fqids:
+            self.action_reset_field(self._reset_fqids[button_id])

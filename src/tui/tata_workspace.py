@@ -1,10 +1,10 @@
 """S1 Assignment workspace (T4b): the six-stage workbench.
 
-Third dashboard level, hosted inside :class:`src.tata_app.DashboardScreen`
+Third dashboard level, hosted inside :class:`src.tui.tata_app.DashboardScreen`
 (the workspace is not its own Tab — design 02 v1.1). All UI copy is English.
 
 Long jobs use the JobHandle protocol (design 99 §3.1), shared with the
-Plagiarism screen via :class:`src.tata_jobs.JobHost` (worker thread, log
+Plagiarism screen via :class:`src.tui.tata_jobs.JobHost` (worker thread, log
 queue, 0.1 s drain; see that module for the contract):
 a worker thread runs the existing synchronous stage functions with
 stdout/stderr redirected into a ``queue.Queue``; a 0.1 s timer on the main
@@ -42,19 +42,19 @@ from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, RichLog, Static
 
 from src import cli as main
-from src.aliases import assignment_display_name
-from src.analysis import analyze_assignment
-from src.assignment_config import load_assignment_file
-from src.cli_options import FetchCliOptions
-from src.grading import grade_assignment
-from src.processing import preprocess_assignment
-from src.score_review import open_score_review
-from src.scoring import score_assignment
-from src.tata_jobs import JobHost
-from src.tata_scan import AssignmentInfo, count_files, count_recursive
+from src.shared.aliases import assignment_display_name
+from src.shared.analysis import analyze_assignment
+from src.shared.assignment_config import load_assignment_file
+from src.shared.cli_options import FetchCliOptions
+from src.shared.grading import grade_assignment
+from src.shared.processing import preprocess_assignment
+from src.shared.scoring import score_assignment
+from src.tui.score_review import open_score_review
+from src.tui.tata_jobs import JobHost
+from src.tui.tata_scan import AssignmentInfo, count_files, count_recursive
 
 if TYPE_CHECKING:
-    from src.tata_app import AppState
+    from src.tui.tata_app import AppState
 
 
 # ---------- shared display helpers (also imported by tata_app) ----------
@@ -233,7 +233,7 @@ class AssignmentScreen(JobHost):
     """Third dashboard level: 6 stage buttons + config panel + live log.
 
     Owns the JobHandle state (queue + cancel event + progress) via
-    :class:`src.tata_jobs.JobHost`. The worker thread is a Textual
+    :class:`src.tui.tata_jobs.JobHost`. The worker thread is a Textual
     ``run_worker(thread=True, group='stage', exclusive=True)`` so only one
     stage job runs at a time.
     """
@@ -288,6 +288,7 @@ class AssignmentScreen(JobHost):
                     )
             with Vertical(id="config-panel"):
                 yield Static("Parsing config…", id="config-body", markup=True)
+                yield Button("Aliases", id="ws-aliases")
         with Horizontal(id="ws-progress"):
             yield Static("", id="ws-progress-text", markup=True)
             yield ProgressBar(show_eta=False)
@@ -597,6 +598,29 @@ class AssignmentScreen(JobHost):
         panel = self.query_one("#config-panel", Vertical)
         panel.display = not panel.display
 
+    # ---------- aliases ----------
+
+    def _open_aliases(self) -> None:
+        """Open AliasEditorModal for this assignment's ``[assignment]`` table."""
+        from src.tui.tata_app import (  # ruff: ignore[import-outside-top-level] — lazy: tata_app imports this module
+            AliasEditorModal,
+        )
+
+        state = self.state
+        course = state.current_course
+        if course is None:
+            return
+        modal = AliasEditorModal(
+            state.assignments_dir / course.dir_name / "alias.toml",
+            "assignment",
+            "Assignment aliases",
+        )
+        self.app.push_screen(modal, callback=self._on_aliases_saved)
+
+    def _on_aliases_saved(self, value: object) -> None:
+        if value:
+            self.render_all()  # display names may have changed
+
     def action_rescan(self) -> None:
         state = self.state
         if state.current_course is not None:
@@ -615,12 +639,15 @@ class AssignmentScreen(JobHost):
         if button_id == "ws-cancel":
             self.action_cancel_job()
             return
+        if button_id == "ws-aliases":
+            self._open_aliases()
+            return
         if button_id and button_id.startswith("stage-"):
             action = getattr(self, f"action_run_{button_id[6:]}", None)
             if action is not None:
                 action()
 
-    # ---------- job protocol (shared core in src.tata_jobs.JobHost) ----------
+    # ---------- job protocol (shared core in src.tui.tata_jobs.JobHost) ----------
 
     def _config_path(self) -> Path | None:
         return self._info.config_path if self._info is not None else None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from src.grading import _build_client, _build_grading_messages
+from src.shared.grading import _build_client, _build_grading_messages
 
 
 class TestBuildGradingMessages:
@@ -57,9 +57,9 @@ class TestBuildClient:
         mock_instructor = MagicMock(return_value=mock_instance)
 
         with (
-            patch("src.grading.get_providers") as mock_get,
-            patch("src.grading.OpenAI") as mock_openai,
-            patch("src.grading.instructor.from_openai", mock_instructor),
+            patch("src.shared.grading.get_providers") as mock_get,
+            patch("src.shared.grading.OpenAI") as mock_openai,
+            patch("src.shared.grading.instructor.from_openai", mock_instructor),
         ):
             mock_get.return_value = {"test": mock_provider}
 
@@ -80,9 +80,9 @@ class TestBuildClient:
         mock_instructor = MagicMock(return_value=mock_instance)
 
         with (
-            patch("src.grading.get_providers") as mock_get,
-            patch("src.grading.OpenAI") as mock_openai,
-            patch("src.grading.instructor.from_openai", mock_instructor),
+            patch("src.shared.grading.get_providers") as mock_get,
+            patch("src.shared.grading.OpenAI") as mock_openai,
+            patch("src.shared.grading.instructor.from_openai", mock_instructor),
         ):
             mock_get.return_value = {"test": mock_provider}
 

@@ -20,10 +20,10 @@ import time
 from pathlib import Path
 
 from e2e_common import make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src import tata_workspace as tw
-from src.score_review import ScoreReviewScreen
-from src.tata_app import TataApp
-from src.tata_workspace import AssignmentScreen
+from src.tui import tata_workspace as tw
+from src.tui.score_review import ScoreReviewScreen
+from src.tui.tata_app import AliasEditorModal, TataApp
+from src.tui.tata_workspace import AssignmentScreen
 from textual.pilot import Pilot
 from textual.widgets import Button, RichLog
 
@@ -275,6 +275,50 @@ async def _check_score_review_empty(app: TataApp, pilot: Pilot) -> None:
         app.notify = orig_notify
 
 
+async def _check_analyze_key(app: TataApp, pilot: Pilot) -> None:
+    """`a` is Analyze at the workspace level: a mocked analyze job runs and
+    NO alias modal opens (the dashboard's `a`=Aliases must not capture it)."""
+    ws = app.query_one(AssignmentScreen)
+    calls: list[Path] = []
+    orig = tw.analyze_assignment
+
+    def fake_analyze(config_path: Path, **kwargs: object) -> dict:
+        calls.append(config_path)
+        print("[done] 100001")
+        return {
+            "stage": "analysis",
+            "success": 1,
+            "errors": 0,
+            "total": 1,
+            "success_rate": 100.0,
+        }
+
+    tw.analyze_assignment = fake_analyze
+    try:
+        await pilot.press("a")
+        await wait_for(pilot, lambda: len(calls) > 0)
+        await wait_for(pilot, lambda: ws._job is None)
+        assert not isinstance(app.screen, AliasEditorModal), type(app.screen)
+    finally:
+        tw.analyze_assignment = orig
+
+
+async def _check_aliases_button(app: TataApp, pilot: Pilot) -> None:
+    """The workspace Aliases button opens AliasEditorModal for this
+    assignment's [assignment] table; esc cancels (no write)."""
+    ws = app.query_one(AssignmentScreen)
+    await pilot.click("#ws-aliases")
+    await wait_for(pilot, lambda: isinstance(app.screen, AliasEditorModal))
+    modal = app.screen
+    assert isinstance(modal, AliasEditorModal), type(app.screen)
+    assert modal.alias_path.name == "alias.toml"
+    assert modal.section == "assignment"
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, AliasEditorModal))
+    assert len(app.screen_stack) == 1
+    assert ws.display
+
+
 async def _check_help_and_back(app: TataApp, pilot: Pilot) -> None:
     from textual.widgets import HelpPanel
 
@@ -283,10 +327,10 @@ async def _check_help_and_back(app: TataApp, pilot: Pilot) -> None:
     await pilot.pause()
     assert app.screen.query(HelpPanel), "native HelpPanel not mounted"
     assert not app.screen.query(".confirm-modal"), "no custom HelpModal expected"
-    # '?' is a no-op when the panel is already up (native behavior)
+    # toggle: the second '?' closes the panel
     await pilot.press("?")
     await pilot.pause()
-    assert app.screen.query(HelpPanel)
+    assert not app.screen.query(HelpPanel), "toggle must close the panel"
     ws.focus()
     await pilot.press("escape")
     await pilot.pause()
@@ -303,6 +347,8 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_editor_warning(app, pilot)
     await _check_fetch_gate(app, pilot)
     await _check_score_review(app, pilot)
+    await _check_analyze_key(app, pilot)
+    await _check_aliases_button(app, pilot)
     await _check_help_and_back(app, pilot)
 
 

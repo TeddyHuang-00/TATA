@@ -200,6 +200,45 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
     _write_doc(path, doc)
 
 
+def set_alias(alias_path: Path, section: str, key: str, name: str) -> None:
+    """Write ``section[key] = name`` in ``alias_path`` (create file/table when
+    missing); ``name == ""`` deletes the key. Field-level patch: other keys,
+    tables and comments survive. A corrupt/unreadable file or a non-table
+    section raises ValueError — never silently rewritten.
+    """
+    if section not in SECTIONS:
+        msg = f"invalid alias section: {section!r}"
+        raise ValueError(msg)
+    key = str(key)
+    if alias_path.exists():
+        try:
+            doc = tomlkit.parse(alias_path.read_text(encoding="utf-8"))
+        except (OSError, tomlkit.exceptions.ParseError) as exc:
+            msg = (
+                "cannot edit alias.toml: file is corrupt/unreadable, "
+                "refusing to overwrite it"
+            )
+            raise ValueError(msg) from exc
+    else:
+        doc = tomlkit.parse(_HEADER)
+    table = doc.get(section)
+    if table is None:
+        if not name:
+            return  # deleting an absent key: nothing to write
+        doc[section] = {key: name}
+    elif isinstance(table, MutableMapping):
+        if name:
+            table[key] = name
+        elif key in table:
+            del table[key]
+        else:
+            return
+    else:
+        msg = "cannot edit alias.toml: section is not a table, refusing to overwrite it"
+        raise ValueError(msg)
+    _write_doc(alias_path, doc)
+
+
 # -- one-time migration: dir names -> assignment ids -----------------------
 
 
@@ -405,7 +444,7 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        prog="python -m src.aliases",
+        prog="python -m src.shared.aliases",
         description="TATA alias.toml ops: one-time migrate of a course dir "
         "from display-name dirs to assignment-id dirs.",
     )

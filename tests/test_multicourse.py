@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from src.assignment_config import (
+from src.cli import _classify_config, _fetch_course, _load_config, _remember
+from src.shared.assignment_config import (
     FetchSection,
     find_global_config,
     is_course_config,
@@ -14,8 +15,7 @@ from src.assignment_config import (
     is_root_config,
     load_assignment_file,
 )
-from src.canvas_fetch import remember_course_fetch
-from src.cli import _classify_config, _fetch_course, _load_config, _remember
+from src.shared.canvas_fetch import remember_course_fetch
 
 
 def _write_three_level(
@@ -323,7 +323,7 @@ def test_retry_fetch_dedups_shared_assignment(
         "[fetch]\ncourse_id = 111111\n\n[[fetch.assignments]]\nid = 9901\n",
     )
     seen: set[tuple[int, int]] = set()
-    with mock.patch("src.cli.fetch_assignment") as mock_fetch:
+    with mock.patch("src.cli.main.fetch_assignment") as mock_fetch:
         assert _fetch_course(None, global_cfg, None, None, seen) is True
         assert _fetch_course(None, course_cfg, None, None, seen) is True
     assert mock_fetch.call_count == 1

@@ -1,6 +1,6 @@
 """Core config editing: comment-preserving field write-back + validation.
 
-Extracted from the Textual settings screen (:mod:`src.tata_settings`) so the
+Extracted from the Textual settings screen (:mod:`src.tui.tata_settings`) so the
 CLI and the TUI share the same writer and validation. No Textual imports.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import tomlkit
 from pydantic import ValidationError
 
-from src.assignment_config import (
+from src.shared.assignment_config import (
     AssignmentFileConfig,
     AssignmentSection,
     FetchSection,
@@ -63,19 +63,34 @@ def dump_toml(data: dict) -> str:
     return tomlkit.dumps(tomlkit.item(clean(data)))
 
 
-def edit_config(path: Path, edits: dict[str, dict[str, object]]) -> bool:
-    """Overlay ``edits`` (section -> key -> value) in place on the file's TOML.
+def edit_config(
+    path: Path,
+    edits: dict[str, dict[str, object]],
+    deletes: dict[str, list[str]] | None = None,
+) -> bool:
+    """Overlay ``edits`` (section -> key -> value) in place on the file's TOML
+    and delete the keys named by ``deletes`` (section -> keys, TOML patch:
+    key gone, not null).
 
     The original text is parsed, so comments, formatting and unknown keys
     survive (a whole-file rebuild would destroy user comments) — only the
-    edited keys change. Missing or unparseable files start from an empty
-    document; None values are never written. Writes with a trailing newline
-    and returns True (raises OSError on write failure).
+    edited or deleted keys change. Missing or unparseable files start from an
+    empty document; None values are never written. A section emptied by a
+    delete is dropped from the file. Writes with a trailing newline and
+    returns True (raises OSError on write failure).
     """
     try:
         doc = tomlkit.parse(path.read_text(encoding="utf-8"))
     except (OSError, tomlkit.exceptions.ParseError):
         doc = tomlkit.parse("")
+    for section, keys in (deletes or {}).items():
+        table = doc.get(section)
+        if not isinstance(table, MutableMapping):
+            continue
+        for key in keys:
+            table.pop(key, None)
+        if len(table) == 0:
+            doc.pop(section, None)
     for section, values in edits.items():
         table = doc.get(section)
         if not isinstance(table, MutableMapping):

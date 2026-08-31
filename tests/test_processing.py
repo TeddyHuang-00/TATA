@@ -5,8 +5,8 @@ from pathlib import Path
 
 import nbformat
 import pytest
-from src.grading import _read_reference_text
-from src.processing import convert_ipynb_to_markdown, preprocess_assignment
+from src.shared.grading import _read_reference_text
+from src.shared.processing import convert_ipynb_to_markdown, preprocess_assignment
 
 
 def test_txt_text_submission_converts_as_html(tmp_path: Path) -> None:

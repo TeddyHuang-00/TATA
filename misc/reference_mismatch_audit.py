@@ -39,10 +39,10 @@ from typing import Literal
 from pydantic import AliasChoices, Field, model_validator
 
 try:
-    from src.cli_options import CliOptions, parse_cli_args
+    from src.shared.cli_options import CliOptions, parse_cli_args
 except ModuleNotFoundError:
     sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from src.cli_options import CliOptions, parse_cli_args
+    from src.shared.cli_options import CliOptions, parse_cli_args
 
 TODO_RE = re.compile(r"TODO\s*(\d+)", flags=re.IGNORECASE)
 BACKTICK_RE = re.compile(r"`([^`]+)`")

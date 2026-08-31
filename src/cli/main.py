@@ -6,21 +6,22 @@ from pathlib import Path
 from canvasapi import Canvas
 from pydantic_settings import CliApp, get_subcommand
 
-from src.analysis import analyze_assignment
-from src.assignment_config import (
+from src.cli.schema_tools import generate_all_schemas
+from src.shared.analysis import analyze_assignment
+from src.shared.assignment_config import (
     FetchSection,
     find_root_config,
     load_assignment_file,
     load_root_section,
 )
-from src.canvas_fetch import (
+from src.shared.canvas_fetch import (
     fetch_assignment,
     list_assignments,
     list_courses,
     load_env,
     remember_course_fetch,
 )
-from src.cli_options import (
+from src.shared.cli_options import (
     AnalyzeCliOptions,
     ConfigCliOptions,
     ConfigSetCliOptions,
@@ -34,13 +35,12 @@ from src.cli_options import (
     TataCli,
     parse_cli_args,
 )
-from src.config_edit import edit_config, validate_config_edits
-from src.grading import grade_assignment
-from src.plagiarism import detect_plagiarism
-from src.processing import preprocess_assignment
-from src.schema_tools import generate_all_schemas
-from src.score_review import run as run_score_viewer
-from src.scoring import score_assignment
+from src.shared.config_edit import edit_config, validate_config_edits
+from src.shared.grading import grade_assignment
+from src.shared.plagiarism import detect_plagiarism
+from src.shared.processing import preprocess_assignment
+from src.shared.scoring import score_assignment
+from src.tui.score_review import run as run_score_viewer
 
 # Stage subcommands: type -> (label, pipeline function).
 _STAGES = {
@@ -327,7 +327,7 @@ def _run_fetch(args: FetchCliOptions) -> None:
         sys.exit(
             "assignment dir name is not a numeric id — pass "
             "--course/--assignment (or migrate dirs to assignment ids "
-            "with python -m src.aliases migrate <course_dir>)"
+            "with python -m src.shared.aliases migrate <course_dir>)"
         )
 
     if cfg_path is None:

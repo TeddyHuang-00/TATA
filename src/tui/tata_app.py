@@ -1,14 +1,16 @@
 """TATA Workbench — Textual TUI platform shell (T4a).
 
-Three-tab shell (Dashboard / Plagiarism / Settings) with the S1 three-level
+Four-tab shell (Dashboard / Plagiarism / Library / Settings) with the S1
+three-level
 dashboard (Global -> Course -> Assignment placeholder) on top of
-:mod:`src.tata_scan`. All UI copy is English.
+:mod:`src.tui.tata_scan`. All UI copy is English.
 
 Run: ``uv run python src/tata_app.py``
 """
 
 from __future__ import annotations
 
+import sys
 import time
 from collections.abc import Callable, MutableMapping
 from contextlib import suppress
@@ -24,6 +26,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.dom import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -31,36 +34,41 @@ from textual.widgets import (
     DataTable,
     Footer,
     Header,
+    HelpPanel,
     Input,
     Select,
     Static,
     TabbedContent,
     TabPane,
 )
+from textual_serve.server import Server
 
 from src import cli as main_mod
-from src.aliases import (
+from src.shared.aliases import (
     assignment_display_name,
     course_display_name,
+    load_alias_file,
     seed_assignment_alias,
     seed_course_alias,
+    set_alias,
 )
-from src.assignment_config import FetchSection
-from src.canvas_fetch import list_assignments, list_courses
-from src.cli_options import FetchCliOptions
-from src.config_edit import edit_config
-from src.provider import get_providers
-from src.score_review import open_score_review
-from src.tata_plagiarism import PlagiarismScreen, run_aggregate_job
-from src.tata_scan import (
+from src.shared.assignment_config import FetchSection
+from src.shared.canvas_fetch import list_assignments, list_courses
+from src.shared.cli_options import FetchCliOptions
+from src.shared.config_edit import edit_config
+from src.shared.provider import get_providers
+from src.tui.score_review import open_score_review
+from src.tui.tata_library import LibraryScreen
+from src.tui.tata_plagiarism import PlagiarismScreen, run_aggregate_job
+from src.tui.tata_scan import (
     AssignmentInfo,
     CourseInfo,
     _plagiarism_threshold_pct,
     scan_assignments,
     scan_courses,
 )
-from src.tata_settings import SettingsScreen
-from src.tata_workspace import (
+from src.tui.tata_settings import SettingsScreen
+from src.tui.tata_workspace import (
     AssignmentScreen,
     ConfirmationModal,
     fmt_last_run,
@@ -73,7 +81,7 @@ from src.tata_workspace import (
 def _env_status(root_dir: Path) -> dict:
     """Probe for ``.env`` (CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN) without exiting.
 
-    Mirrors :func:`src.canvas_fetch.load_env`: walk root_dir then its
+    Mirrors :func:`src.shared.canvas_fetch.load_env`: walk root_dir then its
     ancestors; a .env missing either key is skipped, keep walking up.
     """
     for d in [root_dir, *root_dir.parents]:
@@ -171,6 +179,10 @@ class DashboardScreen(Vertical):
         Binding("backspace", "go_up", "Up one level"),
         Binding("r", "rescan", "Rescan"),
         Binding("c", "import_item", "Import"),
+        # Course level: `a` = Aliases. No priority — at assignment level the
+        # workspace (AssignmentScreen) owns `a` = Analyze (T4b design); the
+        # assignment alias editor opens from the workspace's Aliases button.
+        Binding("a", "edit_aliases", "Aliases"),
         Binding("g", "global_config", "Global config"),
         Binding("o", "course_config", "Course config"),
         Binding("F", "fetch_all", "Fetch all"),
@@ -538,6 +550,35 @@ class DashboardScreen(Vertical):
             partial(self._fetch_one, course, aid),
             after=self._rescan_course,
         )
+
+    # ---------- actions: aliases ----------
+
+    def action_edit_aliases(self) -> None:
+        """Open AliasEditorModal for the course alias table (course-level `a`).
+
+        Edits the global ``data/alias.toml`` ``[course]`` table — the same
+        file ``seed_course_alias`` writes. Assignment-level aliases are
+        edited from the workspace's Aliases button (which passes
+        ``<course>/alias.toml`` + ``[assignment]``).
+        """
+        state = self.state
+        if state.dashboard_level != "course":
+            self.app.notify("Select a course above to edit aliases", severity="warning")
+            return
+        course = state.current_course
+        if course is None or course.course_id is None:
+            self.app.notify("Current course has no course_id", severity="error")
+            return
+        modal = AliasEditorModal(
+            state.assignments_dir / "alias.toml",
+            "course",
+            "Course aliases",
+        )
+        self.app.push_screen(modal, callback=self._on_aliases_saved)
+
+    def _on_aliases_saved(self, value: object) -> None:
+        if value:
+            self.render_level()  # display names may have changed
 
     @staticmethod
     def _fetch_one(course: CourseInfo, aid: int) -> None:
@@ -1077,8 +1118,8 @@ class AssignmentSetupModal(_ImportBase):
         errors = []
         if not self._rubrics:
             errors.append(
-                "No rubrics found in data/rubrics — build one in Settings "
-                "(Rubric builder)."
+                "No rubrics found in data/rubrics — build one in the Library "
+                "tab (Rubrics)."
             )
         if not self._prompts:
             errors.append("No prompt files found in data/prompt.")
@@ -1160,20 +1201,101 @@ class AssignmentSetupModal(_ImportBase):
         })
 
 
+class AliasEditorModal(ModalScreen[bool | None]):
+    """Edit one alias.toml table: rows of key (read-only) -> name (editable
+    Input), plus one add row. Save writes every row through
+    :func:`src.shared.aliases.set_alias` (an empty name deletes the key); esc
+    cancels without writing. Dismisses True on save, None on cancel.
+
+    Course level passes the global ``data/alias.toml`` + ``[course]``;
+    assignment level ``<course>/alias.toml`` + ``[assignment]`` — the same
+    files the seed functions write.
+    """
+
+    BINDINGS: ClassVar = [Binding("escape", "close", "Close", show=False)]
+
+    def __init__(self, alias_path: Path, section: str, title: str) -> None:
+        super().__init__()
+        self.alias_path = alias_path
+        self.section = section
+        self._title = title
+        self._rows: list[tuple[str, Input]] = []
+
+    @override
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="confirm-modal"):
+            yield Static(f"[b]{self._title}[/b]")
+            yield Static(f"No {self.section} aliases yet.", id="alias-empty")
+            with Vertical(id="alias-rows"):
+                for key, name in sorted(
+                    load_alias_file(self.alias_path).get(self.section, {}).items()
+                ):
+                    with Horizontal(classes="alias-row"):
+                        yield Static(key, classes="alias-key")
+                        entry = Input(value=name)
+                        self._rows.append((key, entry))
+                        yield entry
+            with Horizontal(classes="alias-row"):  # add row
+                yield Input(placeholder="Add key (id)", id="alias-new-key")
+                yield Input(placeholder="Add name", id="alias-new-name")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Save", id="save", variant="primary")
+
+    @override
+    def on_mount(self) -> None:
+        self.query_one("#alias-empty", Static).display = not self._rows
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+        elif event.button.id == "save":
+            self._do_save()
+
+    def _do_save(self) -> None:
+        entries = [(key, name.value.strip()) for key, name in self._rows]
+        new_key = self.query_one("#alias-new-key", Input).value.strip()
+        if new_key:
+            entries.append((
+                new_key,
+                self.query_one("#alias-new-name", Input).value.strip(),
+            ))
+        try:
+            for key, name in entries:
+                set_alias(self.alias_path, self.section, key, name)
+        except ValueError as exc:
+            self.app.notify(str(exc), severity="error")
+            return
+        self.app.notify("Aliases saved", severity="information")
+        self.dismiss(True)
+
+
 class TataApp(App[None]):
-    """TATA Workbench shell: Header + 3 work tabs + Footer."""
+    """TATA Workbench shell: Header + 4 work tabs + Footer."""
 
     TITLE = "TATA Workbench"
     CSS_PATH = "tata_app.tcss"
     BINDINGS: ClassVar = [
         Binding("q", "quit", "Quit"),
-        Binding("?", "show_help_panel", "Keys"),
+        Binding("?", "toggle_help", "Keys"),
     ]
 
     def __init__(self, root_dir: Path | None = None) -> None:
         super().__init__()
         self.state = AppState(root_dir=root_dir or AppState().root_dir)
         self.state.env_state = _env_status(self.state.root_dir)
+
+    def action_toggle_help(self) -> None:
+        """Toggle the native keys panel ('?': built-in show/hide wrapped)."""
+        try:
+            self.screen.query_one(HelpPanel)
+        except NoMatches:
+            self.action_show_help_panel()
+        else:
+            self.action_hide_help_panel()
 
     @override
     def compose(self) -> ComposeResult:
@@ -1183,6 +1305,8 @@ class TataApp(App[None]):
                 yield DashboardScreen(self.state)
             with TabPane("Plagiarism", id="tab-plagiarism"):
                 yield PlagiarismScreen(self.state)
+            with TabPane("Library", id="tab-library"):
+                yield LibraryScreen(self.state)
             with TabPane("Settings", id="tab-settings"):
                 yield SettingsScreen(self.state)
         yield Footer()
@@ -1200,7 +1324,7 @@ class TataApp(App[None]):
         self.call_after_refresh(_restore)
 
     def switch_tab(self, name: str) -> None:
-        """Activate a TabPane by id (tab-dashboard / tab-plagiarism / tab-settings)."""
+        """Activate a TabPane by id (tab-dashboard / tab-plagiarism / tab-library / tab-settings)."""
         # Blur the current pane's focused widget BEFORE activating: Textual's
         # TabbedContent._on_tab_pane_focused re-activates the old pane when a
         # Focus event from a widget inside it lands after .active is set —
@@ -1213,6 +1337,8 @@ class TataApp(App[None]):
             self.query_one(DashboardScreen)._refocus()
         elif name == "tab-plagiarism":
             self.query_one(PlagiarismScreen)._focus_active_table()
+        elif name == "tab-library":
+            self.query_one(LibraryScreen)._focus_default()
         elif name == "tab-settings":
             settings = self.query_one(SettingsScreen)
             with suppress(Exception):
@@ -1244,9 +1370,17 @@ class TataApp(App[None]):
             plag = self.query_one(PlagiarismScreen)
             with suppress(Exception):
                 plag.reload_all()  # may fire before mount
+        elif pane_id == "tab-library":
+            library = self.query_one(LibraryScreen)
+            with suppress(Exception):
+                library.reload_files()  # may fire before mount
 
 
 def run() -> None:
+    """Entry for the ``tui`` script; ``--web`` serves it over HTTP (textual-serve)."""
+    if "--web" in sys.argv[1:]:
+        Server("uv run tui").serve()
+        return
     TataApp().run()
 
 

@@ -20,10 +20,10 @@ from pathlib import Path
 
 from e2e_common import COURSE, make_course, spy_notify, text, wait_for, write_aliases  # isort: skip - seeds repo-root sys.path before src imports
 from rich.text import Text as RichText
-from src import tata_app as tata_app_mod
-from src.cli_options import FetchCliOptions
-from src.tata_app import TataApp
-from src.tata_workspace import ConfirmationModal
+from src.shared.cli_options import FetchCliOptions
+from src.tui import tata_app as tata_app_mod
+from src.tui.tata_app import TataApp
+from src.tui.tata_workspace import ConfirmationModal
 from textual.widgets import DataTable, Static
 
 AIDS = [1001, 1002, 1003]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from src.rubric import (
+from src.shared.rubric import (
     Binary,
     Criterion,
     CriterionResult,

@@ -56,7 +56,7 @@ fixable = ["ALL"]
 unfixable = []
 
 [lint.per-file-ignores]
-"__init__.py" = ["F401"]
+"__init__.py" = ["F401", "F403"]
 "tests/*" = ["S101", "ARG", "PLR2004", "PLC", "PLR6301", "PLR0913", "PLR0917"]
 
 [lint.isort]

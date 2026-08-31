@@ -18,11 +18,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from e2e_common import COURSE, make_course, wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src import tata_workspace as tw
-from src.aliases import load_alias_file
-from src.tata_app import AssignmentSetupModal, DashboardScreen, TataApp
-from src.tata_scan import CourseInfo
-from src.tata_workspace import AssignmentScreen, ConfirmationModal
+from src.shared.aliases import load_alias_file
+from src.tui import tata_workspace as tw
+from src.tui.tata_app import AssignmentSetupModal, DashboardScreen, TataApp
+from src.tui.tata_scan import CourseInfo
+from src.tui.tata_workspace import AssignmentScreen, ConfirmationModal
 from textual.containers import Vertical
 from textual.pilot import Pilot
 from textual.widgets import (
@@ -60,6 +60,10 @@ async def _check_native_help(app: TataApp, pilot: Pilot) -> None:
     await pilot.pause()
     assert app.screen.query(HelpPanel), "native HelpPanel not mounted"
     assert not app.screen.query(".confirm-modal"), "custom modal still in use"
+    # toggle: the second '?' closes the panel
+    await pilot.press("?")
+    await pilot.pause()
+    assert not app.screen.query(HelpPanel), "toggle must close the panel"
 
 
 class _FakeProviders:
@@ -73,7 +77,7 @@ class _FakeProviders:
 def _fake_providers(names: list[str]) -> Iterator[None]:
     """Patch ``src.tata_app.get_providers`` (the repo provider.toml is not a
     fixture); restores on exit."""
-    import src.tata_app as ta
+    import src.tui.tata_app as ta
 
     orig = ta.get_providers
     ta.get_providers = lambda: _FakeProviders(names)
@@ -228,6 +232,9 @@ async def main() -> None:
             await pilot.press("?")
             await pilot.pause()
             assert app.screen.query(HelpPanel)
+            await pilot.press("?")
+            await pilot.pause()
+            assert not app.screen.query(HelpPanel), "toggle must close the panel"
             await pilot.press("escape")
             await pilot.pause()
             assert app.state.dashboard_level == "course"

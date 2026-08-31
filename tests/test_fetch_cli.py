@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from pydantic_settings import get_subcommand
-from src.cli_options import (
+from src.shared.cli_options import (
     FetchCliOptions,
     GradeCliOptions,
     TataCli,
@@ -152,8 +152,8 @@ def test_fetch_entries_uses_list_ids(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import src.cli as main_mod
-    from src.assignment_config import FetchSection
+    main_mod = __import__("src.cli.main", fromlist=["_"])
+    from src.shared.assignment_config import FetchSection
 
     cfg = FetchSection.model_validate({
         "course_id": 111111,
@@ -185,7 +185,7 @@ def test_retry_finds_course_config_list(
     The retry scan is repo-root-relative (data/<course>/config.toml); with
     cli.py in src/ the old ``Path(__file__).parent`` resolved to src/ and the
     scan always reported 'no assignment configs...'."""
-    import src.cli as main_mod
+    main_mod = __import__("src.cli.main", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "222222").mkdir(parents=True)
@@ -220,7 +220,7 @@ def test_run_fetch_course_config_positional_derives_aid_raw_out(
 ) -> None:
     """A course config + positional course/assignment derive the fetch out
     dir as <course dir>/<aid>/raw (no stored out dir anymore)."""
-    import src.cli as main_mod
+    main_mod = __import__("src.cli.main", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     course.mkdir(parents=True)
@@ -252,7 +252,7 @@ def test_run_fetch_assignment_config_uses_course_fetch_state(
 ) -> None:
     """A standalone fetch -c <assignment config> uses the course config
     above it for course_id; the entry is remembered there (id only)."""
-    import src.cli as main_mod
+    main_mod = __import__("src.cli.main", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "222333").mkdir(parents=True)
@@ -289,7 +289,7 @@ def test_run_fetch_non_numeric_assignment_dir_exits(
 ) -> None:
     """An assignment config in a non-numeric dir with no --assignment exits
     instead of falling into the interactive picker (TUI raw-mode trap)."""
-    import src.cli as main_mod
+    main_mod = __import__("src.cli.main", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "alpha").mkdir(parents=True)
@@ -314,7 +314,7 @@ def test_remember_never_writes_mode_key(
 ) -> None:
     """An entry fetched under the course config records no mode key — the
     [[fetch.assignments]] entry is id-only."""
-    import src.cli as main_mod
+    main_mod = __import__("src.cli.main", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "222333").mkdir(parents=True)

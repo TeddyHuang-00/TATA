@@ -17,7 +17,7 @@ import dotenv
 import tomlkit
 from canvasapi import Canvas
 
-from src.aliases import upsert_student_aliases
+from src.shared.aliases import upsert_student_aliases
 
 
 def load_env() -> tuple[str, str]:

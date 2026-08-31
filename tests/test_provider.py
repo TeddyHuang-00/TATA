@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from instructor import Mode
 from pydantic import ValidationError
-from src.provider import ProviderInfo
+from src.shared.provider import ProviderInfo
 
 
 class TestProviderInfoTemperature:

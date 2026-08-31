@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .assignment_config import write_assignment_schema
-from .provider import ProviderList
-from .rubric import RubricDefinition
+from src.shared.assignment_config import write_assignment_schema
+from src.shared.provider import ProviderList
+from src.shared.rubric import RubricDefinition
 
 
 def generate_all_schemas(project_root: Path) -> list[Path]:

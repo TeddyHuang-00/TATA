@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from copydetect import CopyDetector
-from src.plagiarism import (
+from src.shared.plagiarism import (
     _blend_rows,
     _pair_key,
     _write_full_pair_data,
@@ -117,7 +117,7 @@ def test_code_detector_disables_autoopen(monkeypatch: pytest.MonkeyPatch) -> Non
         def generate_html_report(self) -> None:
             pass
 
-    monkeypatch.setattr("src.plagiarism.CopyDetector", FakeDetector)
+    monkeypatch.setattr("src.shared.plagiarism.CopyDetector", FakeDetector)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "raw").mkdir()
@@ -173,7 +173,7 @@ def test_aggregate_quiet_suppresses_stdout_report(
         )
         (root / "config.toml").write_text("[fetch]\n", encoding="utf-8")
         monkeypatch.setattr(
-            "src.plagiarism._run_assignment",
+            "src.shared.plagiarism._run_assignment",
             lambda cfg: {
                 "stage": "plagiarism",
                 "success": 0,

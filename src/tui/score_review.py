@@ -1,5 +1,5 @@
 # Score Review viewer — Textual TUI, web via textual-serve (--web).
-# Usage: uv run score-view <score_dir>  |  uv run main.py view <score_dir> [--web]
+# Usage: uv run cli view <score_dir> [--web]
 from __future__ import annotations
 
 import json
@@ -17,11 +17,13 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, VerticalScroll
+from textual.dom import NoMatches
 from textual.screen import Screen
 from textual.widgets import (
     Button,
     Footer,
     Header,
+    HelpPanel,
     Markdown,
     ProgressBar,
     Select,
@@ -29,9 +31,9 @@ from textual.widgets import (
 )
 from textual_serve.server import Server
 
-from src.aliases import student_display_name
-from src.cli_options import ScoreReviewCliOptions
-from src.processing import (
+from src.shared.aliases import student_display_name
+from src.shared.cli_options import ScoreReviewCliOptions
+from src.shared.processing import (
     convert_docx_to_markdown,
     convert_html_to_markdown,
     convert_ipynb_to_markdown,
@@ -261,7 +263,7 @@ class ScoreReviewScreen(Screen):
         self.students = _load_students(score_dir)
         # Display names come from the alias.toml chain; the assignment root is
         # score_dir.parent, so the chain candidates are assignment root /
-        # parent / parent.parent alias.toml files (see src.aliases).
+        # parent / parent.parent alias.toml files (see src.shared.aliases).
         assignment_root = score_dir.parent
         assignments_dir = assignment_root.parent.parent
         course_dir_name = assignment_root.parent.name
@@ -521,13 +523,13 @@ class Viewer(App):
     """CLI view: full-screen App hosting ScoreReviewScreen (thin shell).
 
     All behavior lives on ScoreReviewScreen; ``run()`` starts this App
-    exactly as before, so ``main.py view`` / ``uv run score-view`` are
+    exactly as before, so ``main.py view`` / ``uv run cli view`` are
     unchanged.
     """
 
     TITLE = "Score Review"
 
-    BINDINGS: ClassVar = [Binding("?", "show_help_panel", "Keys")]
+    BINDINGS: ClassVar = [Binding("?", "toggle_help", "Keys")]
 
     def __init__(self, args: ScoreReviewCliOptions) -> None:
         super().__init__()
@@ -538,15 +540,24 @@ class Viewer(App):
         # so the CLI shell pushes it — the same contract the platform uses.
         self.push_screen(ScoreReviewScreen(self.score_dir))
 
+    def action_toggle_help(self) -> None:
+        """Toggle the native keys panel ('?': built-in show/hide wrapped)."""
+        try:
+            self.screen.query_one(HelpPanel)
+        except NoMatches:
+            self.action_show_help_panel()
+        else:
+            self.action_hide_help_panel()
+
 
 def _serve_web(score_dir: Path) -> None:
     """Run the viewer under textual-serve (http://localhost:8000)."""
-    command = f"uv run score-view {shlex.quote(str(score_dir))}"
+    command = f"uv run cli view {shlex.quote(str(score_dir))}"
     Server(command).serve()
 
 
 def run(args: ScoreReviewCliOptions) -> None:
-    """Entry shared by `main.py view` and the score-view script."""
+    """Entry shared by `main.py view` and the `cli view` command."""
     if args.web:
         _serve_web(args.score_dir)
     else:

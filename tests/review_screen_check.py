@@ -18,8 +18,8 @@ import tempfile
 from pathlib import Path
 
 from e2e_common import write_aliases, write_graded  # isort: skip - seeds repo-root sys.path before src imports
-from src.cli_options import ScoreReviewCliOptions
-from src.score_review import ScoreReviewScreen, Viewer, find_raw_file
+from src.shared.cli_options import ScoreReviewCliOptions
+from src.tui.score_review import ScoreReviewScreen, Viewer, find_raw_file
 from textual.app import App, ComposeResult
 from textual.widgets import Select, Static
 

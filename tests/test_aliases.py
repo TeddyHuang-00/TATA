@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.aliases import (
+import pytest
+from src.shared.aliases import (
     assignment_display_name,
     course_display_name,
     course_student_display_name,
@@ -12,6 +13,7 @@ from src.aliases import (
     migrate_course_to_ids,
     seed_assignment_alias,
     seed_course_alias,
+    set_alias,
     student_display_name,
     upsert_student_aliases,
 )
@@ -129,6 +131,68 @@ def test_upsert_creates_file_with_header(tmp_path: Path) -> None:
     # adding again does not duplicate
     upsert_student_aliases(root, {"42": "Doe, Jane"})
     assert load_alias_file(root / "alias.toml")["student"] == {"42": "Doe, Jane"}
+
+
+def test_set_alias_creates_and_cache_invalidates(tmp_path: Path) -> None:
+    """New file (with header), in-place update, and the lru_cache is dropped:
+    a second load sees the new value without a restart."""
+    path = tmp_path / "alias.toml"
+    set_alias(path, "course", "111111", "First Course")
+    assert path.read_text().startswith("# TATA alias.toml")
+    loaded = load_alias_file(path)  # populate the cache
+    assert loaded["course"]["111111"] == "First Course"
+    set_alias(path, "course", "111111", "Second Course")
+    # cache was cleared by the write; no stale "First Course"
+    assert load_alias_file(path)["course"]["111111"] == "Second Course"
+
+
+def test_set_alias_preserves_other_content(tmp_path: Path) -> None:
+    path = tmp_path / "alias.toml"
+    path.write_text(
+        "# manual comment\n"
+        '[course]\n"111111" = "Old"\n'
+        '[student]\n"1" = "One"\n'
+        "unknown_key = 1\n",
+        encoding="utf-8",
+    )
+    set_alias(path, "course", "111111", "New")
+    text = path.read_text()
+    assert "# manual comment" in text
+    assert '"111111" = "New"' in text
+    assert '[student]\n"1" = "One"' in text
+    assert "unknown_key = 1" in text
+
+
+def test_set_alias_empty_name_deletes_key(tmp_path: Path) -> None:
+    path = tmp_path / "alias.toml"
+    set_alias(path, "course", "111111", "Course")
+    set_alias(path, "course", "111111", "")
+    assert "111111" not in load_alias_file(path).get("course", {})
+    # deleting an absent key is a no-op
+    set_alias(path, "course", "missing", "")
+    assert load_alias_file(path).get("course", {}) == {}
+
+
+def test_set_alias_refuses_corrupt_file(tmp_path: Path) -> None:
+    path = tmp_path / "alias.toml"
+    original = "[course\nnot toml"
+    path.write_text(original, encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt/unreadable"):
+        set_alias(path, "course", "111111", "Nope")
+    assert path.read_text(encoding="utf-8") == original  # untouched
+
+
+def test_set_alias_refuses_non_table_section(tmp_path: Path) -> None:
+    path = tmp_path / "alias.toml"
+    path.write_text("course = 5\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not a table"):
+        set_alias(path, "course", "111111", "Nope")
+    assert path.read_text(encoding="utf-8") == "course = 5\n"
+
+
+def test_set_alias_rejects_unknown_section(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid alias section"):
+        set_alias(tmp_path / "x.toml", "bogus", "k", "v")
 
 
 def test_seed_course_alias_fill_missing(tmp_path: Path) -> None:

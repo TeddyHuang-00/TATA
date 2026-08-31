@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from src.assignment_config import (
+from src.shared.assignment_config import (
     FetchSection,
     find_root_config,
     is_root_config,

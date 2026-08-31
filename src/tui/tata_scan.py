@@ -2,7 +2,7 @@
 
 Course recognition follows design 01 §2: a course dir under ``data/``
 holds a ``config.toml`` whose own subdirectories are leaf assignments (each
-with a ``config.toml``).  :func:`src.assignment_config.is_course_config`
+with a ``config.toml``).  :func:`src.shared.assignment_config.is_course_config`
 implements exactly that rule (it also rejects ``example/`` and stray leaf
 legacy dirs); we keep the literal ``example`` name filter as belt-and-braces.
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from src.assignment_config import (
+from src.shared.assignment_config import (
     FetchSection,
     is_course_config,
     load_root_section,

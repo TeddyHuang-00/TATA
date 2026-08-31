@@ -14,12 +14,13 @@ import tempfile
 from pathlib import Path
 
 from e2e_common import COURSE, make_course, text, wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src.tata_app import TataApp
-from src.tata_plagiarism import PlagiarismScreen
-from src.tata_scan import scan_assignments, scan_courses
-from src.tata_settings import SettingsScreen
-from src.tata_workspace import AssignmentScreen
-from textual.widgets import DataTable, Static
+from src.tui.tata_app import TataApp
+from src.tui.tata_library import LibraryScreen
+from src.tui.tata_plagiarism import PlagiarismScreen
+from src.tui.tata_scan import scan_assignments, scan_courses
+from src.tui.tata_settings import SettingsScreen
+from src.tui.tata_workspace import AssignmentScreen
+from textual.widgets import DataTable, Static, TabbedContent
 
 COURSE_A = COURSE
 COURSE_B = "c2-second"
@@ -123,13 +124,22 @@ async def _check_empty_state(root: Path) -> None:
 
 
 async def _check_tabs(root: Path) -> None:
-    """T4c: real Plagiarism/Settings screens mounted; tab switching refreshes."""
+    """T4c: real Plagiarism/Settings/Library screens mounted; tab switching."""
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(pilot, lambda: app.state.courses != [])
         # placeholders are gone: the real screens are mounted
         assert app.query_one(PlagiarismScreen) is not None
         assert app.query_one(SettingsScreen) is not None
+        assert app.query_one(LibraryScreen) is not None
+        tabs = app.query_one("#shell-tabs", TabbedContent)
+        panes = tabs.query_one("ContentSwitcher").children
+        assert [pane.id for pane in panes] == [
+            "tab-dashboard",
+            "tab-plagiarism",
+            "tab-library",
+            "tab-settings",
+        ]
         table = app.query_one("#dashboard-table", DataTable)
         # enter the course so settings derives 'course' and plagiarism has data
         table.focus()
@@ -142,6 +152,12 @@ async def _check_tabs(root: Path) -> None:
         plag = app.query_one(PlagiarismScreen)
         assert not plag.query_one("#plag-empty", Static).display
         assert plag.query_one("#plag-tabs").display
+
+        app.switch_tab("tab-library")
+        await pilot.pause()
+        library = app.query_one(LibraryScreen)
+        assert library.display
+        assert library.query_one("#library-tabs").display
 
         app.switch_tab("tab-settings")
         await pilot.pause()

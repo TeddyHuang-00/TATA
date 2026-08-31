@@ -369,7 +369,7 @@ def root_plagiarism_section(root_config: Path) -> PlagiarismSection:
     """``[plagiarism]`` section of a course/global config (defaults when absent).
 
     Single source of the display threshold for both the scanner (dashboard
-    flags) and the Plagiarism pane (moved here from ``src.plagiarism`` so the
+    flags) and the Plagiarism pane (moved here from ``src.shared.plagiarism`` so the
     scan layer needs no stage-module import).
     """
     return (

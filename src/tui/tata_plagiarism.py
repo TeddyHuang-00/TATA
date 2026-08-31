@@ -8,8 +8,8 @@ pane updates live on row highlight).  All UI copy is English (design 04
 v1.1).
 
 Jobs reuse the S2 JobHandle protocol (design 99 §3.1), shared with the
-workspace via :class:`src.tata_jobs.JobHost`: the worker thread runs
-:func:`src.plagiarism.detect_plagiarism` (quiet=True — the panes read
+workspace via :class:`src.tui.tata_jobs.JobHost`: the worker thread runs
+:func:`src.shared.plagiarism.detect_plagiarism` (quiet=True — the panes read
 the JSON, not the text report) with stdout redirected into a log queue; the
 main thread drains it into the RichLog.  ``[p]`` detects the current
 assignment, ``[a]`` runs the course aggregate.
@@ -44,26 +44,26 @@ from textual.widgets import (
     TabPane,
 )
 
-from src.aliases import (
+from src.shared.aliases import (
     assignment_display_name,
     course_display_name,
     course_student_display_name,
     student_display_name,
 )
-from src.plagiarism import detect_plagiarism, root_plagiarism_section
-from src.plagiarism_aggregate import aggregate_pair_rows
-from src.score_review import base_uid, find_raw_file, preview_content
-from src.tata_jobs import JobHost
-from src.tata_scan import (
+from src.shared.plagiarism import detect_plagiarism, root_plagiarism_section
+from src.shared.plagiarism_aggregate import aggregate_pair_rows
+from src.tui.score_review import base_uid, find_raw_file, preview_content
+from src.tui.tata_jobs import JobHost
+from src.tui.tata_scan import (
     DISPLAY_THRESHOLD_PCT as DEFAULT_DISPLAY_THRESHOLD_PCT,
     AssignmentInfo,
     _pair_pct,
     _plagiarism_threshold_pct,
 )
-from src.tata_workspace import is_displayed
+from src.tui.tata_workspace import is_displayed
 
 if TYPE_CHECKING:
-    from src.tata_app import AppState
+    from src.tui.tata_app import AppState
 
 PAGE_ROWS = 20
 SIDE_MAX_LINES = 300
@@ -871,7 +871,7 @@ class PlagiarismScreen(JobHost):
         elif button_id == "plag-cancel":
             self.action_cancel_job()
 
-    # ---------- job protocol (shared core in src.tata_jobs.JobHost) ----------
+    # ---------- job protocol (shared core in src.tui.tata_jobs.JobHost) ----------
 
     def _render_busy(self) -> None:
         busy = self._job is not None

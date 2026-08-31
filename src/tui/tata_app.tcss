@@ -157,3 +157,22 @@ ModalScreen {
 .confirm-modal Static {
     width: 1fr;
 }
+
+/* ---- alias editor modal ---- */
+.alias-row {
+    height: 3;
+}
+
+.alias-row Static {
+    width: 24;
+}
+
+.alias-row Input {
+    width: 1fr;
+}
+
+#alias-empty {
+    height: auto;
+    margin: 1 0 0 0;
+    color: $text-muted;
+}

@@ -32,7 +32,7 @@ Assignment 视图（S1 第三层，即原 Pipeline）右下配置面板区（02 
 
 1. `score_review.py`：新增 `class ScoreReviewScreen(Screen)`，把 `Viewer` 的 compose/绑定/action/`_render`/预览 worker 逻辑整体搬入（`self.students`、`preview_cache` 等状态不变）；`Viewer(App)` 改为 `compose → yield ScoreReviewScreen(...)` 的单屏 App。
 2. 平台侧新增绑定：`esc → pop_screen`（Review 内有效，其余屏 esc 关 Modal 语义由平台全局统一）。
-3. CLI `main.py view` 与 `uv run score-view` 继续走 `Viewer`，行为不变；`--web` 路径不受影响。
+3. CLI `main.py view` 与 `uv run cli view` 继续走 `Viewer`，行为不变；`--web` 路径不受影响。
 4. 不做：不改 `narrow` 阈值（100）、不改数字键复制、不加平台配色覆盖——`score_review.tcss` 原样保留。
 
 ## 4. 交互流
