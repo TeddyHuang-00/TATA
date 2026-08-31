@@ -97,3 +97,17 @@ and neglected honoring legacy `out` values on un-migrated list entries (out is d
 to achieve one obvious fetch configuration, per-module modes without cross-contamination, and a re-fetch that reports real counts (attach 56/55/55, text 56/53/54),
 accepting that un-migrated legacy course configs must run `python -m src.aliases migrate <course_dir>` once (otherwise entries resolve to ghost id dirs) and that the course `[fetch] mode` remains a default whose stale overwrite risk we removed by never writing it programmatically,
 because the user asked for the cleanup ("assignments list no longer accepts out; assignment_id -> id; move fetch settings to course dir") and the 0-submission bug was a direct consequence of the old mode-baking design. Verified: pytest 125, 8/8 headless checks, ruff clean (3 pre-existing errors untouched), live re-fetch non-zero; local dev only (commit 000a4ad7, remote main untouched per policy).
+
+## Fetch 全类型自动收集 + mode 移除 + 多文件学生文件夹化
+
+**Date:** 2026-08-31
+**Status:** Accepted
+**Files:** `src/canvas_fetch.py`, `src/processing.py`, `src/assignment_config.py`, `src/cli_options.py`, `src/cli.py`, `src/score_review.py`, `src/tata_scan.py`, `src/tata_app.py`, `src/tata_settings.py`, tests/（+10），README/docs/data 同步，plan `plans/2026-08-31-fetch-all-types.md`
+
+In the context of fetch having an exclusive attach|text|auto mode (canvas submissions may mix body text and attachments), per-submission collection dropping one of the two, and mode config leaking course-level defaults into every assignment (the 0-submission bug class),
+facing a requirement to auto-collect everything per submission, remove mode entirely, and merge multi-file students into one graded document,
+we decided to make fetch layout-syncing: body + all attachments per submission; mode removed from models/CLI/TUI/configs; >1 file per student -> `raw/<uid>/` folder (single files stay flat; `_0` suffix when body+html attachment would collide); each run prunes stale flat duplicates, stale members of produced folders (folder→folder rename), and unproduced folders (2→0 unsubmit, folder→flat), keeping produced dirs, dot-files, and others untouched; preprocess treats raw items as files (unchanged single path) or folders (per-file suffix detection, temp md per member, concat into one `<uid>.md` with `---` + `<!--- file: <name>, submitted: <stamp> -->` headers, body-first ordering); scan counts top-level items; score_review resolves folder members by exact then base-uid stem,
+and neglected a `fetch --mode`-free interactive override and any upload-storage dedup beyond name-based cache,
+to achieve a mode-less fetch that never drops a student's content, a deterministic per-student processed document with provenance headers, and no silent stale-submission grading,
+accepting that the prune is one-directional sync (absent students' stale folders are removed with their cache keys; a re-fetch is always a full declarative state), that folder member ordering is (body-first, then by name) rather than submission-time order, and that folder→folder resubmits with changed files keep only current names,
+because the user asked for automatic per-type collection with folder-per-student layout and header-annotated concatenation. Verified: pytest 141 (131→141), 8/8 headless checks, real fetch auto 56/55/54/56/53/54 students, folder 2979482/415019/ -> two-section processed md with cache-stamped headers; local dev only (commit 967683f8 on dev, remote main untouched).
