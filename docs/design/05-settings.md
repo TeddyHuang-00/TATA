@@ -5,6 +5,7 @@
 > 上下文来源：`state.current_course` / `state.current_assignment`；从 S1 三层的 `cfg`/`g` 进入时预置（Global 视图 `g`→Global 上下文；Course 视图 `cfg`→Course 上下文；Assignment 视图 `e`→Assignment 上下文）
 > 保存逻辑：全屏右侧显示「将写入: 文件路径」；内容经 `load_assignment_file` 校验通过才落盘（pydantic 错误逐条展示）
 > v2 (2026-09-01 update)：rubric/prompt/provider 三字段全部改为本地库枚举（Select / 多选框）；Assignment 上下文显示 `(inherited)` 继承徽章；新增 RubricBuilderScreen（§7）；布局契约与 `DEFAULT_CSS` 陷阱见 §8
+> v4 (2026-09-01 update)：context 下拉显示 `Alias (id)`；Canvas tab 改为可编辑（url/token 写 `.env`、遮蔽预览、Save/Reload，测试连接保留）；provider 注册表编辑迁至 **Library tab → ProvidersPane**（Settings 只读展示）；`.prompt-row` 高度修复（行高 `auto`，见 §8.3）
 
 ---
 
@@ -15,15 +16,12 @@
 │ Settings · Context: [Course: 271218 ▾]                                      │
 ├──┬─────────────────────────────────────────────────────────────────────────┤
 │  │ ⚙ Grading (assignment config)                                          │
-│  │ provider      [deepseek_chat_tool        ▼]   [Refresh registry]        │
-│  │ base_url      [https://api.deepseek.com    ]                            │
-│  │ api_key       [sk-••••••••••••••••       ]  (set)                       │
-│  │ model         [deepseek-chat               ]   temperature [ 0.20 ]     │
-│  │ mode          (•) chat   ( ) reasoning    │   max_parallel [ 10 ]      │
+│  │ provider      [deepseek_chat_tool        ▼]   max_parallel [ 10 ]      │
+│  │ registry      [deepseek_chat_tool · base_url · model …] (read-only)    │
+│  │               → 编辑在 Library tab → Providers pane                     │
 │  │ ────────────────────────────────────────────                            │
 │  │ rubric        [Select: data/rubrics/*.toml] (inherited)                 │
 │  │ system_prompt [☑ prompt/system.md  ☑ prompt/grade.md …]                 │
-│  │                [Rubric builder…]  (Grading tab)                         │
 │  │ ────────────────────────────────────────────                            │
 │  │ Will write: data/271218/1-10-my-ai-start/…/config.toml [grading] │
 ├──┴─────────────────────────────────────────────────────────────────────────┤
@@ -37,10 +35,10 @@
 
 | 标注 | 组件（Textual 8.x） | 用途 |
 |------|--------------------|------|
-| 上下文选择器 | `Select`（右上 `#ctx-select`） | Global / Course: <name> / Assignment: <name>；切换即重新载入对应层 config |
+| 上下文选择器 | `Select`（右上 `#ctx-select`） | （v4）选项显示 `Alias (id)`（`course_display_name`/`assignment_display_name`；无别名回退 `dir_name`）；Global / Course / Assignment；切换即重新载入对应层 config |
 | Tab 容器 | `TabbedContent` + `TabPane`×4 | 分区编辑 |
-| 字段 | `Input`（`password=True` 用于 api_key/TOKEN） | 文本/密钥 |
-| 枚举 | `Select`（provider/model/mode 项） | 有限选项（provider 注册表动态加载） |
+| 字段 | `Input`（api_key 用普通 `Input`——注册表已迁 Library；Canvas token 用 `_SecretInput`：聚焦明文、失焦遮蔽预览 head 4 + 8 星 + tail 4，≤8 字符全 8 星） | 文本/密钥 |
+| 枚举 | `Select`（provider/model/mode 项） | 有限选项（provider 注册表动态加载，**只读**） |
 | 布尔 | `Checkbox`（remove_base64_images 等 `[processing]` 开关，④ 页批量） | 处理选项 |
 | 单选 | `RadioSet`+`RadioButton`（chat/reasoning mode） | 互斥模式 |
 | 状态行 | `Static`（`#settings-status`） | 校验结果（通过/错误摘要）+ 目标文件路径 |
@@ -51,7 +49,7 @@
 
 | 上下文 | 可编辑内容 | 写入目标 |
 |--------|-----------|---------|
-| **Global** | 环境 `.env`（BASE_URL/TOKEN）；provider 注册表（`config/provider.toml`）；global config 可选的跨课程默认（[plagiarism] 权重/阈值） | `.env` / `config/provider.toml` / `data/config.toml` |
+| **Global** | 环境 `.env`（`CANVAS_BASE_URL`/`CANVAS_ACCESS_TOKEN`，Canvas tab 编辑 + Save .env）；global config 可选的跨课程默认（[plagiarism] 权重/阈值）。（v4：provider 注册表编辑迁至 **Library tab → ProvidersPane**——此处仅 `#grading-registry` 只读展示） | `.env` / `data/config.toml` |
 | **Course** | `[fetch]` course_id、`[[fetch.assignments]]` 只读摘要、`[plagiarism]` course 级覆盖 | `data/<course>/config.toml` |
 | **Assignment** | `[grading]`（provider/rubric/prompt/parallel）、`[assignment]` 目录、`[processing]`、`[plagiarism]` | `data/<course>/<name>/config.toml` |
 
@@ -63,18 +61,20 @@
 | 字段 | 控件 | 写入键 |
 |------|------|--------|
 | provider | `Select` | `grading.provider` |
-| base_url / api_key / model / mode / temperature | `Input`/`Select`/`RadioSet`/`Input` | **已确认（2026-08-29）：`config/provider.toml` 的 `[providers.<name>]` 注册表**（`src/provider.py` `get_providers()` 读取；api_key 写 `${ENV}` 占位符而非明文）。编辑语义：全局生效，提示「保存将更新所有作业的 provider 选项」；刷新注册表按钮对应重新 `get_providers()` |
 | max_parallel_tasks | `Input`(数字) | `grading.max_parallel_tasks`（1..10） |
 | rubric | `Select`（枚举 `data/rubrics/*.toml`，值 `"rubrics/<file>"`） | `grading.rubric` |
 | system_prompt | `_PromptCheckList`（检查框列表，枚举 `data/prompt/*.md`，值 `"prompt/<file>"`，多选） | `grading.system_prompt`（str 或 list） |
 
 > **Assignment 上下文继承徽章（v2）**：键未在**本地 assignment config.toml 原始文件**（`read_config(assignment.config_path)`）中显式设置时，字段标签追加 `(inherited)` 徽章。local 键集来自原始文件而非 global/course 分层合并视图——合并值照常作为字段值显示，但徽章指明「此值来自上层继承」；本地已设置则无徽章。
 
-### ② Canvas（course config + .env）
+### ② Canvas（.env + course config）
 | 字段 | 控件 | 写入 |
 |------|------|------|
-| BASE_URL | `Input` | `.env` |
-| TOKEN | `Input`(password) | `.env` |
+| `#canvas-env` | `Static` | 显示 `.env` 状态 + masked token（`mask_secret` 预览：head 4 + 8 星 + tail 4，≤8 字符全 8 星） |
+| CANVAS_BASE_URL | `Input`（`#canvas-url`） | `<root>/.env`（Save .env 键） |
+| CANVAS_ACCESS_TOKEN | `_SecretInput`（`#canvas-token`，聚焦明文、失焦遮蔽） | `<root>/.env`（Save .env 键） |
+| Save .env / Reload .env | `Button`（`#btn-save-env` / `#btn-reload-env`） | dotenv `set_key` 写这两个键（保留其它键与注释；缺失时创建；**只覆盖 CANVAS 两键**） |
+| Test Canvas connection | `Button` + `t` 键 | 后台线程 `list_courses`（保留，行为不变） |
 | course_id | `Input`(数字) | course config `[fetch]` |
 | `[[fetch.assignments]]` 列表 | 只读摘要（`Static`，含 id） | 该清单的增删挪到 S1·Course「导入作业」——本页只展示，避免双入口编辑 |
 
@@ -101,7 +101,7 @@
 ```
 进入 S5（Tab 切到 settings）
   → 无 current_course: 显示 「未选中课程——仅 Global 页可编辑；前往 Dashboard 进入课程后重进。」
-     Global 上下文可编辑 .env/provider；Course/Assignment 字段禁用
+     Global 上下文可编辑 .env（Canvas tab，Save .env）；Course/Assignment 字段禁用
   → 有 current_course 无 assignment: Course 上下文可编辑；Assignment 字段禁用
   → 载入当前值（对应层 config 分层合并结果）+ 「将写入: <path>」 说明
 编辑 → ctrl+s 保存
@@ -182,3 +182,7 @@
 > **Textual 8.2.8 对非 Screen 的 widget 忽略 `CSS` classvar —— 必须用 `DEFAULT_CSS`。**
 > `SettingsScreen` 是 `Vertical`（非 Screen），所以 c9272e81 之前其类内 `CSS = """…"""` **从未生效**（顶栏/字段/滚动布局全丢）——这就是「Context: 」空白与布局塌陷的根因。改用 `DEFAULT_CSS` 后恢复。
 > 真正的 Screen（`RubricBuilderScreen`、各 ModalScreen）用 `CSS` 则正常。**规则：目标类继承自 `Screen` → `CSS`；其他 widget → `DEFAULT_CSS`。**
+
+### 8.3 v4：prompt 列表高度修复（zutorusvmynx，2026-09-01）
+
+`settings.tcss` 中 `.prompt-row` 行高被强制为 `1`，与行内 Checkbox（`height: 3`）/▲▼ Button（`height: 3`）固有高度不匹配 → 行内容被裁剪为 0（空白行、无法交互/排序）。修复 = `.prompt-row`（及其 Checkbox/Button）改 `height: auto`，行随内容展开。多选+排序能力保留——用户提出的 fallback 两段式未启用，因为根因是 CSS 行高而非组件能力。
