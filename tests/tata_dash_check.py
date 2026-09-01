@@ -31,7 +31,6 @@ from src import cli as main_mod
 from src.shared.aliases import load_alias_file
 from src.shared.cli_options import FetchCliOptions
 from src.tui import app as tata_app_mod
-from src.tui.score_review import ScoreReviewScreen
 from src.tui.app import (
     AliasEditorModal,
     AssignmentSetupModal,
@@ -41,6 +40,7 @@ from src.tui.app import (
     TataApp,
 )
 from src.tui.plagiarism import PlagiarismScreen
+from src.tui.score_review import ScoreReviewScreen
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import ConfirmationModal
 from textual.containers import Vertical
@@ -306,14 +306,56 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     assert app.query_one(DashboardScreen)._filter is None
 
 
-async def _check_plagiarism_reload(pilot: Pilot, app: TataApp) -> None:
-    """switch_tab -> reload_all has effect (empty hidden once a course is set)."""
-    app.switch_tab("tab-plagiarism")
-    await pilot.pause()
-    plag = app.query_one(PlagiarismScreen)
-    assert not plag.query_one("#plag-empty", Static).display
+async def _check_plagiarism_embed(pilot: Pilot, app: TataApp) -> None:
+    """S4 embed: global level has no \"pairs\" column and the pane is hidden;
+    course level shows the pane (upper table + lower pane, both nonzero)."""
     app.switch_tab("tab-dashboard")
     await pilot.pause()
+    plag = app.query_one(PlagiarismScreen)
+    table = app.query_one("#dashboard-table", DataTable)
+    assert app.state.dashboard_level == "global"
+    assert not plag.display
+    # feedback 3: the shared-threshold ">80% pairs" column is gone
+    labels = [str(c.label) for c in table.columns.values()]
+    assert labels == [
+        "Course",
+        "Assignments",
+        "Raw",
+        "Proc",
+        "Grad",
+        "Avg score",
+        "Last run",
+    ], labels
+    assert not any(label.endswith("pairs") for label in labels), labels
+    # enter the course: pane visible, loaded (no no-course empty state)
+    table.focus()
+    await pilot.press("enter")
+    await pilot.pause()
+    assert app.state.dashboard_level == "course"
+    assert plag.display
+    assert not plag.query_one("#plag-empty", Static).display
+    # upper half = assignment table, lower half = plagiarism pane; both live
+    assert table.region.height > 0
+    assert plag.region.height > 0
+    assert plag.region.y >= table.region.y + table.region.height
+    assert table.region.height >= 10
+    # pane compactness: buttons row is at content height, no blank filler
+    assert plag.query_one("#plag-buttons").region.height <= 4
+    # assignment level: pane hidden again (embedded at course level only)
+    table.focus()
+    await pilot.press("enter")
+    await pilot.pause()
+    assert app.state.dashboard_level == "assignment"
+    assert not plag.display
+    await pilot.press("escape")
+    await pilot.pause()
+    assert app.state.dashboard_level == "course"
+    # back to global: pane hidden again
+    await pilot.press("escape")
+    await pilot.pause()
+    assert app.state.dashboard_level == "global"
+    assert not plag.display
+    assert table.region.height >= 25
 
 
 async def _check_aliases(pilot: Pilot, app: TataApp) -> None:
@@ -506,7 +548,7 @@ async def main() -> None:
                 await _check_fetch_all_confirm(pilot, app)
                 await _check_plagiarism_confirm(pilot, app)
                 await _check_config_keys(pilot, app)
-                await _check_plagiarism_reload(pilot, app)
+                await _check_plagiarism_embed(pilot, app)
                 await _check_filter(pilot, app)
                 await _check_aliases(pilot, app)
         finally:

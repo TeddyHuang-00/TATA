@@ -1018,6 +1018,7 @@ class ProvidersPane(Vertical):
                     )
             with Horizontal(id="pv-actions"):
                 yield Button("Save", id="pv-save", variant="primary")
+                yield Button("Rename", id="pv-rename", disabled=True)
                 yield Button("Delete", id="pv-delete", disabled=True)
                 yield Button("Test connection", id="pv-test")
 
@@ -1074,7 +1075,9 @@ class ProvidersPane(Vertical):
         self._sync_buttons()
 
     def _sync_buttons(self) -> None:
-        self.query_one("#pv-delete", Button).disabled = self._current is None
+        disabled = self._current is None
+        self.query_one("#pv-rename", Button).disabled = disabled
+        self.query_one("#pv-delete", Button).disabled = disabled
 
     def _set_status(self, text: str) -> None:
         self.query_one("#pv-status", Static).update(text)
@@ -1119,7 +1122,7 @@ class ProvidersPane(Vertical):
         if not raw:
             self._set_status("[red]Enter a name for the new provider[/red]")
             return None
-        if Path(raw).name != raw:
+        if raw == _NEW_VALUE or Path(raw).name != raw:
             self._set_status(f"[red]Invalid provider name: {escape(raw)}[/red]")
             return None
         if raw in self._names():
@@ -1218,6 +1221,79 @@ class ProvidersPane(Vertical):
         self._set_status(f"[green]Deleted provider: {escape(name)}[/green]")
         self.app.notify(f"Deleted provider: {name}", severity="warning")
 
+    def action_rename(self) -> None:
+        if self._current is None:
+            self._set_status("[warning]Select an existing provider to rename[/warning]")
+            return
+        self.app.push_screen(
+            FileNameModal("Rename provider", self._current), self._handle_rename
+        )
+
+    def _handle_rename(self, result: str | None) -> None:
+        if result is None:
+            return
+        current = self._current
+        if current is None:
+            return
+        raw = result.strip()
+        if not raw:
+            self._set_status("[red]Enter a provider name[/red]")
+            return
+        if raw == _NEW_VALUE or Path(raw).name != raw:
+            self._set_status(f"[red]Invalid provider name: {escape(raw)}[/red]")
+            return
+        if raw == current:
+            self._set_status("[red]New name is the same as the current name[/red]")
+            return
+        if raw in self._names():
+            self._set_status(
+                f"[red]A provider named {escape(raw)} already exists[/red]"
+            )
+            return
+        refs = _provider_reference_configs(self.state.assignments_dir, current)
+        message = f"Rename {current} to {raw}?"
+        if refs:
+            message += (
+                f"\n\n{len(refs)} assignment config(s) reference {current}"
+                " and will be broken. Consider updating them first."
+            )
+        self.app.push_screen(
+            ConfirmationModal("Rename provider", message, [("Rename", "rename")]),
+            lambda choice: self._finish_rename(choice, current, raw, len(refs)),
+        )
+
+    def _finish_rename(
+        self, choice: str | None, old: str, new: str, n_refs: int
+    ) -> None:
+        if choice is None:
+            return
+        doc = self._doc()
+        providers = doc.get("providers")
+        table = providers.get(old) if isinstance(providers, MutableMapping) else None
+        if not isinstance(table, MutableMapping):
+            self._set_status(f"[red]Not found: {escape(old)}[/red]")
+            return
+        # move the table: del + reassign keeps the table's inline comments and
+        # values; preceding section comments may be dropped by tomlkit
+        del providers[old]
+        providers[new] = table
+        if not self._write(doc):
+            return
+        self._current = new
+        self.query_one("#pv-name", Select).set_options(self._options())
+        self.query_one("#pv-name", Select).value = new
+        self._sync_buttons()
+        if n_refs:
+            self.app.notify(
+                f"Renamed provider: {new} · update {n_refs} config reference(s)",
+                severity="warning",
+            )
+        else:
+            self.app.notify(f"Renamed provider: {new}", severity="success")
+        self._set_status(
+            f"[green]Renamed provider: {escape(old)} to {escape(new)}[/green]"
+        )
+
     def _select_first(self) -> None:
         first = next(
             (value for _, value in self._options() if value != _NEW_VALUE), _NEW_VALUE
@@ -1259,6 +1335,8 @@ class ProvidersPane(Vertical):
         button_id = event.button.id
         if button_id == "pv-save":
             self.action_save()
+        elif button_id == "pv-rename":
+            self.action_rename()
         elif button_id == "pv-delete":
             self.action_delete()
         elif button_id == "pv-test":

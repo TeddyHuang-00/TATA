@@ -1,9 +1,8 @@
 """TATA Workbench — Textual TUI platform shell (T4a).
 
-Four-tab shell (Dashboard / Plagiarism / Library / Settings) with the S1
-three-level
-dashboard (Global -> Course -> Assignment placeholder) on top of
-:mod:`src.tui.scan`. All UI copy is English.
+Three-tab shell (Dashboard / Library / Settings); the S4 plagiarism workspace
+is embedded in the course-level dashboard (lower half of the screen). All UI
+copy is English.
 
 Run: ``uv run python src/tui/app.py``
 """
@@ -57,7 +56,6 @@ from src.shared.canvas_fetch import list_assignments, list_courses
 from src.shared.cli_options import FetchCliOptions
 from src.shared.config_edit import edit_config
 from src.shared.provider import get_providers
-from src.tui.score_review import open_score_review
 from src.tui.library import LibraryScreen
 from src.tui.plagiarism import PlagiarismScreen, run_aggregate_job
 from src.tui.scan import (
@@ -67,6 +65,7 @@ from src.tui.scan import (
     scan_assignments,
     scan_courses,
 )
+from src.tui.score_review import open_score_review
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import (
     AssignmentScreen,
@@ -214,6 +213,10 @@ class DashboardScreen(Vertical):
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
         yield AssignmentScreen(self.state)
+        # S4 embed: the plagiarism workspace lives at course level, under the
+        # assignment table; visible there only (see render_level).
+        self._plag = PlagiarismScreen(self.state)
+        yield self._plag
         progress: Static = Static(id="dash-progress", markup=True)
         progress.display = False  # fetch-all panel; shown by fetch-all only
         yield progress
@@ -240,6 +243,9 @@ class DashboardScreen(Vertical):
             if state.env_state.get("has_env")
             else "Canvas: ? (.env missing)"
         )
+        # Embed split: at course level the table becomes the upper half and
+        # the plagiarism pane takes the rest; elsewhere the table fills.
+        table.styles.height = "40%" if state.dashboard_level == "course" else "1fr"
 
         if state.dashboard_level == "global":
             topbar.update(
@@ -247,12 +253,6 @@ class DashboardScreen(Vertical):
                 f"Courses: {len(state.courses)}"
             )
             breadcrumb.update("Global")
-            # ponytail: one shared header cannot reflect per-course
-            # thresholds when they differ — show the first (sorted) course's;
-            # per-course labels would need the threshold in the row instead.
-            thr = _plagiarism_threshold_pct(
-                state.courses[0].config_path if state.courses else None
-            )
             table.add_columns(
                 "Course",
                 "Assignments",
@@ -260,7 +260,6 @@ class DashboardScreen(Vertical):
                 "Proc",
                 "Grad",
                 "Avg score",
-                f">{thr:g}% pairs",
                 "Last run",
             )
             for i, c in enumerate(state.courses):
@@ -275,7 +274,6 @@ class DashboardScreen(Vertical):
                     str(c.counts.processed),
                     str(c.counts.graded),
                     _fmt_score(c.score_mean),
-                    str(c.flagged_pairs),
                     fmt_last_run(c.last_run),
                     key=str(i),
                 )
@@ -374,6 +372,12 @@ class DashboardScreen(Vertical):
             and self._fetch_progress is not None
             and (self.state.active_job == "fetch-all" or self._fetch_done)
         )
+        # Embedded plagiarism pane: course level only. reload_all() re-reads
+        # the course's pairs/aggregate JSON — navigation entry, rescan and
+        # the p-key job's after() all funnel through this single call.
+        self._plag.display = state.dashboard_level == "course"
+        if self._plag.display:
+            self._plag.reload_all()
         self._restore_cursor(table)
         self._refocus()
 
@@ -566,9 +570,7 @@ class DashboardScreen(Vertical):
         if state.dashboard_level == "global":
             assert isinstance(item, CourseInfo)  # global rows are courses
             if item.course_id is None:
-                self.app.notify(
-                    "Selected course has no course_id", severity="error"
-                )
+                self.app.notify("Selected course has no course_id", severity="error")
                 return
             modal = AliasEditorModal(
                 state.assignments_dir / "alias.toml",
@@ -801,8 +803,8 @@ class DashboardScreen(Vertical):
             run_aggregate_job(course.config_path)
 
         def after() -> None:
+            # render_level (via _rescan_course) reloads the embedded pane
             self._rescan_course()
-            self.app.switch_tab("tab-plagiarism")
 
         self._start_job("plagiarism", job, after=after)
 
@@ -1308,8 +1310,6 @@ class TataApp(App[None]):
         with TabbedContent(id="shell-tabs"):
             with TabPane("Dashboard", id="tab-dashboard"):
                 yield DashboardScreen(self.state)
-            with TabPane("Plagiarism", id="tab-plagiarism"):
-                yield PlagiarismScreen(self.state)
             with TabPane("Library", id="tab-library"):
                 yield LibraryScreen(self.state)
             with TabPane("Settings", id="tab-settings"):
@@ -1329,7 +1329,7 @@ class TataApp(App[None]):
         self.call_after_refresh(_restore)
 
     def switch_tab(self, name: str) -> None:
-        """Activate a TabPane by id (tab-dashboard / tab-plagiarism / tab-library / tab-settings)."""
+        """Activate a TabPane by id (tab-dashboard / tab-library / tab-settings)."""
         # Blur the current pane's focused widget BEFORE activating: Textual's
         # TabbedContent._on_tab_pane_focused re-activates the old pane when a
         # Focus event from a widget inside it lands after .active is set —
@@ -1340,8 +1340,6 @@ class TataApp(App[None]):
         # when their pane is hidden (is_displayed guard).
         if name == "tab-dashboard":
             self.query_one(DashboardScreen)._refocus()
-        elif name == "tab-plagiarism":
-            self.query_one(PlagiarismScreen)._focus_active_table()
         elif name == "tab-library":
             self.query_one(LibraryScreen)._focus_default()
         elif name == "tab-settings":
@@ -1371,10 +1369,6 @@ class TataApp(App[None]):
             settings = self.query_one(SettingsScreen)
             with suppress(Exception):
                 settings.set_context(self._derive_ctx())  # may fire before mount
-        elif pane_id == "tab-plagiarism":
-            plag = self.query_one(PlagiarismScreen)
-            with suppress(Exception):
-                plag.reload_all()  # may fire before mount
         elif pane_id == "tab-library":
             library = self.query_one(LibraryScreen)
             with suppress(Exception):

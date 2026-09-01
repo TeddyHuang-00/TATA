@@ -21,8 +21,8 @@ from pathlib import Path
 
 from e2e_common import make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.tui import workspace as tw
-from src.tui.score_review import ScoreReviewScreen
 from src.tui.app import AliasEditorModal, TataApp
+from src.tui.score_review import ScoreReviewScreen
 from src.tui.workspace import AssignmentScreen
 from textual.pilot import Pilot
 from textual.widgets import Button, RichLog

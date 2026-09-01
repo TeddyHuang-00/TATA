@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from src.shared.assignment_config import (
     FetchSection,
+    ProcessingSection,
     find_root_config,
     is_root_config,
     load_assignment_file,
@@ -108,3 +109,11 @@ def test_root_fetch_assignments_list_parses_and_does_not_leak(
     cfg = load_assignment_file(tmp_path / "data" / "a" / "config.toml")
     assert cfg.fetch is not None
     assert cfg.fetch.assignments == []
+
+
+def test_processing_input_format_accepts_image_and_pdf() -> None:
+    """Config-level input_format mirrors the pipeline's format set (drift
+    regression: assignment_config used to lag processing by image/pdf)."""
+    for val in ("image", "pdf", ["ipynb", "image"]):
+        model = ProcessingSection.model_validate({"input_format": val})
+        assert model.input_format == val

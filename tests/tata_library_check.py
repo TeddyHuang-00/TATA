@@ -42,6 +42,7 @@ from src.tui.library import (
 )
 from src.tui.workspace import ConfirmationModal
 from textual.app import App, ComposeResult
+from textual.pilot import Pilot
 from textual.widgets import (
     Button,
     Input,
@@ -77,6 +78,7 @@ PROVIDER_TOML = (
     'mode = "markdown_json_mode"\n'
     "\n"
     "[providers.deepseek]\n"
+    "# main cloud provider\n"
     'base_url = "https://api.deepseek.com"\n'
     'api_key = "${DEEPSEEK_API_KEY}"\n'
     'model = "deepseek-chat"\n'
@@ -132,7 +134,7 @@ def _modal_message(app: App) -> str:
 
 
 async def _check_shell_and_rubrics(root: Path) -> None:
-    """Four shell tabs; Library tab with Rubrics + Prompts + Providers sub-panes."""
+    """Three shell tabs; Library tab with Rubrics + Prompts + Providers sub-panes."""
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: app.query_one("#shell-tabs").display)
@@ -140,7 +142,6 @@ async def _check_shell_and_rubrics(root: Path) -> None:
         panes = tabs.query_one("ContentSwitcher").children
         assert [pane.id for pane in panes] == [
             "tab-dashboard",
-            "tab-plagiarism",
             "tab-library",
             "tab-settings",
         ]
@@ -361,6 +362,144 @@ async def _check_provider_delete(root: Path, provider_cfg: Path) -> None:
         assert "ollama" not in doc["providers"]
 
 
+async def _check_provider_rename(root: Path, provider_cfg: Path) -> None:
+    """Rename: modal flow moves the table (comments + values kept); existing
+    name rejected without a confirmation."""
+    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+    app = ProviderHost(pane)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
+        select = pane.query_one("#pv-name", Select)
+        status = pane.query_one("#pv-status", Static)
+
+        # -- rename deepseek -> cohere (no refs: plain confirmation) --
+        select.value = "deepseek"
+        await pilot.pause()
+        await pilot.click("#pv-rename")
+        await wait_for(pilot, lambda: isinstance(app.screen, FileNameModal))
+        app.screen.query_one("#fnm-input", Input).value = "cohere"
+        await pilot.click("#ok")
+        await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+        message = _modal_message(app)
+        assert "Rename deepseek to cohere?" in message
+        assert "assignment config(s)" not in message
+        await pilot.click("#rename")
+        await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+        text = provider_cfg.read_text(encoding="utf-8")
+        assert text.startswith(
+            "# schema: provider.schema.json\n# @schema provider.schema.json\n"
+            "#:schema provider.schema.json\n"
+        )
+        doc = tomllib.loads(text)
+        assert "deepseek" not in doc["providers"]
+        assert doc["providers"]["cohere"] == {
+            "base_url": "https://api.deepseek.com",
+            "api_key": "${DEEPSEEK_API_KEY}",
+            "model": "deepseek-chat",
+            "mode": "tool_call",
+            "temperature": 0.3,
+        }
+        # the table's own comment moved with it (file-order change is
+        # expected: tomlkit appends the reassigned table at the end)
+        comment_idx = text.index("# main cloud provider")
+        assert text.index("[providers.cohere]") < comment_idx
+        assert select.value == "cohere"
+        assert not pane.query_one("#pv-rename", Button).disabled
+
+        # -- rename to an existing name is rejected without a confirmation --
+        await pilot.click("#pv-rename")
+        await wait_for(pilot, lambda: isinstance(app.screen, FileNameModal))
+        app.screen.query_one("#fnm-input", Input).value = "pilot"
+        await pilot.click("#ok")
+        await wait_for(pilot, lambda: not isinstance(app.screen, FileNameModal))
+        await pilot.pause()
+        assert "already exists" in str(status.content)
+        assert not isinstance(app.screen, ConfirmationModal)
+        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
+        assert "pilot" in doc["providers"]
+        assert "cohere" in doc["providers"]
+
+        # -- path separator / reserved "__new__" are rejected (no confirm) --
+        await _check_rename_rejected(pilot, app, status, "a/b", "Invalid provider name")
+        await _check_rename_rejected(
+            pilot, app, status, "__new__", "Invalid provider name"
+        )
+        # -- empty name is rejected by the modal itself (OK stays useless) --
+        await _check_rename_empty_rejected(pilot, app)
+
+
+async def _check_rename_rejected(
+    pilot: Pilot,
+    app: ProviderHost,
+    status: Static,
+    bad: str,
+    needle: str,
+) -> None:
+    await pilot.click("#pv-rename")
+    await wait_for(pilot, lambda: isinstance(app.screen, FileNameModal))
+    app.screen.query_one("#fnm-input", Input).value = bad
+    await pilot.click("#ok")
+    await wait_for(pilot, lambda: not isinstance(app.screen, FileNameModal))
+    await pilot.pause()
+    assert needle in str(status.content), (bad, str(status.content))
+    assert not isinstance(app.screen, ConfirmationModal)
+
+
+async def _check_rename_empty_rejected(pilot: Pilot, app: ProviderHost) -> None:
+    await pilot.click("#pv-rename")
+    await wait_for(pilot, lambda: isinstance(app.screen, FileNameModal))
+    app.screen.query_one("#fnm-input", Input).value = ""
+    await pilot.click("#ok")
+    await pilot.pause()
+    assert isinstance(app.screen, FileNameModal)  # not submitted
+    assert not isinstance(app.screen, ConfirmationModal)
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, FileNameModal))
+
+
+async def _check_provider_rename_ref(root: Path, provider_cfg: Path) -> None:
+    """Referenced rename: ref count in the confirmation; confirm and cancel
+    paths."""
+    ref = root / "data" / "c1" / "000002"
+    ref.mkdir()
+    (ref / "config.toml").write_text('provider_config = "cohere"\n', encoding="utf-8")
+    (root / "data" / "c1" / "000001" / "config.toml").write_text(
+        '[grading]\nprovider = "cohere"\n', encoding="utf-8"
+    )
+    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+    app = ProviderHost(pane)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
+        select = pane.query_one("#pv-name", Select)
+
+        select.value = "cohere"
+        await pilot.pause()
+        await pilot.click("#pv-rename")
+        await wait_for(pilot, lambda: isinstance(app.screen, FileNameModal))
+        app.screen.query_one("#fnm-input", Input).value = "sagemaker"
+        await pilot.click("#ok")
+        await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+        assert "1 assignment config(s) reference cohere" in _modal_message(app)
+        await pilot.click("#rename")
+        await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
+        assert "cohere" not in doc["providers"]
+        assert doc["providers"]["sagemaker"]["model"] == "deepseek-chat"
+        assert select.value == "sagemaker"
+
+        # -- cancel keeps things as they are --
+        await pilot.click("#pv-rename")
+        await wait_for(pilot, lambda: isinstance(app.screen, FileNameModal))
+        app.screen.query_one("#fnm-input", Input).value = "nope"
+        await pilot.click("#ok")
+        await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+        await pilot.click("#cancel")
+        await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
+        assert "nope" not in doc["providers"]
+        assert "sagemaker" in doc["providers"]
+
+
 async def _check_provider_test(root: Path, provider_cfg: Path) -> None:
     """Test connection: patched OpenAI captures resolved args; success and
     failure paths."""
@@ -448,6 +587,8 @@ async def main() -> None:
         await _check_provider_add(root, provider_cfg)
         await _check_provider_edit(root, provider_cfg)
         await _check_provider_delete(root, provider_cfg)
+        await _check_provider_rename(root, provider_cfg)
+        await _check_provider_rename_ref(root, provider_cfg)
         await _check_provider_test(root, provider_cfg)
     print("tata library check OK")
 

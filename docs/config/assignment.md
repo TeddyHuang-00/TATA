@@ -91,7 +91,8 @@ reference_file = "reference.md"
 # the assignment id comes from the numeric dir name.
 
 [processing]
-# Optional: one value or a list from: ipynb, html, markdown
+# Optional: one value or a list from: ipynb, html, markdown, docx, pdf, image
+# ("image" = scanned/photo docs, OCR'd via Firecrawl and rasterized to PDF)
 # input_format = ["ipynb", "html", "markdown"]
 remove_base64_images = true
 clean_filenames = true

@@ -334,7 +334,7 @@ def score_assignment(assignment_config_path: Path) -> dict | None:  # ruff: igno
     error_count = 0
 
     for graded_file in graded_files:
-        try:
+        try:  # ruff: ignore[too-many-statements-in-try-clause]
             # Load grading response
             grading_data = json.loads(graded_file.read_text(encoding="utf-8"))
 

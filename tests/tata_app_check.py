@@ -136,7 +136,6 @@ async def _check_tabs(root: Path) -> None:
         panes = tabs.query_one("ContentSwitcher").children
         assert [pane.id for pane in panes] == [
             "tab-dashboard",
-            "tab-plagiarism",
             "tab-library",
             "tab-settings",
         ]
@@ -147,9 +146,9 @@ async def _check_tabs(root: Path) -> None:
         await pilot.pause()
         assert app.state.dashboard_level == "course"
 
-        app.switch_tab("tab-plagiarism")
-        await pilot.pause()
+        # S4: the plagiarism pane is embedded in the course dashboard
         plag = app.query_one(PlagiarismScreen)
+        assert plag.display
         assert not plag.query_one("#plag-empty", Static).display
         assert plag.query_one("#plag-tabs").display
 

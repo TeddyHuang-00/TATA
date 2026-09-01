@@ -515,6 +515,43 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
         app.notify = orig_notify
 
 
+async def _check_detect_from_assignments_pane(app: TataApp, pilot: Pilot) -> None:
+    """M1: at course level state.current_assignment is None; the Assignments
+    pane cursor drives single-assignment detect (was dead before the fix)."""
+    screen = await _enter(app, pilot)
+    _set_state(app)
+    app.state.current_assignment = None
+    notices, orig_notify = spy_notify(app)
+    orig_detect = plag_mod.detect_plagiarism
+    plag_mod.detect_plagiarism = _fake_detect
+    _detect_calls.clear()
+    try:
+        await _go_tab(screen, pilot, "pane-assignments")
+        table = screen.query_one("#assign-table", DataTable)
+        assert table.row_count == 2, table.row_count
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.pause()
+        await pilot.press("p")
+        await wait_for(pilot, lambda: screen._job is not None)
+        job = screen._job
+        assert job is not None
+        assert job["stage"] == "detect", job
+        assert str(job["config_path"].parent).endswith(A2)
+        await wait_for(pilot, lambda: screen._job is None)
+        # no cursor (other pane) + no current_assignment -> notify, no crash
+        await _go_tab(screen, pilot, "pane-aggregate")
+        screen.focus()
+        await pilot.press("p")
+        await wait_for(
+            pilot,
+            lambda: any("No assignment selected" in msg for msg, _s in notices),
+        )
+    finally:
+        plag_mod.detect_plagiarism = orig_detect
+        app.notify = orig_notify
+
+
 def _check_late_alias_resolution(app: TataApp) -> None:
     """_LATE_N / _N file stems resolve to the base-uid alias for pair names."""
     state = app.state
@@ -557,6 +594,7 @@ async def check_screen(app: TataApp, pilot: Pilot) -> None:
     await _check_error_states(screen, pilot, app)
     _check_late_alias_resolution(app)
     await _check_jobs(screen, pilot, app)
+    await _check_detect_from_assignments_pane(app, pilot)
 
 
 async def main() -> None:

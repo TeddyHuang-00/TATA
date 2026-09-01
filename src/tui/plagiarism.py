@@ -52,7 +52,6 @@ from src.shared.aliases import (
 )
 from src.shared.plagiarism import detect_plagiarism, root_plagiarism_section
 from src.shared.plagiarism_aggregate import aggregate_pair_rows
-from src.tui.score_review import base_uid, find_raw_file, preview_content
 from src.tui.jobs import JobHost
 from src.tui.scan import (
     DISPLAY_THRESHOLD_PCT as DEFAULT_DISPLAY_THRESHOLD_PCT,
@@ -60,6 +59,7 @@ from src.tui.scan import (
     _pair_pct,
     _plagiarism_threshold_pct,
 )
+from src.tui.score_review import base_uid, find_raw_file, preview_content
 from src.tui.workspace import is_displayed
 
 if TYPE_CHECKING:
@@ -294,7 +294,8 @@ def _cmp_pane() -> ComposeResult:
 
 
 class PlagiarismScreen(JobHost):
-    """S4 plagiarism tab: course-scoped tabs with p/a job buttons."""
+    """S4 plagiarism workspace: course-scoped tabs with p/a job buttons.
+    Embedded in the course dashboard (lower half); also testable standalone."""
 
     log_widget_id = "#plag-log"
     cancel_button_id = "#plag-cancel"
@@ -306,7 +307,7 @@ class PlagiarismScreen(JobHost):
     can_focus = True  # keeps screen bindings alive while a job runs
 
     BINDINGS: ClassVar = [
-        Binding("tab", "next_pane", "Switch pane", priority=True),
+        Binding("t", "next_pane", "Switch pane", priority=True),
         Binding("up", "cursor_up", "Cursor up"),
         Binding("down", "cursor_down", "Cursor down"),
         Binding("k", "cursor_up", "Cursor up"),
@@ -324,6 +325,7 @@ class PlagiarismScreen(JobHost):
         self._course_pairs: list[tuple[AssignmentInfo, dict]] = []
         self._course_errors: list[str] = []
         self._visible_rows: list[tuple[AssignmentInfo, dict]] = []
+        self._assign_rows: list[AssignmentInfo] = []
         self._agg: dict | None = None
         self._agg_error: str | None = None
         self._threshold_pct = DEFAULT_DISPLAY_THRESHOLD_PCT
@@ -371,7 +373,7 @@ class PlagiarismScreen(JobHost):
     def on_mount(self) -> None:
         self.styles.height = "1fr"
         self.query_one("#plag-tabs", TabbedContent).styles.height = "1fr"
-        self.query_one("#plag-log", RichLog).styles.height = 8
+        self.query_one("#plag-log", RichLog).styles.height = 5
         self.query_one("#plag-progress", Horizontal).display = False
         for table_id in (
             "pairs-table",
@@ -503,6 +505,7 @@ class PlagiarismScreen(JobHost):
             flagged = sum(1 for p in pairs if _pair_pct(p) >= self._threshold_pct)
             rows.append((a, len(pairs), flagged, max_sim))
         rows.sort(key=lambda r: (-r[3], r[0].dir_name))
+        self._assign_rows = [row[0] for row in rows]  # row index -> AssignmentInfo
         if not rows:
             self._show_pane_empty(empty, table, "No assignments in this course.")
             return
@@ -823,12 +826,13 @@ class PlagiarismScreen(JobHost):
         self.app.notify("Reloaded", severity="information")
 
     def action_go_dashboard(self) -> None:
-        """esc: back to the Dashboard tab (no-op when not inside the shell)."""
-        for tabbed in self.app.query(TabbedContent):
-            if tabbed.id == "plag-tabs":
-                continue
-            tabbed.active = 0
-            return
+        """esc: leave the pane — back to the dashboard table."""
+        self.app.call_after_refresh(self._focus_dashboard_table)
+
+    def _focus_dashboard_table(self) -> None:
+        table = self.app.query("#dashboard-table").first()
+        if table is not None:
+            table.focus()
 
     def action_cancel_job(self) -> None:
         job = self._job
@@ -844,7 +848,10 @@ class PlagiarismScreen(JobHost):
     def action_run_detect(self) -> None:
         if self._protect():
             return
-        info = self.state.current_assignment
+        # Assignments-pane cursor wins (course-level embed: a selected row is
+        # the only assignment context); fall back to state.current_assignment
+        # for the standalone/legacy flow.
+        info = self._selected_assignment() or self.state.current_assignment
         if info is None:
             self.app.notify(
                 "No assignment selected — enter a course and assignment first",
@@ -852,6 +859,17 @@ class PlagiarismScreen(JobHost):
             )
             return
         self._start_job("detect", _run_detect_job, info.config_path)
+
+    def _selected_assignment(self) -> AssignmentInfo | None:
+        """Assignment under the Assignments pane cursor, if that pane is active."""
+        tabs = self.query_one("#plag-tabs", TabbedContent)
+        if str(tabs.active) != "pane-assignments":
+            return None
+        table = self.query_one("#assign-table", DataTable)
+        cursor = table.cursor_row
+        if cursor is None or not (0 <= cursor < len(self._assign_rows)):
+            return None
+        return self._assign_rows[cursor]
 
     def action_run_aggregate(self) -> None:
         if self._protect():

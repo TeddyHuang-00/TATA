@@ -492,8 +492,8 @@ async def _check_layout(root: Path) -> None:
             >= 3
         )
 
-        # (e) the provider registry block is capped
-        assert screen.query_one("#grading-registry", Static).region.height <= 8
+        # (e) the provider registry display block was removed
+        assert not screen.query("#grading-registry")
 
 
 async def _check_prompt_order(root: Path) -> None:
@@ -864,9 +864,9 @@ async def _check_env_buttons_overflow(root: Path) -> None:
             "system.md",
             "lab.md",
         ]
-        assert rows.region.height == sum(
-            row.region.height for row in rows.children
-        ), rows.region
+        assert rows.region.height == sum(row.region.height for row in rows.children), (
+            rows.region
+        )
         assert all(row.region.height >= 3 for row in rows.children), [
             row.region.height for row in rows.children
         ]

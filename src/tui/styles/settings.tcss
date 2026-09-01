@@ -34,12 +34,6 @@
 #settings-tabs TabPane > ScrollableContainer {
     height: 1fr;
 }
-#grading-registry {
-    height: 8;
-    overflow-y: auto;
-    padding: 0 0 1 0;
-    color: $text-muted;
-}
 #canvas-env,
 #canvas-fetch-list {
     height: auto;

@@ -226,7 +226,7 @@ def _run_single_grading_task(  # ruff: ignore[too-many-arguments]
     Returns:
         (submission_name, result_json, error_message)
     """
-    try:
+    try:  # ruff: ignore[too-many-statements-in-try-clause]
         student_text = submission.read_text(encoding="utf-8")
 
         if hook_runtime is not None:
@@ -395,10 +395,10 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     def _images_for(submission: Path) -> list[str]:
         if not use_images:
             return []
-        imgs = []
-        for f in sorted(screenshots_dir.glob(f"{submission.stem}_p*.png")):
-            imgs.append(base64.b64encode(f.read_bytes()).decode())
-        return imgs
+        return [
+            base64.b64encode(f.read_bytes()).decode()
+            for f in sorted(screenshots_dir.glob(f"{submission.stem}_p*.png"))
+        ]
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_submission = {

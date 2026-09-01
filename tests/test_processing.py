@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import anydoc
 import nbformat
 import pytest
 from src.shared.grading import _read_reference_text
@@ -270,6 +271,16 @@ def _write_pdf(path: Path, text: str) -> None:
     path.write_bytes(bytes(out))
 
 
+def _write_raster_pdf(path: Path, text: str) -> None:
+    """Image-only PDF (one white page with drawn text): anydoc's local parser
+    finds no text layer and raises NeedsOcrError, exactly like a scan."""
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (400, 100), "white")
+    ImageDraw.Draw(img).text((10, 40), text, fill="black")
+    img.save(path, "PDF", resolution=72)
+
+
 def test_pdf_converts_to_markdown(tmp_path: Path) -> None:
     pdf_path = tmp_path / "s.pdf"
     out_path = tmp_path / "s.md"
@@ -353,3 +364,108 @@ def test_mixed_layout_skips_stale_flat_duplicates(tmp_path: Path) -> None:
     assert len(list((tmp_path / "processed").glob("*.md"))) == 1
     assert result is not None
     assert result["success"] == 1
+
+
+def test_format_for_suffix_infers_image() -> None:
+    assert _format_for_suffix(".jpg") == "image"
+    assert _format_for_suffix(".JPG") == "image"
+    assert _format_for_suffix(".jpeg") == "image"
+    assert _format_for_suffix(".png") == "image"
+    assert "image" in SUPPORTED_INPUT_FORMATS
+
+
+def test_image_jpeg_preprocess_uses_hosted_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A .jpg raw file is rastered to a temp PDF and fed to anydoc with
+    ocr=\"hosted\"; the temp PDF exists when OCR runs (and is removed after)."""
+    from PIL import Image
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    img = Image.new("RGB", (200, 80), "white")
+    img.save(raw / "100.jpg", "JPEG")
+    _write_grading_config(tmp_path)
+
+    calls: list[tuple[Path, bool, dict]] = []
+
+    def fake_to_markdown(path: str, **kwargs: object) -> str:
+        pdf_path = Path(path)
+        calls.append((pdf_path, pdf_path.exists(), kwargs))  # exists at OCR time
+        return "hello image ocr\n"
+
+    monkeypatch.setattr(anydoc, "to_markdown", fake_to_markdown)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    md = tmp_path / "processed" / "100.md"
+    assert md.exists()
+    content = md.read_text(encoding="utf-8")
+    assert "hello image ocr" in content
+    assert len(calls) == 1
+    pdf_path, existed, kwargs = calls[0]
+    assert pdf_path.suffix == ".pdf"
+    assert existed  # temp PDF existed when OCR ran
+    assert kwargs.get("ocr") == "hosted"
+    assert not pdf_path.exists()  # temp PDF removed after processing
+    assert result is not None
+    assert result["success"] == 1
+
+
+def test_scanned_pdf_uses_hosted_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan (no text layer) raises NeedsOcrError locally; anydoc routes it
+    to hosted OCR (mocked) instead of failing or returning empty text."""
+    pdf_path = tmp_path / "s.pdf"
+    out_path = tmp_path / "s.md"
+    _write_raster_pdf(pdf_path, "SCANNED TEXT")
+
+    monkeypatch.setattr(anydoc, "_parse_hosted", lambda *a, **k: "scanned text\n")
+
+    convert_pdf_to_markdown(pdf_path, out_path)
+
+    content = out_path.read_text(encoding="utf-8")
+    assert "scanned text" in content
+
+
+def test_normal_pdf_parses_without_hosted_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A text PDF parses locally: hosted OCR must never run (zero API cost)."""
+    pdf_path = tmp_path / "s.pdf"
+    out_path = tmp_path / "s.md"
+    _write_pdf(pdf_path, "tata pdf test 12345")
+
+    forbidden_msg = "hosted OCR must not run for a text PDF"
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError(forbidden_msg)
+
+    monkeypatch.setattr(anydoc, "_parse_hosted", forbidden)
+
+    convert_pdf_to_markdown(pdf_path, out_path)
+
+    content = out_path.read_text(encoding="utf-8")
+    assert "tata pdf test 12345" in content
+
+
+def test_hosted_ocr_failure_raises_with_key_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hosted OCR failure becomes a RuntimeError naming FIRECRAWL_API_KEY
+    (no silent empty-output fallback for scans)."""
+    pdf_path = tmp_path / "s.pdf"
+    out_path = tmp_path / "s.md"
+    _write_raster_pdf(pdf_path, "SCANNED TEXT")
+
+    failure_msg = "out of credits"
+
+    def failed(*args: object, **kwargs: object) -> None:
+        raise anydoc.HostedError(failure_msg)
+
+    monkeypatch.setattr(anydoc, "_parse_hosted", failed)
+
+    with pytest.raises(RuntimeError, match="FIRECRAWL_API_KEY") as exc_info:
+        convert_pdf_to_markdown(pdf_path, out_path)
+    assert "out of credits" in str(exc_info.value)

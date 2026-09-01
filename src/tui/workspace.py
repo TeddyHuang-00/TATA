@@ -49,9 +49,9 @@ from src.shared.cli_options import FetchCliOptions
 from src.shared.grading import grade_assignment
 from src.shared.processing import preprocess_assignment
 from src.shared.scoring import score_assignment
-from src.tui.score_review import open_score_review
 from src.tui.jobs import JobHost
 from src.tui.scan import AssignmentInfo, count_files, count_recursive
+from src.tui.score_review import open_score_review
 
 if TYPE_CHECKING:
     from src.tui.app import AppState

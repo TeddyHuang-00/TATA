@@ -138,6 +138,23 @@ TabbedContent {
     height: 1fr;
 }
 
+/* ---- plagiarism workspace (S4; embedded under the course table) ----
+   Horizontal/ContentSwitcher/TabPane default to 1fr/auto heights that leave
+   the pane collapsed or the buttons row hogging the space; same scoped
+   fr-chain fix as #settings-tabs / #library-tabs. */
+#plag-buttons,
+#plag-progress {
+    height: auto;
+}
+
+#plag-tabs > ContentSwitcher {
+    height: 1fr;
+}
+
+#plag-tabs TabPane {
+    height: 1fr;
+}
+
 /* ---- modal shell (used by later stages) ---- */
 ModalScreen {
     background: $background 60%;

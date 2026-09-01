@@ -369,9 +369,8 @@ class SettingsScreen(Vertical):
         yield Static("", id="ctx-hint")
         with TabbedContent(id="settings-tabs"):
             with TabPane("Grading", id="tab-grading"), ScrollableContainer():
-                yield Static("", id="grading-registry")
                 yield _LField(
-                    "provider (from config/provider.toml, read-only registry)",
+                    "provider (from config/provider.toml)",
                     self._select("grading.provider"),
                     reset=self._reset_button("grading.provider"),
                 )
@@ -841,24 +840,6 @@ class SettingsScreen(Vertical):
         return str(widget.value or "")
 
     def _render_statics(self) -> None:
-        registry = self.query_one("#grading-registry", Static)
-        if self._registry:
-            lines = [
-                f"[b]{name}[/b] · {info.base_url} · {info.model}"
-                for name, info in sorted(self._registry.items())
-            ]
-            registry.update(
-                "\n".join(lines) + "\n[dim]Provider registry is read-only here — edit "
-                "config/provider.toml with $EDITOR (e).[/dim]"
-            )
-        else:
-            registry.update(
-                "[red]Provider registry unavailable[/red] — "
-                "config/provider.toml missing or invalid.\n"
-                "[dim]Providers are read-only here — edit config/provider.toml "
-                "with $EDITOR (e).[/dim]"
-            )
-
         env = self.state.env_state or {}
         if env.get("has_env"):
             env_text = (

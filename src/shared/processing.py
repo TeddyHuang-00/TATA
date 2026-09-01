@@ -10,15 +10,16 @@ from datetime import UTC, datetime
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Literal
 
 import anydoc
 from markitdown import MarkItDown, StreamInfo
 from nbconvert import MarkdownExporter
+from PIL import Image, ImageOps
 
 from src import REPO_ROOT
 
 from .assignment_config import (
+    InputFormat,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
@@ -26,13 +27,13 @@ from .assignment_config import (
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
 
-InputFormat = Literal["ipynb", "html", "markdown", "docx", "pdf"]
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = (
     "ipynb",
     "html",
     "markdown",
     "docx",
     "pdf",
+    "image",
 )
 
 _SUFFIX_FORMATS: dict[str, InputFormat] = {
@@ -42,6 +43,9 @@ _SUFFIX_FORMATS: dict[str, InputFormat] = {
     ".md": "markdown",
     ".docx": "docx",
     ".pdf": "pdf",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
 }
 
 
@@ -287,10 +291,35 @@ def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
     output_path.write_text(content, encoding="utf-8")
 
 
+def _image_to_pdf(input_path: Path, out_pdf: Path) -> None:
+    """Raster the image into a single-page PDF; Firecrawl Parse only accepts PDFs."""
+    with Image.open(input_path) as src:
+        img = ImageOps.exif_transpose(src)
+        if img.mode in {"RGBA", "LA"} or (
+            img.mode == "P" and "transparency" in img.info
+        ):
+            # Composite transparent pixels on white before flattening: PIL defaults to black.
+            img = Image.alpha_composite(
+                Image.new("RGBA", img.size, "white"), img.convert("RGBA")
+            )
+        img.convert("RGB").save(out_pdf, "PDF", resolution=150)
+
+
 def convert_pdf_to_markdown(input_path: Path, output_path: Path) -> None:
-    """Convert pdf to markdown with firecrawl-anydoc, falling back to markitdown (both in-process)."""
+    """Convert PDF to markdown with firecrawl-anydoc (in-process); scanned
+    pages trigger automatic hosted OCR (Firecrawl Parse)."""
     try:
-        content = anydoc.to_markdown(input_path)
+        # Local parse first; scanned pages raise NeedsOcrError, which anydoc
+        # handles internally by re-sending the document to hosted OCR.
+        content = anydoc.to_markdown(input_path, ocr="hosted")
+    except anydoc.HostedError as exc:
+        # A scanned PDF has no text layer, so the markitdown fallback would
+        # yield empty/garbage output: surface the OCR failure instead.
+        msg = (
+            f"Hosted OCR failed for {input_path}: {exc}. "
+            "Check FIRECRAWL_API_KEY in .env (or a local FIRECRAWL_API_URL proxy) if it should use Firecrawl OCR."
+        )
+        raise RuntimeError(msg) from exc
     except Exception as anydoc_exc:
         try:
             content = MarkItDown().convert(str(input_path)).text_content
@@ -470,6 +499,15 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
         convert_docx_to_markdown(input_file, output_file)
     elif input_format == "pdf":
         convert_pdf_to_markdown(input_file, output_file)
+    elif input_format == "image":
+        fd, pdf_name = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        tmp_pdf = Path(pdf_name)
+        try:
+            _image_to_pdf(input_file, tmp_pdf)
+            convert_pdf_to_markdown(tmp_pdf, output_file)
+        finally:
+            tmp_pdf.unlink(missing_ok=True)
     else:
         msg = f"Unsupported input format: {input_format}"
         raise ValueError(msg)
@@ -617,7 +655,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             print(
                 "No supported files found in raw directory: "
                 f"{raw_dir}\n"
-                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx, .pdf), "
+                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx, .pdf, .jpg, .jpeg, .png), "
                 "then run preprocess again."
             )
         else:

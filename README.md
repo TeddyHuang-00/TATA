@@ -118,9 +118,9 @@ exactly the listed assignments.
 Fetch writes one raw item per student: a single-file submission stays flat
 at `raw/<file>`; a multi-file student (e.g. text-box answer plus an
 attachment) lands in `raw/<uid>/`. `preprocess` auto-detects the format of
-each file (ipynb/html/txt/md/docx/pdf) and merges a multi-file student into one
-`processed/<uid>.md` with per-file `<!--- file: <name>, submitted:
-<stamp> -->` headers; single-file students stay unchanged. The global config `data/config.toml` carries
+each file (ipynb/html/txt/md/docx/pdf/image — scanned jpg/jpeg/png use Firecrawl
+hosted OCR, needs FIRECRAWL_API_KEY) and merges a multi-file student into one
+`processed/<uid>.md` with per-file `<!--- file: <name>, submitted: <stamp> -->` headers; single-file students stay unchanged. The global config `data/config.toml` carries
 no assignment list: `plagiarism -c data/config.toml` falls back to the
 discovered course configs (`data/*/config.toml`) and `fetch --retry` scans
 the global plus every course config.
