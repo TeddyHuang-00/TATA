@@ -49,6 +49,12 @@
     width: auto;
     margin: 0 0 1 0;
 }
+/* Horizontal defaults to height:1fr; inside an overflowing ScrollableContainer
+   1fr collapses to 1 row and clips the 3-row env buttons to a bare border
+   strip (no label visible) — keep the container at its content height. */
+#tab-canvas ScrollableContainer > Horizontal {
+    height: auto;
+}
 #settings-actions {
     height: auto;
     padding: 1 0 0 0;

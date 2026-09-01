@@ -40,7 +40,7 @@ from src.tui.settings import (
     mask_secret,
 )
 from textual.app import App, ComposeResult
-from textual.containers import ScrollableContainer, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static, TabbedContent
 
 GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndisplay_threshold = 0.75\n"
@@ -814,6 +814,70 @@ async def _check_canvas_env_edit(root: Path) -> None:
         assert "EFGH4567123456" not in statics, statics
 
 
+async def _check_env_buttons_overflow(root: Path) -> None:
+    """Canvas tab in a SHORT window: env buttons keep full height + label.
+
+    With the canvas content taller than the scroll viewport, Textual's
+    default ``height: 1fr`` on the Horizontal collapses to 1 row and clips
+    the 3-row buttons to a bare border strip (label invisible). The tcss
+    override (``height: auto``) must keep the band at its content height and
+    the labels rendered in the composited screen.
+    """
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(100, 26)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.action_tab_canvas()
+        await pilot.pause()
+        sc = screen.query_one("#tab-canvas ScrollableContainer")
+        # the overflow scenario is real: content taller than the viewport
+        assert sc.virtual_size.height > sc.region.height, (
+            sc.virtual_size,
+            sc.region,
+        )
+        band: Horizontal = screen.query_one(
+            "#tab-canvas ScrollableContainer > Horizontal"
+        )
+        assert band.region.height >= 3, band.region
+        for btn_id in ("btn-save-env", "btn-reload-env"):
+            btn = screen.query_one(f"#{btn_id}", Button)
+            assert btn.region.height >= 3, btn.region
+            assert btn.content_region.height > 0, btn.content_region
+        # scroll the band into view and check the labels are really painted:
+        # in the broken state only the 1-row top border (a color block)
+        # survives, so "Save .env" / "Reload .env" are missing from the SVG.
+        band_y = band.region.y - sc.region.y + sc.scroll_offset.y
+        sc.scroll_to(y=max(0, band_y - 2), animate=False)
+        await pilot.pause()
+        svg = app.export_screenshot().replace("&#160;", " ")
+        assert "Save .env" in svg, svg
+        assert "Reload .env" in svg, svg
+
+        # the Grading tab in the same short window still sizes its prompt
+        # rows to content (no clipping, order preserved)
+        screen.action_tab_grading()
+        await pilot.pause()
+        checklist = screen.query_one("#f-grading-system_prompt", _PromptCheckList)
+        rows = checklist.query_one("#prompt-list", Vertical)
+        assert [str(cb.label) for cb in rows.query(Checkbox)] == [
+            "system.md",
+            "lab.md",
+        ]
+        assert rows.region.height == sum(
+            row.region.height for row in rows.children
+        ), rows.region
+        assert all(row.region.height >= 3 for row in rows.children), [
+            row.region.height for row in rows.children
+        ]
+        assert all(cb.content_region.height > 0 for cb in rows.query(Checkbox)), [
+            cb.content_region.height for cb in rows.query(Checkbox)
+        ]
+        assert all(btn.content_region.height > 0 for btn in rows.query(Button)), [
+            btn.content_region.height for btn in rows.query(Button)
+        ]
+
+
 async def main() -> None:
     _check_mask_secret()
     _check_dump_roundtrip()
@@ -836,6 +900,7 @@ async def main() -> None:
         _check_inherited_values,
         _check_context_labels,
         _check_canvas_env_edit,
+        _check_env_buttons_overflow,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
