@@ -1,21 +1,26 @@
-"""TATA Library tab: rubric + prompt editing (F2).
+"""TATA Library tab: rubric + prompt + provider editing (F2).
 
-Hosted by :mod:`src.tui.app` inside the Library TabPane (T4-d). Two inner
+Hosted by :mod:`src.tui.app` inside the Library TabPane (T4-d). Three inner
 TabPanes: *Rubrics* (:class:`RubricsPane`, migrated from the former
-``RubricBuilderScreen`` — no Screen, no push_screen) and *Prompts*
-(:class:`PromptsPane`, TextArea over ``data/prompt/*.md``). Non-Screen widgets
-get their styling via ``DEFAULT_CSS`` (class-level ``CSS`` does not apply to
-them — lesson c9272e81). All UI copy is English.
+``RubricBuilderScreen`` — no Screen, no push_screen), *Prompts*
+(:class:`PromptsPane`, TextArea over ``data/prompt/*.md``) and *Providers*
+(:class:`ProvidersPane`, the ``config/provider.toml`` registry). Non-Screen
+widgets get their styling via ``DEFAULT_CSS`` (class-level ``CSS`` does not
+apply to them — lesson c9272e81). All UI copy is English.
 """
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import MutableMapping
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
 import tomlkit
+from instructor import Mode
+from openai import OpenAI
 from pydantic import ValidationError
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -34,6 +39,8 @@ from textual.widgets import (
     TextArea,
 )
 
+from src import REPO_ROOT
+from src.shared.provider import ProviderList
 from src.shared.rubric import Grading, Rating, RubricDefinition, get_rubric_definition
 from src.tui.workspace import ConfirmationModal
 
@@ -45,6 +52,7 @@ _NEW_VALUE = "__new__"
 
 _RATING_VALUES = tuple(rating.value for rating in Rating)
 _GRADING_VALUES = tuple(grading.value for grading in Grading)
+_MODE_VALUES = tuple(mode.value for mode in Mode)
 
 
 # ---------- shared library helpers ----------
@@ -141,6 +149,40 @@ def _rewrite_grading_refs(
         else:
             changed.append(path)
     return changed, failed
+
+
+def _provider_reference_configs(data_dir: Path, name: str) -> list[Path]:
+    """Parse-based scan: config.toml files whose ``[grading].provider``
+    references ``name``. Same path patterns as :func:`_grading_reference_configs`;
+    unreadable/unparseable files are skipped."""
+    hits: list[Path] = []
+    for pattern in ("*/config.toml", "*/*/config.toml"):
+        for path in data_dir.glob(pattern):
+            try:
+                doc = tomlkit.parse(path.read_text(encoding="utf-8"))
+            except (OSError, tomlkit.exceptions.ParseError):
+                continue
+            grading = doc.get("grading")
+            if isinstance(grading, MutableMapping) and grading.get("provider") == name:
+                hits.append(path)
+    return hits
+
+
+def _resolve_env_placeholders(api_key: str) -> str:
+    """Resolve ``${VAR}`` placeholders against os.getenv (same regex as
+    :meth:`src.shared.provider.ProviderList.__getitem__`); unresolvable -> \"\"."""
+    return re.sub(r"\$\{(\w+?)\}", lambda m: os.getenv(m.group(1), ""), api_key)
+
+
+def _ping_provider(base_url: str, api_key: str, model: str) -> None:
+    """Real connectivity probe: one tiny chat completion. Runs on a worker
+    thread; raises on any failure."""
+    client = OpenAI(base_url=base_url, api_key=api_key)
+    client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "ping"}],
+        max_tokens=1,
+    )
 
 
 class FileNameModal(ModalScreen[str | None]):
@@ -621,8 +663,7 @@ class RubricsPane(Vertical):
             )
         if changed:
             self.app.notify(
-                f"Renamed rubric: {new} · updated {len(changed)} config "
-                "reference(s)",
+                f"Renamed rubric: {new} · updated {len(changed)} config reference(s)",
                 severity="success",
             )
         else:
@@ -882,8 +923,7 @@ class PromptsPane(Vertical):
             )
         if changed:
             self.app.notify(
-                f"Renamed prompt: {new} · updated {len(changed)} config "
-                "reference(s)",
+                f"Renamed prompt: {new} · updated {len(changed)} config reference(s)",
                 severity="success",
             )
         else:
@@ -906,8 +946,327 @@ class PromptsPane(Vertical):
             self.action_delete()
 
 
+class ProvidersPane(Vertical):
+    """Provider registry editor: Select + form + Save/Delete/Test connection.
+
+    Edits ``config/provider.toml`` (``[providers.<name>]`` tables) with
+    tomlkit field-level patches, preserving unrelated tables and the file's
+    schema-comment header. ``config_path`` is injectable for isolated tests;
+    the default is the repo's ``config/provider.toml``.
+    """
+
+    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
+
+    def __init__(self, state: AppState, config_path: Path | None = None) -> None:
+        super().__init__()
+        self.state = state
+        self._config_path = config_path or (REPO_ROOT / "config" / "provider.toml")
+        #: Name of the provider loaded into the form (None = new provider).
+        self._current: str | None = None
+
+    def _doc(self) -> tomlkit.TOMLDocument:
+        """Parse the registry; an empty document when missing/unreadable."""
+        try:
+            return tomlkit.parse(self._config_path.read_text(encoding="utf-8"))
+        except (OSError, tomlkit.exceptions.ParseError):
+            return tomlkit.document()
+
+    def _names(self) -> list[str]:
+        providers = self._doc().get("providers")
+        return sorted(providers) if isinstance(providers, MutableMapping) else []
+
+    def _options(self) -> list[tuple[str, str]]:
+        return [(name, name) for name in self._names()] + [
+            ("New provider…", _NEW_VALUE)
+        ]
+
+    # ---------- composition ----------
+
+    @override
+    def compose(self) -> ComposeResult:
+        with ScrollableContainer():
+            yield Static("[b]Providers[/b]", id="pv-title")
+            with Horizontal(id="pv-file-row"):
+                yield Select(self._options(), id="pv-name", allow_blank=False)
+                yield Input("", placeholder="new provider name", id="pv-new-name")
+            yield Static("", id="pv-status")
+            with Vertical(id="pv-form"):
+                with Vertical(classes="rb-field"):
+                    yield Label("base_url")
+                    yield Input(
+                        id="pv-base-url", placeholder="https://api.example.com/v1"
+                    )
+                with Vertical(classes="rb-field"):
+                    yield Label("api_key")
+                    yield Input(
+                        id="pv-api-key", placeholder="literal value or ${ENV_VAR}"
+                    )
+                with Vertical(classes="rb-field"):
+                    yield Label("model")
+                    yield Input(id="pv-model", placeholder="model id")
+                with Vertical(classes="rb-field"):
+                    yield Label("mode")
+                    yield Select(
+                        [(value, value) for value in _MODE_VALUES],
+                        id="pv-mode",
+                        allow_blank=False,
+                    )
+                with Vertical(classes="rb-field"):
+                    yield Label("temperature (optional, 0.0-2.0)")
+                    yield Input(
+                        id="pv-temperature", placeholder="blank = provider default"
+                    )
+            with Horizontal(id="pv-actions"):
+                yield Button("Save", id="pv-save", variant="primary")
+                yield Button("Delete", id="pv-delete", disabled=True)
+                yield Button("Test connection", id="pv-test")
+
+    @override
+    def on_mount(self) -> None:
+        self._on_name_change(str(self.query_one("#pv-name", Select).value))
+
+    # ---------- selection ----------
+
+    def reload_files(self) -> None:
+        """Reload the provider list (called when the Library tab activates)."""
+        self.query_one("#pv-name", Select).set_options(self._options())
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "pv-name":
+            self._on_name_change(str(event.value))
+
+    def _on_name_change(self, value: str) -> None:
+        is_new = value == _NEW_VALUE
+        self.query_one("#pv-new-name", Input).display = "block" if is_new else "none"
+        self._current = None if is_new else value
+        if is_new:
+            self._clear_form()
+            return
+        self._load_provider(value)
+
+    def _load_provider(self, name: str) -> None:
+        providers = self._doc().get("providers")
+        table = providers.get(name) if isinstance(providers, MutableMapping) else None
+        if not isinstance(table, MutableMapping):
+            self._set_status(f"[red]Could not load provider {escape(name)}[/red]")
+            self._clear_form()
+            return
+        mode = str(table.get("mode", _MODE_VALUES[0]))
+        if mode not in _MODE_VALUES:
+            mode = _MODE_VALUES[0]
+        temperature = table.get("temperature")
+        self.query_one("#pv-base-url", Input).value = str(table.get("base_url", ""))
+        self.query_one("#pv-api-key", Input).value = str(table.get("api_key", ""))
+        self.query_one("#pv-model", Input).value = str(table.get("model", ""))
+        self.query_one("#pv-mode", Select).value = mode
+        self.query_one("#pv-temperature", Input).value = (
+            "" if temperature is None else str(temperature)
+        )
+        self._set_status("")
+        self._sync_buttons()
+
+    def _clear_form(self) -> None:
+        self.query_one("#pv-base-url", Input).value = ""
+        self.query_one("#pv-api-key", Input).value = ""
+        self.query_one("#pv-model", Input).value = ""
+        self.query_one("#pv-mode", Select).value = _MODE_VALUES[0]
+        self.query_one("#pv-temperature", Input).value = ""
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        self.query_one("#pv-delete", Button).disabled = self._current is None
+
+    def _set_status(self, text: str) -> None:
+        self.query_one("#pv-status", Static).update(text)
+
+    # ---------- form ----------
+
+    def _form_values(self) -> dict | None:
+        base_url = self.query_one("#pv-base-url", Input).value.strip()
+        api_key = self.query_one("#pv-api-key", Input).value.strip()
+        model = self.query_one("#pv-model", Input).value.strip()
+        mode = str(self.query_one("#pv-mode", Select).value)
+        temperature = self.query_one("#pv-temperature", Input).value.strip()
+        if not base_url:
+            self._set_status("[red]base_url cannot be empty[/red]")
+            return None
+        if not api_key:
+            self._set_status("[red]api_key cannot be empty[/red]")
+            return None
+        if not model:
+            self._set_status("[red]model cannot be empty[/red]")
+            return None
+        values: dict = {
+            "base_url": base_url,
+            "api_key": api_key,
+            "model": model,
+            "mode": mode,
+        }
+        if temperature:
+            try:
+                values["temperature"] = float(temperature)
+            except ValueError:
+                self._set_status(
+                    f"[red]temperature must be a number: {escape(temperature)}[/red]"
+                )
+                return None
+        return values
+
+    def _target_name(self) -> str | None:
+        if self._current is not None:
+            return self._current
+        raw = self.query_one("#pv-new-name", Input).value.strip()
+        if not raw:
+            self._set_status("[red]Enter a name for the new provider[/red]")
+            return None
+        if Path(raw).name != raw:
+            self._set_status(f"[red]Invalid provider name: {escape(raw)}[/red]")
+            return None
+        if raw in self._names():
+            self._set_status(
+                f"[red]A provider named {escape(raw)} already exists[/red]"
+            )
+            return None
+        return raw
+
+    def _show_validation_errors(self, exc: ValidationError) -> None:
+        message = "; ".join(
+            f"{'.'.join(str(part) for part in error.get('loc', []))}: {error.get('msg')}"
+            for error in exc.errors()
+        )
+        self._set_status(f"[red]{escape(message)}[/red]")
+        self.app.notify(message, severity="error")
+
+    def _write(self, doc: tomlkit.TOMLDocument) -> bool:
+        out = tomlkit.dumps(doc)
+        if not out.endswith("\n"):
+            out += "\n"
+        try:
+            self._config_path.parent.mkdir(parents=True, exist_ok=True)
+            self._config_path.write_text(out, encoding="utf-8")
+        except OSError as exc:
+            self._set_status(f"[red]Write failed: {exc}[/red]")
+            return False
+        return True
+
+    # ---------- save / delete ----------
+
+    def action_save(self) -> None:
+        name = self._target_name()
+        if name is None:
+            return
+        values = self._form_values()
+        if values is None:
+            return
+        try:
+            ProviderList.model_validate({"providers": {name: values}})
+        except ValidationError as exc:
+            self._show_validation_errors(exc)
+            return
+        doc = self._doc()
+        providers = doc.setdefault("providers", tomlkit.table())
+        table = providers.get(name)
+        if not isinstance(table, MutableMapping):
+            table = tomlkit.table()
+            providers[name] = table
+        for key, value in values.items():
+            table[key] = value
+        if "temperature" not in values:
+            with suppress(KeyError):
+                del table["temperature"]
+        if not self._write(doc):
+            return
+        self._current = name
+        self.query_one("#pv-name", Select).set_options(self._options())
+        self.query_one("#pv-name", Select).value = name
+        self.query_one("#pv-new-name", Input).display = "none"
+        self._sync_buttons()
+        self._set_status(f"[green]Saved provider: {escape(name)}[/green]")
+        self.app.notify(f"Saved provider: {name}", severity="success")
+
+    def action_delete(self) -> None:
+        name = self._current
+        if name is None:
+            self._set_status("[warning]Select an existing provider to delete[/warning]")
+            return
+        refs = _provider_reference_configs(self.state.assignments_dir, name)
+        message = f"Delete provider {name}? This cannot be undone."
+        if refs:
+            message += (
+                f"\n\n{len(refs)} assignment config(s) reference {name}"
+                " and will be broken. Consider updating them first."
+            )
+        self.app.push_screen(
+            ConfirmationModal("Delete provider", message, [("Delete", "delete")]),
+            lambda choice: self._finish_delete(choice, name),
+        )
+
+    def _finish_delete(self, choice: str | None, name: str) -> None:
+        if choice is None:
+            return
+        doc = self._doc()
+        providers = doc.get("providers")
+        if not isinstance(providers, MutableMapping) or name not in providers:
+            self._set_status(f"[red]Not found: {escape(name)}[/red]")
+            return
+        del providers[name]
+        if not self._write(doc):
+            return
+        self._current = None
+        self.query_one("#pv-name", Select).set_options(self._options())
+        self._select_first()
+        self._set_status(f"[green]Deleted provider: {escape(name)}[/green]")
+        self.app.notify(f"Deleted provider: {name}", severity="warning")
+
+    def _select_first(self) -> None:
+        first = next(
+            (value for _, value in self._options() if value != _NEW_VALUE), _NEW_VALUE
+        )
+        self.query_one("#pv-name", Select).value = first
+
+    # ---------- test connection ----------
+
+    def action_test_connection(self) -> None:
+        values = self._form_values()
+        if values is None:
+            return
+        base_url = values["base_url"]
+        api_key = _resolve_env_placeholders(values["api_key"])
+        model = values["model"]
+        self._set_status("[dim]Testing connection…[/dim]")
+
+        def probe() -> None:
+            try:
+                _ping_provider(base_url, api_key, model)
+            except Exception as exc:
+                ok, message = (
+                    False,
+                    f"Test connection failed: {type(exc).__name__}: {exc}",
+                )
+            else:
+                ok, message = True, f"Test connection OK: {model}"
+            with suppress(RuntimeError):  # app closed mid-probe
+                self.app.call_from_thread(self._test_done, ok, message)
+
+        self.run_worker(probe, thread=True, group="library-test")
+
+    def _test_done(self, ok: bool, message: str) -> None:
+        color = "green" if ok else "red"
+        self._set_status(f"[{color}]{escape(message)}[/{color}]")
+        self.app.notify(message, severity="success" if ok else "error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "pv-save":
+            self.action_save()
+        elif button_id == "pv-delete":
+            self.action_delete()
+        elif button_id == "pv-test":
+            self.action_test_connection()
+
+
 class LibraryScreen(Vertical):
-    """Library tab container: Rubrics + Prompts sub-tab panes."""
+    """Library tab container: Rubrics + Prompts + Providers sub-tab panes."""
 
     DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
 
@@ -922,17 +1281,26 @@ class LibraryScreen(Vertical):
                 yield RubricsPane(self.state)
             with TabPane("Prompts", id="tab-prompts"):
                 yield PromptsPane(self.state)
+            with TabPane("Providers", id="tab-providers"):
+                yield ProvidersPane(self.state)
 
     def reload_files(self) -> None:
-        """Refresh both pane file lists (tab activation, external edits)."""
+        """Refresh all pane file lists (tab activation, external edits)."""
         with suppress(Exception):
             self.query_one(RubricsPane).reload_files()
         with suppress(Exception):
             self.query_one(PromptsPane).reload_files()
+        with suppress(Exception):
+            self.query_one(ProvidersPane).reload_files()
 
     def _focus_default(self) -> None:
         """Seat focus on the visible sub-tab's file Select."""
         tabs = self.query_one("#library-tabs", TabbedContent)
-        target = "#rb-file" if tabs.active == "tab-rubrics" else "#pr-file"
+        if tabs.active == "tab-rubrics":
+            target = "#rb-file"
+        elif tabs.active == "tab-prompts":
+            target = "#pr-file"
+        else:
+            target = "#pv-name"
         with suppress(Exception):
             self.query_one(target, Select).focus()

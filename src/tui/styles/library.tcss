@@ -101,6 +101,45 @@ PromptsPane {
     margin: 0 1 0 0;
 }
 
+/* ProvidersPane */
+ProvidersPane {
+    height: 1fr;
+}
+ProvidersPane > ScrollableContainer {
+    height: 1fr;
+}
+#pv-title {
+    height: auto;
+    padding: 0 0 1 0;
+}
+#pv-file-row {
+    height: 3;
+    padding: 0;
+}
+#pv-name {
+    height: 3;
+    width: 40;
+}
+#pv-new-name {
+    height: 3;
+    width: 40;
+    margin: 0 0 0 2;
+    display: none;
+}
+#pv-status {
+    height: auto;
+    padding: 0 0 1 0;
+}
+#pv-form {
+    height: auto;
+}
+#pv-actions {
+    height: auto;
+}
+#pv-actions Button {
+    margin: 0 1 0 0;
+}
+
 /* LibraryScreen */
 #library-screen {
     height: 1fr;
