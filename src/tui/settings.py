@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
 from canvasapi import Canvas
+from dotenv import dotenv_values, set_key
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -114,6 +116,39 @@ def _read_registry() -> dict[str, ProviderInfo]:
         return get_providers().providers
     except Exception:  # display-only; the screen must not crash
         return {}
+
+
+def mask_secret(value: str) -> str:
+    """``abcd********efgh`` preview; never the full value.
+
+    Fixed rule: first 4 chars + 8 stars + last 4 chars; a value of 8 chars
+    or fewer is 8 stars; the empty string stays empty.
+    """
+    if not value:
+        return ""
+    if len(value) <= 2 * _SECRET_SHOW_LEN:
+        return "*" * _SECRET_STARS
+    return f"{value[:_SECRET_SHOW_LEN]}{'*' * _SECRET_STARS}{value[-_SECRET_SHOW_LEN:]}"
+
+
+_SECRET_SHOW_LEN = 4  # fixed head/tail shown around the mask
+_SECRET_STARS = 8  # fixed star count covering the middle
+
+
+class _SecretInput(Input):
+    """Token field: plaintext while focused, masked preview otherwise.
+
+    ``value`` always holds the plaintext (save writes it to .env); the mask
+    is display-only via ``_value``, which drives Input's ``render_line``.
+    """
+
+    @property
+    def _value(self) -> Text:
+        if self.has_focus:
+            return super()._value
+        return Text(
+            mask_secret(str(self.value)), no_wrap=True, overflow="ignore", end=""
+        )
 
 
 class _PromptCheckList(Vertical):
@@ -353,6 +388,20 @@ class SettingsScreen(Vertical):
                 )
             with TabPane("Canvas", id="tab-canvas"), ScrollableContainer():
                 yield Static("", id="canvas-env")
+                yield _LField(
+                    "Canvas URL",
+                    Input(
+                        id="canvas-url",
+                        placeholder="https://canvas.instructure.com",
+                    ),
+                )
+                yield _LField(
+                    "Canvas token (visible only while editing)",
+                    _SecretInput(id="canvas-token"),
+                )
+                with Horizontal():
+                    yield Button("Save .env", id="btn-save-env", variant="primary")
+                    yield Button("Reload .env", id="btn-reload-env")
                 yield Static("", id="canvas-fetch-list")
                 yield _LField(
                     "course_id (Canvas course, numeric)",
@@ -483,6 +532,7 @@ class SettingsScreen(Vertical):
     @override
     def on_mount(self) -> None:
         self._registry = _read_registry()
+        self._load_env_fields()
         self.set_context(self._initial_ctx())
         self.query_one("#ctx-select", Select).focus()
 
@@ -513,9 +563,10 @@ class SettingsScreen(Vertical):
             name = course_display_name(
                 self.state.assignments_dir, course.dir_name, course.course_id
             )
-            options.append(
-                ("course", _context_label(course.dir_name, name, course.course_id))
-            )
+            options.append((
+                "course",
+                _context_label(course.dir_name, name, course.course_id),
+            ))
         assignment = self.state.current_assignment
         if assignment is not None:
             name = assignment_display_name(
@@ -524,12 +575,10 @@ class SettingsScreen(Vertical):
                 assignment.dir_name,
                 assignment.assignment_id,
             )
-            options.append(
-                (
-                    "assignment",
-                    _context_label(assignment.dir_name, name, assignment.assignment_id),
-                )
-            )
+            options.append((
+                "assignment",
+                _context_label(assignment.dir_name, name, assignment.assignment_id),
+            ))
         return options
 
     def set_context(self, ctx: str) -> None:
@@ -814,12 +863,14 @@ class SettingsScreen(Vertical):
         if env.get("has_env"):
             env_text = (
                 f"[green]Canvas .env: found[/green] — {env.get('base_url')}, "
-                "token set. [dim].env is read-only here; edit it directly.[/dim]"
+                f"token: {mask_secret(env.get('token') or '')}. [dim]Edit URL and "
+                "token in the fields above, then Save .env.[/dim]"
             )
         else:
             env_text = (
                 "[yellow]Canvas .env: not found[/yellow] — set CANVAS_BASE_URL / "
-                "CANVAS_ACCESS_TOKEN in .env (gitignored), then press t to test."
+                "CANVAS_ACCESS_TOKEN in the fields above and Save .env "
+                "(gitignored), then press t to test."
             )
         self.query_one("#canvas-env", Static).update(env_text)
 
@@ -845,6 +896,61 @@ class SettingsScreen(Vertical):
             else:
                 text = "[dim][[fetch.assignments]]: none yet.[/dim]"
             self.query_one("#canvas-fetch-list", Static).update(text)
+
+    # ---------- .env (Canvas tab) ----------
+
+    def _read_env_state(self) -> dict:
+        """Read ``<root_dir>/.env``; shape mirrors :func:`src.tui.app._env_status`.
+
+        Deliberately not reused from app.py — that module imports this one
+        (settings), so the read lives here (dotenv_values is tolerant).
+        """
+        env_path = self.state.root_dir / ".env"
+        if env_path.is_file():
+            try:
+                vals = dotenv_values(env_path, interpolate=False)
+            except UnicodeDecodeError:
+                vals = {}
+            if "CANVAS_BASE_URL" in vals and "CANVAS_ACCESS_TOKEN" in vals:
+                return {
+                    "has_env": True,
+                    "base_url": vals["CANVAS_BASE_URL"],
+                    "token": vals["CANVAS_ACCESS_TOKEN"],
+                    "token_set": True,
+                }
+        return {"has_env": False, "base_url": None, "token": None, "token_set": False}
+
+    def _load_env_fields(self) -> None:
+        """Refresh env fields + ``state.env_state`` from disk, re-render statics."""
+        env = self._read_env_state()
+        self.state.env_state = env
+        self.query_one("#canvas-url", Input).value = env.get("base_url") or ""
+        self.query_one("#canvas-token", _SecretInput).value = env.get("token") or ""
+        self._render_statics()
+
+    def action_save_env(self) -> None:
+        """Write CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN into ``<root_dir>/.env``.
+
+        ``set_key`` preserves the file's other keys and comments (and creates
+        the file when missing); both keys are always written as-is, even empty.
+        """
+        env_path = self.state.root_dir / ".env"
+        url = str(self.query_one("#canvas-url", Input).value).strip()
+        token = str(self.query_one("#canvas-token", _SecretInput).value)
+        try:
+            set_key(env_path, "CANVAS_BASE_URL", url)
+            set_key(env_path, "CANVAS_ACCESS_TOKEN", token)
+        except (OSError, UnicodeEncodeError) as exc:
+            self._fail("Save .env", str(exc))
+            return
+        self._load_env_fields()
+        self._set_result(f"[green]Saved .env to {env_path}[/green]")
+        self.app.notify(f"Saved .env to {env_path}", severity="success")
+
+    def action_reload_env(self) -> None:
+        """Discard the field edits and re-read ``<root_dir>/.env`` from disk."""
+        self._load_env_fields()
+        self._set_result("[dim]Reloaded .env from disk[/dim]")
 
     # ---------- status ----------
 
@@ -1107,5 +1213,9 @@ class SettingsScreen(Vertical):
             self.action_reset()
         elif button_id == "btn-test-canvas":
             self.action_test_canvas()
+        elif button_id == "btn-save-env":
+            self.action_save_env()
+        elif button_id == "btn-reload-env":
+            self.action_reload_env()
         elif button_id in self._reset_fqids:
             self.action_reset_field(self._reset_fqids[button_id])

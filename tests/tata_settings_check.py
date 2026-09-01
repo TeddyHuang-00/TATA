@@ -27,12 +27,18 @@ from pathlib import Path
 import tomlkit
 
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
+from dotenv import dotenv_values
 from src.shared.aliases import load_alias_file
 from src.shared.assignment_config import load_assignment_file
 from src.shared.config_edit import dump_toml
 from src.tui.app import AppState
 from src.tui.scan import scan_courses
-from src.tui.settings import SettingsScreen, _PromptCheckList
+from src.tui.settings import (
+    SettingsScreen,
+    _PromptCheckList,
+    _SecretInput,
+    mask_secret,
+)
 from textual.app import App, ComposeResult
 from textual.containers import ScrollableContainer, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static, TabbedContent
@@ -130,6 +136,16 @@ def _status_text(screen: SettingsScreen) -> str:
 
 def _field_label(screen: SettingsScreen, fqid: str) -> str:
     return str(screen._field_label(fqid).content)
+
+
+def _check_mask_secret() -> None:
+    """mask_secret: fixed head/tail, fixed 8-star middle, short/empty rules."""
+    assert mask_secret("") == ""
+    assert mask_secret("a") == "*" * 8
+    assert mask_secret("x" * 8) == "*" * 8
+    assert mask_secret("abcdefghijkl") == "abcd********ijkl"
+    assert mask_secret("x" * 9) == "xxxx********xxxx"
+    assert mask_secret("x" * 100) == "xxxx********xxxx"
 
 
 def _check_dump_roundtrip() -> None:
@@ -726,7 +742,80 @@ async def _check_context_labels(root: Path) -> None:
         assert screen.current_context == "assignment"
 
 
+async def _check_canvas_env_edit(root: Path) -> None:
+    """Canvas tab: save/update .env via the screen, mask the token everywhere.
+
+    User feedback 5: the token stays plaintext in ``value`` only; the
+    unfocused render and the #canvas-env statics show the fixed mask; other
+    .env keys and comments survive a save; save creates a missing .env.
+    """
+    state = _make_state(root, course=False, assignment=False)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.action_tab_canvas()
+        await pilot.pause()
+        url_input = screen.query_one("#canvas-url", Input)
+        token_input = screen.query_one("#canvas-token", _SecretInput)
+        env_path = root / ".env"
+
+        # no .env yet: fields empty, statics say not found
+        assert not env_path.exists()
+        assert url_input.value == ""
+        assert token_input.value == ""
+        assert "Canvas .env: not found" in str(
+            screen.query_one("#canvas-env", Static).content
+        )
+
+        # type + Save .env -> .env created with both keys
+        url_input.value = "https://canvas.test/"
+        token_input.value = "abcd1234567890"
+        await pilot.click("#btn-save-env")
+        await wait_for(pilot, lambda: bool(state.env_state.get("has_env")))
+        vals = dotenv_values(env_path, interpolate=False)
+        assert vals["CANVAS_BASE_URL"] == "https://canvas.test/"
+        assert vals["CANVAS_ACCESS_TOKEN"] == "abcd1234567890"
+
+        # statics show a masked preview, never the plaintext token
+        statics = str(screen.query_one("#canvas-env", Static).content)
+        assert "token: abcd********7890" in statics, statics
+        assert "abcd1234567890" not in statics, statics
+
+        # unfocused: rendered content is the mask (click moved focus away)
+        assert str(token_input.render_line(0).text).rstrip() == "abcd********7890"
+        # focused: plaintext while editing
+        token_input.focus()
+        await pilot.pause()
+        assert str(token_input.render_line(0).text).strip() == "abcd1234567890"
+        url_input.focus()
+        await pilot.pause()
+        assert str(token_input.render_line(0).text).rstrip() == "abcd********7890"
+
+        # existing keys + comments survive, and reload picks up disk edits
+        with env_path.open("a", encoding="utf-8") as fh:
+            fh.write("\n# local note\nDEEPSEEK_API_KEY=sk-existing\n")
+        await pilot.click("#btn-reload-env")
+        await pilot.pause()
+        assert token_input.value == "abcd1234567890"
+        token_input.value = "EFGH4567123456"
+        await pilot.click("#btn-save-env")
+        await wait_for(pilot, lambda: "Saved .env" in _status_text(screen))
+        raw = env_path.read_text(encoding="utf-8")
+        assert {"# local note", "DEEPSEEK_API_KEY=sk-existing"} <= set(
+            raw.splitlines()
+        ), raw
+        vals = dotenv_values(env_path, interpolate=False)
+        assert vals["DEEPSEEK_API_KEY"] == "sk-existing"
+        assert vals["CANVAS_BASE_URL"] == "https://canvas.test/"
+        assert vals["CANVAS_ACCESS_TOKEN"] == "EFGH4567123456"
+        statics = str(screen.query_one("#canvas-env", Static).content)
+        assert "token: EFGH********3456" in statics, statics
+        assert "EFGH4567123456" not in statics, statics
+
+
 async def main() -> None:
+    _check_mask_secret()
     _check_dump_roundtrip()
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -746,6 +835,7 @@ async def main() -> None:
         _check_field_reset,
         _check_inherited_values,
         _check_context_labels,
+        _check_canvas_env_edit,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
