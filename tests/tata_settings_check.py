@@ -480,7 +480,7 @@ async def _check_layout(root: Path) -> None:
 
 
 async def _check_prompt_order(root: Path) -> None:
-    """F4: prompt rows are 1 line high; reorder buttons drive value order."""
+    """F4: prompt rows sized to content; reorder buttons drive value order."""
     state = _make_state(root, course=True, assignment=True)
     app = _SettingsTestApp(state)
     async with app.run_test(size=(120, 44)) as pilot:
@@ -496,9 +496,19 @@ async def _check_prompt_order(root: Path) -> None:
             "lab.md",
         ]
         assert checklist.value == ["prompt/system.md"]
-        # every row is 1 line high, no 3-row blank boxes
-        assert [row.region.height for row in rows.children] == [1, 1], [
+        # every row is tall enough for its controls (no clipped blank rows):
+        # each control's content region has room to render its glyph/text
+        assert rows.region.height == sum(row.region.height for row in rows.children), (
+            rows.region
+        )
+        assert all(row.region.height >= 3 for row in rows.children), [
             row.region.height for row in rows.children
+        ]
+        assert all(cb.content_region.height > 0 for cb in rows.query(Checkbox)), [
+            cb.content_region.height for cb in rows.query(Checkbox)
+        ]
+        assert all(btn.content_region.height > 0 for btn in rows.query(Button)), [
+            btn.content_region.height for btn in rows.query(Button)
         ]
         # move the second row up: lab.md above system.md
         await pilot.click("#up-prompt-1")
@@ -527,6 +537,41 @@ async def _check_prompt_order(root: Path) -> None:
         assert saved["grading"]["system_prompt"] == [
             "prompt/system.md",
             "prompt/lab.md",
+        ]
+
+
+async def _check_prompt_list_height(root: Path) -> None:
+    """F4: list grows with the file set — height = rows x row height."""
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        screen.set_context("assignment")
+        await pilot.pause()
+        checklist = screen.query_one("#f-grading-system_prompt", _PromptCheckList)
+        rows = checklist.query_one("#prompt-list", Vertical)
+        # 4 prompt files -> 4 rows; list height equals the sum of row heights
+        prompts = root / "data" / "prompt"
+        for name in ("extra_a.md", "extra_b.md"):
+            (prompts / name).write_text("# extra\n", encoding="utf-8")
+        checklist._refresh_files()
+        await pilot.pause()
+        assert [str(cb.label) for cb in rows.query(Checkbox)] == [
+            "extra_a.md",
+            "extra_b.md",
+            "lab.md",
+            "system.md",
+        ]
+        assert len(rows.children) == 4
+        row_heights = [row.region.height for row in rows.children]
+        assert rows.region.height == sum(row_heights), rows.region
+        assert all(h >= 3 for h in row_heights), row_heights
+        assert all(cb.content_region.height > 0 for cb in rows.query(Checkbox)), [
+            cb.content_region.height for cb in rows.query(Checkbox)
+        ]
+        assert all(btn.content_region.height > 0 for btn in rows.query(Button)), [
+            btn.content_region.height for btn in rows.query(Button)
         ]
 
 
@@ -633,7 +678,12 @@ async def main() -> None:
         await _check_rubric_not_in_list(root)
         await _check_weights_course_global(root)
         await _check_layout(root)
-    for checker in (_check_prompt_order, _check_field_reset, _check_inherited_values):
+    for checker in (
+        _check_prompt_order,
+        _check_prompt_list_height,
+        _check_field_reset,
+        _check_inherited_values,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _build_fixture(root)
