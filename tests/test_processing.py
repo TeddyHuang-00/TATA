@@ -6,7 +6,13 @@ from pathlib import Path
 import nbformat
 import pytest
 from src.shared.grading import _read_reference_text
-from src.shared.processing import convert_ipynb_to_markdown, preprocess_assignment
+from src.shared.processing import (
+    SUPPORTED_INPUT_FORMATS,
+    _format_for_suffix,
+    convert_ipynb_to_markdown,
+    convert_pdf_to_markdown,
+    preprocess_assignment,
+)
 
 
 def test_txt_text_submission_converts_as_html(tmp_path: Path) -> None:
@@ -232,6 +238,70 @@ def _write_docx(path: Path, text: str) -> None:
             'document.xml"/></Relationships>',
         )
         z.writestr("word/document.xml", doc)
+
+
+def _write_pdf(path: Path, text: str) -> None:
+    """Minimal text PDF (one Helvetica line, computed xref); anydoc parses it in-process."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length "
+        + str(len(stream)).encode()
+        + b" >>\nstream\n"
+        + stream
+        + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref_pos = len(out)
+    count = len(objects) + 1
+    out += f"xref\n0 {count}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode()
+    path.write_bytes(bytes(out))
+
+
+def test_pdf_converts_to_markdown(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "s.pdf"
+    out_path = tmp_path / "s.md"
+    _write_pdf(pdf_path, "tata pdf test 12345")
+
+    convert_pdf_to_markdown(pdf_path, out_path)
+
+    assert out_path.exists()
+    content = out_path.read_text(encoding="utf-8")
+    assert "tata pdf test 12345" in content
+
+
+def test_single_pdf_preprocess_raw_to_md(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_pdf(raw / "100.pdf", "tata pdf test 12345")
+    _write_grading_config(tmp_path)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    md = tmp_path / "processed" / "100.md"
+    assert md.exists()
+    content = md.read_text(encoding="utf-8")
+    assert "tata pdf test 12345" in content
+    assert result is not None
+    assert result["success"] == 1
+
+
+def test_format_for_suffix_infers_pdf() -> None:
+    assert _format_for_suffix(".pdf") == "pdf"
+    assert _format_for_suffix(".PDF") == "pdf"
+    assert "pdf" in SUPPORTED_INPUT_FORMATS
 
 
 def test_folder_skip_messages_for_unsupported_files(

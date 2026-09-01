@@ -26,8 +26,14 @@ from .assignment_config import (
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
 
-InputFormat = Literal["ipynb", "html", "markdown", "docx"]
-SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = ("ipynb", "html", "markdown", "docx")
+InputFormat = Literal["ipynb", "html", "markdown", "docx", "pdf"]
+SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = (
+    "ipynb",
+    "html",
+    "markdown",
+    "docx",
+    "pdf",
+)
 
 _SUFFIX_FORMATS: dict[str, InputFormat] = {
     ".ipynb": "ipynb",
@@ -35,6 +41,7 @@ _SUFFIX_FORMATS: dict[str, InputFormat] = {
     ".txt": "html",  # Canvas text-entry bodies arrive as .txt but contain HTML
     ".md": "markdown",
     ".docx": "docx",
+    ".pdf": "pdf",
 }
 
 
@@ -280,6 +287,22 @@ def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
     output_path.write_text(content, encoding="utf-8")
 
 
+def convert_pdf_to_markdown(input_path: Path, output_path: Path) -> None:
+    """Convert pdf to markdown with firecrawl-anydoc, falling back to markitdown (both in-process)."""
+    try:
+        content = anydoc.to_markdown(input_path)
+    except Exception as anydoc_exc:
+        try:
+            content = MarkItDown().convert(str(input_path)).text_content
+        except Exception as exc:
+            msg = (
+                f"Failed to convert pdf {input_path}: anydoc failed ({anydoc_exc}); "
+                f"markitdown failed ({exc})"
+            )
+            raise RuntimeError(msg) from exc
+    output_path.write_text(content, encoding="utf-8")
+
+
 def _render_docx_screenshots(
     input_file: Path,
     output_stem: str,
@@ -445,6 +468,8 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
         _convert_markdown(input_file, output_file)
     elif input_format == "docx":
         convert_docx_to_markdown(input_file, output_file)
+    elif input_format == "pdf":
+        convert_pdf_to_markdown(input_file, output_file)
     else:
         msg = f"Unsupported input format: {input_format}"
         raise ValueError(msg)
@@ -592,7 +617,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             print(
                 "No supported files found in raw directory: "
                 f"{raw_dir}\n"
-                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx), "
+                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx, .pdf), "
                 "then run preprocess again."
             )
         else:
