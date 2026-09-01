@@ -27,6 +27,7 @@ from pathlib import Path
 import tomlkit
 
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
+from src.shared.aliases import load_alias_file
 from src.shared.assignment_config import load_assignment_file
 from src.shared.config_edit import dump_toml
 from src.tui.app import AppState
@@ -664,6 +665,67 @@ async def _check_inherited_values(root: Path) -> None:
         assert "inherited" not in _field_label(screen, "grading.system_prompt")
 
 
+async def _check_context_labels(root: Path) -> None:
+    """User-feedback 3: ctx-select labels show alias + id; dir_name fallback.
+
+    Fixture: course_id = 111111 (from course config), assignment_id = None
+    (dir name ``a1`` is non-numeric) — so the assignment alias resolves by
+    dir-name key and the displayed id falls back to ``a1``.
+    """
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        # no alias.toml: labels fall back to the plain dir names
+        assert screen.context_options() == [
+            ("global", "Global"),
+            ("course", "c1"),
+            ("assignment", "a1"),
+        ]
+        # the Select widget renders those labels (label first, value second)
+        ctx = screen.query_one("#ctx-select", Select)
+        assert [(str(label), value) for label, value in ctx._options] == [
+            ("Global", "global"),
+            ("c1", "course"),
+            ("a1", "assignment"),
+        ]
+        assert ctx.value == "assignment"
+    # alias.toml at the global layer [course] and the course layer [assignment]
+    (root / "data" / "alias.toml").write_text(
+        '[course]\n"111111" = "Data Structures"\n', encoding="utf-8"
+    )
+    (root / "data" / "c1" / "alias.toml").write_text(
+        '[assignment]\n"a1" = "Homework 1"\n', encoding="utf-8"
+    )
+    load_alias_file.cache_clear()  # the missing-file reads above are cached
+    state = _make_state(root, course=True, assignment=True)
+    app = _SettingsTestApp(state)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        screen = app.query_one(SettingsScreen)
+        assert screen.context_options() == [
+            ("global", "Global"),
+            ("course", "Data Structures (111111)"),
+            ("assignment", "Homework 1 (a1)"),
+        ]
+        ctx = screen.query_one("#ctx-select", Select)
+        assert [(str(label), value) for label, value in ctx._options] == [
+            ("Global", "global"),
+            ("Data Structures (111111)", "course"),
+            ("Homework 1 (a1)", "assignment"),
+        ]
+        assert ctx.value == "assignment"
+        # values unchanged: context switching and a save still behave
+        screen.set_context("course")
+        await pilot.pause()
+        assert screen.current_context == "course"
+        assert ctx.value == "course"
+        screen.set_context("assignment")
+        await pilot.pause()
+        assert screen.current_context == "assignment"
+
+
 async def main() -> None:
     _check_dump_roundtrip()
     with tempfile.TemporaryDirectory() as tmp:
@@ -683,6 +745,7 @@ async def main() -> None:
         _check_prompt_list_height,
         _check_field_reset,
         _check_inherited_values,
+        _check_context_labels,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

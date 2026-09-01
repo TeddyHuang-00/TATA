@@ -42,6 +42,10 @@ from textual.widgets import (
     TabPane,
 )
 
+from src.shared.aliases import (
+    assignment_display_name,
+    course_display_name,
+)
 from src.shared.assignment_config import (
     FetchSection,
     PlagiarismSection,
@@ -270,6 +274,14 @@ class _LField(Vertical):
         yield self._widget
 
 
+def _context_label(dir_name: str, display_name: str, ident: int | None) -> str:
+    """``Alias (id)`` when aliased; ``dir_name`` otherwise (no double ID)."""
+    if display_name != dir_name:
+        id_str = dir_name if ident is None else str(ident)
+        return f"{display_name} ({id_str})"
+    return dir_name
+
+
 class SettingsScreen(Vertical):
     """S5 settings: context selector + four tab panes + layering-aware save.
 
@@ -489,15 +501,35 @@ class SettingsScreen(Vertical):
         return options
 
     def context_options(self) -> list[tuple[str, str]]:
-        """(value, label) pairs for ``#ctx-select``."""
+        """(value, label) pairs for ``#ctx-select``.
+
+        Labels show the alias + id when an alias.toml entry exists (e.g.
+        ``Data Structures (271218)``); plain ``dir_name`` otherwise. Values
+        stay ``global``/``course``/``assignment`` — display only.
+        """
         options: list[tuple[str, str]] = [("global", "Global")]
-        if self.state.current_course is not None:
-            options.append(("course", f"Course: {self.state.current_course.dir_name}"))
-        if self.state.current_assignment is not None:
-            options.append((
-                "assignment",
-                f"Assignment: {self.state.current_assignment.dir_name}",
-            ))
+        course = self.state.current_course
+        if course is not None:
+            name = course_display_name(
+                self.state.assignments_dir, course.dir_name, course.course_id
+            )
+            options.append(
+                ("course", _context_label(course.dir_name, name, course.course_id))
+            )
+        assignment = self.state.current_assignment
+        if assignment is not None:
+            name = assignment_display_name(
+                self.state.assignments_dir,
+                course.dir_name if course is not None else "",
+                assignment.dir_name,
+                assignment.assignment_id,
+            )
+            options.append(
+                (
+                    "assignment",
+                    _context_label(assignment.dir_name, name, assignment.assignment_id),
+                )
+            )
         return options
 
     def set_context(self, ctx: str) -> None:
