@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import anydoc
@@ -84,6 +85,81 @@ def _write_grading_config(tmp_path: Path) -> None:
         '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\nprovider = "deepseek"\n',
         encoding="utf-8",
     )
+
+
+def test_preprocess_cache_skips_unchanged_second_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 2: unchanged inputs -> the second run converts nothing."""
+    from src.tui.scan import count_files
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100.md").write_text("# hello\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+    calls: list[Path] = []
+
+    def spy(src: Path, dst: Path) -> None:
+        calls.append(src)
+        shutil.copy2(src, dst)
+
+    monkeypatch.setattr("src.shared.processing._convert_markdown", spy)
+
+    preprocess_assignment(tmp_path / "config.toml")
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert len(calls) == 1
+    cache_file = tmp_path / "processed" / ".preprocess.cache.json"
+    assert cache_file.is_file()
+    # dot-named cache file is not a processed student
+    assert count_files(tmp_path / "processed", ".md") == 1
+
+
+def test_preprocess_cache_reconverts_on_raw_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 2: changed raw content -> hash mismatch -> reconvert."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100.md").write_text("v1\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+    calls: list[Path] = []
+
+    def spy(src: Path, dst: Path) -> None:
+        calls.append(src)
+        shutil.copy2(src, dst)
+
+    monkeypatch.setattr("src.shared.processing._convert_markdown", spy)
+
+    preprocess_assignment(tmp_path / "config.toml")
+    (raw / "100.md").write_text("v2\n", encoding="utf-8")
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert len(calls) == 2
+    md = tmp_path / "processed" / "100.md"
+    assert md.read_text(encoding="utf-8") == "v2\n"
+
+
+def test_preprocess_broken_cache_treated_as_empty(tmp_path: Path) -> None:
+    """Item 2: an unparsable cache file must not crash or skip conversion."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100.md").write_text("# x\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+    (tmp_path / "processed").mkdir()
+    (tmp_path / "processed" / ".preprocess.cache.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    assert result is not None
+    assert result["success"] == 1
+    assert (tmp_path / "processed" / "100.md").is_file()
+    cache = json.loads(
+        (tmp_path / "processed" / ".preprocess.cache.json").read_text("utf-8")
+    )
+    assert "100" in cache
 
 
 def test_folder_concat_html_and_ipynb(tmp_path: Path) -> None:

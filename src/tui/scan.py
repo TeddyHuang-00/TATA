@@ -21,9 +21,11 @@ from pydantic import ValidationError
 from src.shared.assignment_config import (
     FetchSection,
     is_course_config,
+    load_assignment_file,
     load_root_section,
     root_plagiarism_section,
 )
+from src.tui.score_review import base_uid
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
 # `display_threshold = 0.8`); NOT the aggregate z-score alpha — z-level flags
@@ -84,25 +86,59 @@ def count_files(dir_: Path, suffix: str | None = None) -> int:
 
 
 def count_raw_items(dir_: Path) -> int:
-    """Top-level raw items: files + student subdirs, skipping dot-entries.
+    """Distinct student uids among top-level raw entries, skipping dot-entries.
 
-    A multi-file student lands in raw/<uid>/ and counts as ONE submission
-    (fetch writes one item per student); raw counts must match the
-    per-student rows, not the per-file count.
+    Mirrors :func:`src.shared.processing._iter_raw_items`: a top-level flat
+    file whose base uid names a top-level dir is a stale leftover of a
+    folderized student (mixed legacy layout) and is skipped; a folder counts
+    once for its uid. Suffixed flat duplicates of the same student
+    (``<uid>.html`` + ``<uid>_1.ipynb``) dedupe to one.
     """
     if not dir_.is_dir():
         return 0
-    return sum(
-        1
+    entries = [
+        p
         for p in dir_.iterdir()
         if not p.name.startswith(".") and (p.is_file() or p.is_dir())
-    )
+    ]
+    dirs = {p.name for p in entries if p.is_dir()}
+    uids: set[str] = set()
+    for p in entries:
+        if p.is_file() and base_uid(p.stem) in dirs:
+            continue  # stale flat leftover of a folderized student
+        uids.add(p.name if p.is_dir() else base_uid(p.stem))
+    return len(uids)
+
+
+def count_students(
+    dir_: Path, suffix: str, exclude_stems: frozenset[str] = frozenset()
+) -> int:
+    """Distinct student uids among ``dir_``'s direct ``suffix`` files.
+
+    Skips dotfiles and stems in ``exclude_stems`` (e.g. the assignment's
+    ``reference_file`` markdown, which is not a student).
+    """
+    if not dir_.is_dir():
+        return 0
+    return len({
+        base_uid(p.stem)
+        for p in dir_.iterdir()
+        if p.is_file()
+        and not p.name.startswith(".")
+        and p.suffix == suffix
+        and p.stem not in exclude_stems
+    })
 
 
 def count_recursive(dir_: Path) -> int:
+    """Distinct student uids among ``dir_``'s files (recursive, dotfiles skipped)."""
     if not dir_.is_dir():
         return 0
-    return sum(1 for p in dir_.rglob("*") if p.is_file() and not p.name.startswith("."))
+    return len({
+        base_uid(p.stem)
+        for p in dir_.rglob("*")
+        if p.is_file() and not p.name.startswith(".")
+    })
 
 
 def _max_file_mtime(dir_: Path) -> float | None:
@@ -205,13 +241,23 @@ def scan_assignments(
     if not course_dir.is_dir():
         return infos
     for entry in sorted(course_dir.iterdir()):
-        cfg = entry / "config.toml"
-        if not entry.is_dir() or not cfg.is_file():
+        cfg_path = entry / "config.toml"
+        if not entry.is_dir() or not cfg_path.is_file():
             continue
+        # Reference markdown in processed/ is not a student; exclude its stem
+        # from the processed count (dirty configs -> no exclusion).
+        reference_stem: str | None = None
+        try:
+            loaded = load_assignment_file(cfg_path)
+        except (OSError, ValueError):
+            loaded = None
+        if loaded is not None and loaded.assignment.reference_file:
+            reference_stem = Path(loaded.assignment.reference_file).stem
+        exclude = frozenset({reference_stem}) if reference_stem else frozenset()
         counts = Counts(
             raw=count_raw_items(entry / "raw"),
-            processed=count_files(entry / "processed", ".md"),
-            graded=count_files(entry / "graded", ".json"),
+            processed=count_students(entry / "processed", ".md", exclude),
+            graded=count_students(entry / "graded", ".json"),
             scored=count_recursive(entry / "scored"),
         )
         mtimes: dict[str, float] = {}
@@ -225,7 +271,7 @@ def scan_assignments(
         infos.append(
             AssignmentInfo(
                 dir_name=entry.name,
-                config_path=cfg,
+                config_path=cfg_path,
                 assignment_id=(int(entry.name) if entry.name.isdecimal() else None),
                 counts=counts,
                 stage_mtime=mtimes,

@@ -136,6 +136,69 @@ def test_raw_count_counts_student_folders_once(tmp_path: Path) -> None:
     assert infos[0].counts.raw == 2  # 1 flat file + 1 folder student
 
 
+def test_raw_count_dedupes_same_uid_flat_files(tmp_path: Path) -> None:
+    """Item 1: ``<uid>.html`` + ``<uid>_1.ipynb`` both flat = ONE student."""
+    from src.tui.scan import scan_assignments
+
+    course = tmp_path / "data" / "111111"
+    a1 = course / "222222"
+    a1.mkdir(parents=True)
+    (course / "config.toml").write_text("", encoding="utf-8")
+    (a1 / "config.toml").write_text("", encoding="utf-8")
+    raw = a1 / "raw"
+    raw.mkdir()
+    (raw / "100001.html").write_text("<p>a</p>", encoding="utf-8")
+    (raw / "100001_1.ipynb").write_text("{}", encoding="utf-8")
+    (raw / "100002.html").write_text("<p>b</p>", encoding="utf-8")
+    infos = scan_assignments(course)
+    assert infos[0].counts.raw == 2  # 100001 once + 100002 once
+
+
+def test_raw_count_skips_stale_flat_leftovers(tmp_path: Path) -> None:
+    """Item 1: parity with preprocess' mixed-layout stale-flat rule."""
+    from src.tui.scan import scan_assignments
+
+    course = tmp_path / "data" / "111111"
+    a1 = course / "222222"
+    a1.mkdir(parents=True)
+    (course / "config.toml").write_text("", encoding="utf-8")
+    (a1 / "config.toml").write_text("", encoding="utf-8")
+    raw = a1 / "raw"
+    (raw / "415019").mkdir(parents=True)
+    (raw / "415019" / "415019.html").write_text("<p>a</p>", encoding="utf-8")
+    (raw / "415019.docx").write_bytes(b"stale flat")
+    (raw / "415019_1.docx").write_bytes(b"stale flat")
+    infos = scan_assignments(course)
+    assert infos[0].counts.raw == 1
+
+
+def test_counts_exclude_reference_and_dedupe_graded(tmp_path: Path) -> None:
+    """Item 1: reference md is not a student; graded dedupes _LATE_ stems."""
+    from src.tui.scan import scan_assignments
+
+    course = tmp_path / "data" / "111111"
+    a1 = course / "222222"
+    a1.mkdir(parents=True)
+    (course / "config.toml").write_text("", encoding="utf-8")
+    (a1 / "config.toml").write_text(
+        '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\nprovider = "test"\n'
+        '[assignment]\nreference_file = "reference.md"\n',
+        encoding="utf-8",
+    )
+    processed = a1 / "processed"
+    processed.mkdir(parents=True)
+    (processed / "100001.md").write_text("# s", encoding="utf-8")
+    (processed / "reference.md").write_text("# ref", encoding="utf-8")
+    (processed / ".preprocess.cache.json").write_text("{}", encoding="utf-8")
+    graded = a1 / "graded"
+    graded.mkdir()
+    (graded / "100001.json").write_text("{}", encoding="utf-8")
+    (graded / "100001_LATE_0.json").write_text("{}", encoding="utf-8")
+    infos = scan_assignments(course)
+    assert infos[0].counts.processed == 1  # reference.md excluded
+    assert infos[0].counts.graded == 1  # 100001 and 100001_LATE_0 same uid
+
+
 def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     """MINOR-7: a .env missing either key must not short-circuit the walk."""
     from src.tui.app import _env_status

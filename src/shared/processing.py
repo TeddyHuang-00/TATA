@@ -24,6 +24,7 @@ from .assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
+from .caching import CACHE_FMT, content_hash, file_hash, load_cache, save_cache
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
 
@@ -558,6 +559,17 @@ def _iter_raw_items(raw_dir: Path) -> list[Path]:
     ]
 
 
+def _cached(cache: dict, stem: str, item_hash: str, output_file: Path) -> bool:
+    """True when the cache entry for ``stem`` matches and the output exists."""
+    entry = cache.get(stem)
+    return bool(
+        isinstance(entry, dict)
+        and entry.get("fmt") == CACHE_FMT
+        and entry.get("hash") == item_hash
+        and output_file.is_file()
+    )
+
+
 def _submission_stamp(cache: dict[str, str], raw_file: Path) -> str:
     """Stamp for a raw file: the .fetch-cache.json entry when known, else
     the file's mtime, else '' — the submitted header part is omitted."""
@@ -715,13 +727,50 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
 
     # Process each raw item (per-student): a file (single submission) or a
     # folder (multi-file student, concatenated into one per-student md).
-    cache: dict[str, str] = {}
-    cache_path = raw_dir / ".fetch-cache.json"
-    if cache_path.exists():
+    fetch_cache: dict[str, str] = {}
+    fetch_cache_path = raw_dir / ".fetch-cache.json"
+    if fetch_cache_path.exists():
         try:
-            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            fetch_cache = json.loads(fetch_cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            cache = {}
+            fetch_cache = {}
+
+    # Output cache (processed/.preprocess.cache.json): skip an item whose raw
+    # inputs, processing config, template selection, fetch stamps (folder
+    # headers) and hook scripts are unchanged and whose output md exists.
+    # Old entries with a changed hash are reconverted (no pruning needed).
+    cache_path = processed_dir / ".preprocess.cache.json"
+    cache = load_cache(cache_path)
+    cfg_payload = json.dumps(
+        {
+            "processing": processing.model_dump_json(),
+            "template_name": nbconvert_template,
+            "template_dir": (
+                str(template_dir_path) if template_dir_path is not None else None
+            ),
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    hook_parts: list[bytes] = []
+    if hook_runtime is not None:
+        hook_parts = [
+            script.read_bytes()
+            for script_paths in hook_runtime.mounts.values()
+            for script in script_paths
+        ]
+
+    def item_hash_and_src(item: Path) -> tuple[list[str], str]:
+        """(sorted raw relpaths, content hash) for one raw item."""
+        files = item_files_by[item]
+        rels = sorted(
+            f"{item.name}/{f.name}" if item.is_dir() else f.name for f, _ in files
+        )
+        parts: list[bytes] = [file_hash(raw_dir, rels).encode("utf-8")]
+        if item.is_dir():
+            parts.append(json.dumps(fetch_cache, sort_keys=True).encode("utf-8"))
+        parts.append(cfg_payload)
+        parts.extend(hook_parts)
+        return rels, content_hash(parts)
 
     processed_count = 0
     failed_count = 0
@@ -744,6 +793,11 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             # Ensure .md extension
             output_stem = Path(output_name).stem
             output_file = processed_dir / f"{output_stem}.md"
+
+            src, item_hash = item_hash_and_src(item)
+            if _cached(cache, output_stem, item_hash, output_file):
+                print(f"[cached] {output_file.name} (unchanged)")
+                continue
 
             if hook_runtime is not None:
                 before_payload = hook_runtime.run(
@@ -787,6 +841,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                 )
                 print(f"[processed] {raw_file.name} -> {output_file.name}")
                 processed_count += 1
+                cache[output_stem] = {"fmt": CACHE_FMT, "hash": item_hash, "src": src}
                 if processing.render_screenshots and file_format == "docx":
                     _render_docx_screenshots(
                         input_file,
@@ -827,6 +882,10 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             # per input file but always report the final concatenated file as
             # output_file.
             output_file = processed_dir / f"{item.name}.md"
+            src, item_hash = item_hash_and_src(item)
+            if _cached(cache, item.name, item_hash, output_file):
+                print(f"[cached] {output_file.name} (unchanged)")
+                continue
             parts: list[str] = []
             converted = 0
             for raw_file, fmt in files:
@@ -880,7 +939,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                         template_dir_path,
                     )
                     text = tmp_file.read_text(encoding="utf-8")
-                    stamp = _submission_stamp(cache, raw_file)
+                    stamp = _submission_stamp(fetch_cache, raw_file)
                     submitted = f", submitted: {stamp}" if stamp else ""
                     parts.append(
                         f"---\n<!--- file: {raw_file.name}{submitted} -->\n\n{text}"
@@ -919,6 +978,12 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                         tmp_file.unlink(missing_ok=True)
             if converted:
                 processed_count += 1
+                cache[item.name] = {"fmt": CACHE_FMT, "hash": item_hash, "src": src}
+
+    try:
+        save_cache(cache_path, cache)
+    except OSError as exc:
+        print(f"[warn] failed to write preprocess cache: {exc}")
 
     if hook_runtime is not None:
         hook_runtime.run(
