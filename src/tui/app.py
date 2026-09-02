@@ -14,14 +14,16 @@ import time
 from collections.abc import Callable, MutableMapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, override
+from typing import ClassVar, cast, override
 
 import dotenv
 import tomlkit
 from canvasapi import Canvas
 from rich.markup import escape
+from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -141,13 +143,14 @@ def _fmt_score(value: float | None) -> str:
     return f"{value:.1f}" if value is not None else "-"
 
 
-# State filters (design 01 §5: 1=All 2=Done 3=Partial 4=Not run 5=Flagged).
+# State filters (design 01 §5: 1=All 2=Done 3=Partial 4=Not run). The
+# 'flagged' filter was removed (feedback 5): plagiarism flags live in the
+# plagiarism pane only.
 _FILTER_LABELS: dict[str | None, str] = {
     None: "All",
     "done": "Done",
     "partial": "Partial",
     "not_run": "Not run",
-    "flagged": "Flagged",
 }
 
 
@@ -156,9 +159,20 @@ def _filter_assignments(
 ) -> list[AssignmentInfo]:
     if flt is None:
         return assignments
-    if flt == "flagged":
-        return [a for a in assignments if a.flagged_pairs]
     return [a for a in assignments if state_key(a) == flt]
+
+
+_FUZZY_RATIO = 0.55  # fuzzy search threshold (difflib) for whole-ratio fallback
+
+
+def fuzzy_match(query: str, text: str) -> bool:
+    """Search-match: case-insensitive substring or close ratio (stdlib)."""
+    q, s = query.lower().strip(), text.lower()
+    if not q:
+        return True
+    if q in s:
+        return True
+    return SequenceMatcher(None, q, s).ratio() >= _FUZZY_RATIO
 
 
 class _FocusableStatic(Static):
@@ -189,7 +203,6 @@ class DashboardScreen(Vertical):
         Binding("2", "filter_done", "Filter: Done"),
         Binding("3", "filter_partial", "Filter: Partial"),
         Binding("4", "filter_not_run", "Filter: Not run"),
-        Binding("5", "filter_flagged", "Filter: Flagged"),
     ]
 
     def __init__(self, state: AppState) -> None:
@@ -200,6 +213,9 @@ class DashboardScreen(Vertical):
         # in render_level drop the cursor, so we re-seat it after re-render.
         self._last_dir: dict[str, str] = {}
         self._filter: str | None = None  # course-level state filter
+        self._search = ""  # live search text (#search-input)
+        # Last header-click (column index, desc); None = default name asc.
+        self._sort: tuple[int, bool] | None = None
         self._job: dict | None = None  # minimal job protocol (see _start_job)
         # Per-target state of the last/current fetch-all (F) run; None = panel
         # hidden. Each entry: {"label", "state", "err", "seconds"}.
@@ -210,6 +226,7 @@ class DashboardScreen(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(id="topbar", markup=True)
         yield Static(id="breadcrumb", markup=True)
+        yield Input(placeholder="Search…", id="search-input")
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
         yield AssignmentScreen(self.state)
@@ -262,7 +279,8 @@ class DashboardScreen(Vertical):
                 "Avg score",
                 "Last run",
             )
-            for i, c in enumerate(state.courses):
+            items = self._visible_courses()
+            for i, c in enumerate(items):
                 table.add_row(
                     escape(
                         course_display_name(
@@ -280,7 +298,9 @@ class DashboardScreen(Vertical):
                 self._rows.append(c)
             self._show_empty(
                 empty,
-                "No courses yet. Press `c` to import (configure .env first).",
+                "No courses match the search."
+                if self._search
+                else "No courses yet. Press `c` to import (configure .env first).",
                 table,
                 workspace,
             )
@@ -309,7 +329,7 @@ class DashboardScreen(Vertical):
                 "State",
                 "Last run",
             )
-            shown = _filter_assignments(state.assignments, self._filter)
+            shown = self._visible_assignments(course)
             for i, a in enumerate(shown):
                 table.add_row(
                     escape(
@@ -332,8 +352,8 @@ class DashboardScreen(Vertical):
                 self._rows.append(a)
             self._show_empty(
                 empty,
-                "No assignments match the filter."
-                if self._filter is not None
+                "No assignments match the filter/search."
+                if self._filter is not None or self._search
                 else "No assignments in this course yet.",
                 table,
                 workspace,
@@ -364,6 +384,10 @@ class DashboardScreen(Vertical):
             workspace.display = True
             workspace.open_assignment()
 
+        # Search strip lives at the list levels (global/course) only.
+        self.query_one("#search-input", Input).display = (
+            state.dashboard_level != "assignment"
+        )
         # Fetch-all progress panel: live during the run and after completion;
         # hidden on any level/navigation change (course level only). A new
         # non-fetch-all job also clears _fetch_progress in _start_job.
@@ -405,6 +429,9 @@ class DashboardScreen(Vertical):
         """Keep focus on a visible descendant so bindings keep firing."""
         if not is_displayed(self):
             return  # dashboard tab hidden — never steal focus (F2)
+        search = self.query_one("#search-input", Input)
+        if search.display and search.has_focus:
+            return  # user is typing in live search — never steal focus (MAJOR-D)
         table = self.query_one("#dashboard-table", DataTable)
         if is_displayed(table):
             table.focus()
@@ -422,6 +449,114 @@ class DashboardScreen(Vertical):
         empty.display = not has_rows
         empty.update(text)
 
+    # ---------- search + sort (feedback 5 Item 4) ----------
+
+    def _visible_courses(self) -> list[CourseInfo]:
+        """Courses filtered by the live search, in default/header sort order."""
+        state = self.state
+        items = [
+            c
+            for c in state.courses
+            if fuzzy_match(
+                self._search,
+                course_display_name(state.assignments_dir, c.dir_name, c.course_id),
+            )
+        ]
+        self._sort_rows(items)
+        return items
+
+    def _visible_assignments(self, course: CourseInfo) -> list[AssignmentInfo]:
+        """Assignments for the current state filter + search, in sort order."""
+        state = self.state
+        shown = _filter_assignments(state.assignments, self._filter)
+        shown = [
+            a
+            for a in shown
+            if fuzzy_match(
+                self._search,
+                assignment_display_name(
+                    state.assignments_dir,
+                    course.dir_name,
+                    a.dir_name,
+                    a.assignment_id,
+                ),
+            )
+        ]
+        self._sort_rows(shown)
+        return shown
+
+    def _sort_rows(self, items: list[CourseInfo] | list[AssignmentInfo]) -> None:
+        """Default display-name asc; header-clicked sort (col, desc) overrides."""
+        level = self.state.dashboard_level
+        if self._sort is None:
+            items.sort(key=lambda item: self._sort_name(item, level).lower())
+        else:
+            col, desc = self._sort
+            items.sort(
+                key=lambda item: self._sort_value(item, level, col), reverse=desc
+            )
+
+    def _sort_name(self, item: CourseInfo | AssignmentInfo, level: str) -> str:
+        state = self.state
+        if level == "global":
+            c = cast(CourseInfo, item)
+            return course_display_name(state.assignments_dir, c.dir_name, c.course_id)
+        a = cast(AssignmentInfo, item)
+        course_name = state.current_course.dir_name if state.current_course else ""
+        return assignment_display_name(
+            state.assignments_dir,
+            course_name,
+            a.dir_name,
+            a.assignment_id,
+        )
+
+    def _sort_value(
+        self, item: CourseInfo | AssignmentInfo, level: str, col: int
+    ) -> str | int | float:
+        if col == 0:  # name column: use the display name itself
+            return self._sort_name(item, level)
+        if level == "global":
+            c = cast(CourseInfo, item)
+            values: dict[int, str | int | float] = {
+                1: c.assignment_count,
+                2: c.counts.raw,
+                3: c.counts.processed,
+                4: c.counts.graded,
+                5: c.score_mean if c.score_mean is not None else -1.0,
+                6: c.last_run if c.last_run is not None else -1.0,
+            }
+            return values.get(col, 0)
+        a = cast(AssignmentInfo, item)
+        values: dict[int, str | int | float] = {
+            1: str(a.assignment_id or ""),
+            2: a.counts.raw,
+            3: a.counts.processed,
+            4: a.counts.graded,
+            5: a.score_summary if a.score_summary is not None else -1.0,
+            6: state_key(a),
+            7: a.last_run if a.last_run is not None else -1.0,
+        }
+        return values.get(col, 0)
+
+    @on(Input.Changed)
+    def _on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "search-input":
+            return
+        self._search = event.value
+        self.render_level()
+
+    @on(DataTable.HeaderSelected)
+    def _on_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        if event.data_table.id != "dashboard-table":
+            return
+        col = event.column_index
+        self._sort = (
+            (col, not self._sort[1])
+            if self._sort is not None and self._sort[0] == col
+            else (col, False)
+        )
+        self.render_level()
+
     # ---------- navigation ----------
 
     def _selected(self) -> object | None:
@@ -430,7 +565,9 @@ class DashboardScreen(Vertical):
             return self._rows[idx]
         return None
 
-    def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "dashboard-table":
+            return  # plagiarism pane tables handle their own selection
         self.action_go_down()
 
     def action_go_down(self) -> None:
@@ -441,6 +578,7 @@ class DashboardScreen(Vertical):
         if item is None:
             return
         self._remember_selection()
+        self._sort = None  # level change resets sort to default name asc
         if state.dashboard_level == "global":
             state.current_course = item  # type: ignore[assignment]
             state.dashboard_level = "course"
@@ -454,6 +592,7 @@ class DashboardScreen(Vertical):
     def action_go_up(self) -> None:
         state = self.state
         self._remember_selection()
+        self._sort = None  # level change resets sort to default name asc
         if state.dashboard_level == "assignment":
             state.dashboard_level = "course"
             state.current_assignment = None
@@ -840,9 +979,6 @@ class DashboardScreen(Vertical):
 
     def action_filter_not_run(self) -> None:
         self._set_filter("not_run")
-
-    def action_filter_flagged(self) -> None:
-        self._set_filter("flagged")
 
     def _set_filter(self, value: str | None) -> None:
         if self.state.dashboard_level != "course":

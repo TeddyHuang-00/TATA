@@ -21,14 +21,20 @@ import tempfile
 import time
 from pathlib import Path
 
-from e2e_common import cell, spy_notify, wait_for, write_aliases  # isort: skip - seeds repo-root sys.path before src imports
+from e2e_common import cell, spy_notify, text, wait_for, write_aliases  # isort: skip - seeds repo-root sys.path before src imports
 from src.tui import plagiarism as plag_mod
 from src.tui.app import TataApp
 from src.tui.plagiarism import PlagiarismScreen, pair_side_name
+from src.tui.plagiarism_detail import (
+    AggregatePairDetailScreen,
+    AssignmentDetailScreen,
+    AssignmentPairDetailScreen,
+    StudentDetailScreen,
+)
 from textual.app import ComposeResult, Screen
 from textual.containers import Horizontal
 from textual.pilot import Pilot
-from textual.widgets import DataTable, RichLog, Static, TabbedContent
+from textual.widgets import DataTable, RichLog, Static, TabbedContent, Tree
 
 COURSE = "c1-first"
 A1 = "a1"
@@ -106,6 +112,86 @@ PROCESSED_A1C = (
     "# another docstring header\nimport numpy as np\nresult = np.array([1, 2])\n"
 )
 
+# feedback 3 detail-drilldown fixture: uid-style pair stems so aggregate
+# labels (both 'Name(uid)' and plain-uid shapes) resolve to real pairs
+DETAIL_COURSE = "c2-detail"
+
+D_PAIRS_A1 = {
+    "version": 1,
+    "pair_count": 4,
+    "pairs": [
+        {
+            "test_file": "415019.md",
+            "reference_file": "415020.md",
+            "test_similarity_pct": 91.0,
+            "reference_similarity_pct": 92.0,
+            "max_similarity_pct": 92.0,
+            "token_overlap": [1, 2],
+        },
+        {
+            "test_file": "415019.md",
+            "reference_file": "1001.md",
+            "max_similarity_pct": 62.0,
+            "token_overlap": 4,
+        },
+        {
+            "test_file": "1001.md",
+            "reference_file": "1002.md",
+            "max_similarity_pct": 88.0,
+            "token_overlap": 3,
+        },
+        {
+            "test_file": "1003.md",
+            "reference_file": "1004.md",
+            "max_similarity_pct": 55.0,
+            "token_overlap": 2,
+        },
+    ],
+}
+
+D_PAIRS_A2 = {
+    "version": 1,
+    "pair_count": 2,
+    "pairs": [
+        {
+            "test_file": "415019.md",
+            "reference_file": "415020.md",
+            "max_similarity_pct": 70.0,
+            "token_overlap": 1,
+        },
+        {
+            "test_file": "1001.md",
+            "reference_file": "1002.md",
+            "max_similarity_pct": 66.0,
+            "token_overlap": 0,
+        },
+    ],
+}
+
+D_AGGREGATE_JSON = {
+    "alpha": 0.01,
+    "tested_pairs": 2,
+    "flagged_pairs": 1,
+    "pairs": [
+        {
+            "student_a": "Mia(415019)",  # Name(uid) label shape (parse_uid)
+            "student_b": "Leo(415020)",
+            "raw_similarity_pct": 88.0,
+            "z_score": 5.21,
+            "one_sided_p_value": 0.0002,
+            "shared_assignments": 2,
+        },
+        {
+            "student_a": "Alice(1001)",  # plain-uid shape for row 1
+            "student_b": "Bob(1002)",
+            "raw_similarity_pct": 75.0,
+            "z_score": 3.4,
+            "one_sided_p_value": 0.02,
+            "shared_assignments": 2,
+        },
+    ],
+}
+
 
 def _write_pairs(assignment_dir: Path, payload: dict) -> None:
     (assignment_dir / "plagiarism").mkdir(parents=True, exist_ok=True)
@@ -174,6 +260,49 @@ def _make_fixture(assignments_dir: Path) -> None:
     write_aliases(
         course_dir / A2 / "alias.toml",
         students={"a2d": "Dora D", "a2e": "Eve E"},
+    )
+
+
+def _make_detail_fixture(assignments_dir: Path) -> None:
+    """Course ``c2-detail`` (created lazily in _check_details: a second
+    course must not appear in scan_courses while the main checks run)."""
+    course_dir = assignments_dir / DETAIL_COURSE
+    course_dir.mkdir(parents=True)
+    (course_dir / "config.toml").write_text(
+        "[fetch]\ncourse_id = 111111\n[plagiarism]\ndisplay_threshold = 0.9\n",
+        encoding="utf-8",
+    )
+    for name in ("a1", "a2"):
+        a_dir = course_dir / name
+        for sub in ("raw", "processed", "plagiarism"):
+            (a_dir / sub).mkdir(parents=True)
+        (a_dir / "config.toml").write_text("", encoding="utf-8")
+    _write_pairs(course_dir / "a1", D_PAIRS_A1)
+    _write_pairs(course_dir / "a2", D_PAIRS_A2)
+    for name in ("415019", "415020", "1001", "1002", "1003", "1004"):
+        (course_dir / "a1" / "processed" / f"{name}.md").write_text(
+            f"# {name}\nline two\nline three\n", encoding="utf-8"
+        )
+    for name in ("415019", "415020", "1001", "1002"):
+        (course_dir / "a2" / "processed" / f"{name}.md").write_text(
+            f"# {name}\nline two\nline three\n", encoding="utf-8"
+        )
+    (course_dir / "plagiarism").mkdir()
+    (course_dir / "plagiarism" / "aggregate.json").write_text(
+        json.dumps(D_AGGREGATE_JSON, indent=2), encoding="utf-8"
+    )
+    write_aliases(
+        course_dir / "alias.toml",
+        course_alias="Detail Course",
+        assignment_alias={"a1": "Assignment One", "a2": "Assignment Two"},
+        students={
+            "415019": "Mia M",
+            "415020": "Leo L",
+            "1001": "Alice A",
+            "1002": "Bob B",
+            "1003": "Carol C",
+            "1004": "Dave D",
+        },
     )
 
 
@@ -578,6 +707,196 @@ def _check_late_alias_resolution(app: TataApp) -> None:
     )
 
 
+def _set_detail_state(app: TataApp) -> None:
+    app.state.refresh_courses()
+    course = next(c for c in app.state.courses if c.dir_name == DETAIL_COURSE)
+    app.state.current_course = course
+    app.state.load_assignments(course)
+    app.state.current_assignment = None
+
+
+async def _pane_enter(screen: PlagiarismScreen, pilot: Pilot, pane_id: str) -> None:
+    """Tab switch + focus the pane's table (caller presses enter)."""
+    await _go_tab(screen, pilot, pane_id)
+    screen._focus_active_table()  # type: ignore[attr-defined]
+    await pilot.pause()
+
+
+async def _check_agg_enter(app: TataApp, pilot: Pilot) -> None:
+    """(a)(b) aggregate row enter -> full-screen pair detail; esc pops."""
+    screen = app.screen.query_one(PlagiarismScreen)
+    await _pane_enter(screen, pilot, "pane-aggregate")
+    stack_before = len(app.screen_stack)
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AggregatePairDetailScreen))
+    assert len(app.screen_stack) == stack_before + 1
+    agg = app.screen
+    assert isinstance(agg, AggregatePairDetailScreen)
+    banner = text(agg.query_one("#detail-banner", Static))
+    assert "Mia(415019)" in banner, banner
+    assert "Leo(415020)" in banner, banner
+    assert "aggregate z 5.21" in banner, banner
+    shared = agg.query_one("#detail-shared-table", DataTable)
+    assert shared.row_count == 2, shared.row_count  # a1 + a2 both shared
+    assert cell(shared, 0, 0) == "Assignment One", cell(shared, 0, 0)
+    assert cell(shared, 0, 1) == "92.0", cell(shared, 0, 1)
+    assert cell(shared, 1, 0) == "Assignment Two", cell(shared, 1, 0)
+    assert cell(shared, 1, 1) == "70.0", cell(shared, 1, 1)
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, AggregatePairDetailScreen))
+    assert len(app.screen_stack) == stack_before
+
+
+async def _check_agg_drill(app: TataApp, pilot: Pilot) -> None:
+    """(c)(d) shared-assignment row -> pair detail (drill, then esc twice)."""
+    screen = app.screen.query_one(PlagiarismScreen)
+    screen.query_one("#agg-table", DataTable).focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AggregatePairDetailScreen))
+    agg = app.screen
+    assert isinstance(agg, AggregatePairDetailScreen)
+    shared = agg.query_one("#detail-shared-table", DataTable)
+    shared.focus()
+    await pilot.pause()
+    stack_before = len(app.screen_stack)
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentPairDetailScreen))
+    assert len(app.screen_stack) == stack_before + 1
+    pair_screen = app.screen
+    assert isinstance(pair_screen, AssignmentPairDetailScreen)
+    banner = text(pair_screen.query_one("#detail-banner", Static))
+    assert "Assignment One" in banner, banner
+    assert "Mia M" in banner, banner
+    assert "Leo L" in banner, banner
+    assert "max sim 92.0%" in banner, banner
+    assert "z " in banner, banner
+    hist = text(pair_screen.query_one("#detail-histogram", Static))
+    assert "90-100%" in hist, hist
+    assert "← A-B" in hist, hist
+    left = text(pair_screen.query_one("#detail-cmp-left", Static))
+    assert "[red]   1" in left, "embedded compare must highlight overlap lines"
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: isinstance(app.screen, AggregatePairDetailScreen))
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, AggregatePairDetailScreen))
+
+
+async def _check_assignment_detail(app: TataApp, pilot: Pilot) -> None:
+    """(e) assignments row enter -> stats report with histogram."""
+    screen = app.screen.query_one(PlagiarismScreen)
+    await _pane_enter(screen, pilot, "pane-assignments")
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentDetailScreen))
+    assign = app.screen
+    assert isinstance(assign, AssignmentDetailScreen)
+    banner = text(assign.query_one("#detail-banner", Static))
+    assert "pairs 4" in banner, banner
+    assert "flagged 1" in banner, banner
+    hist = text(assign.query_one("#detail-histogram", Static))
+    assert "n=4" in hist, hist
+    assert "90-100%" in hist, hist
+    pairs_table = assign.query_one("#detail-pairs-table", DataTable)
+    assert pairs_table.row_count == 4, pairs_table.row_count
+    assert cell(pairs_table, 0, 0) == "Mia M", cell(pairs_table, 0, 0)
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, AssignmentDetailScreen))
+
+
+async def _check_pair_detail(app: TataApp, pilot: Pilot) -> None:
+    """(f) pairs row enter -> pair detail with z-score + highlighted hist."""
+    screen = app.screen.query_one(PlagiarismScreen)
+    await _pane_enter(screen, pilot, "pane-pairs")
+    stack_before = len(app.screen_stack)
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentPairDetailScreen))
+    assert len(app.screen_stack) == stack_before + 1
+    pair_screen = app.screen
+    assert isinstance(pair_screen, AssignmentPairDetailScreen)
+    banner = text(pair_screen.query_one("#detail-banner", Static))
+    assert "Mia M" in banner, banner
+    assert "max sim 92.0%" in banner, banner
+    assert "z " in banner, banner
+    await pilot.press("escape")
+    await wait_for(
+        pilot, lambda: not isinstance(app.screen, AssignmentPairDetailScreen)
+    )
+
+
+async def _check_student_detail(app: TataApp, pilot: Pilot) -> None:
+    """(g) students row enter -> Tree summary; peer and assignment navigate."""
+    screen = app.screen.query_one(PlagiarismScreen)
+    await _pane_enter(screen, pilot, "pane-students")
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, StudentDetailScreen))
+    student = app.screen
+    assert isinstance(student, StudentDetailScreen)
+    tree = student.query_one("#detail-tree", Tree)
+    assert tree.root.label.plain == "Leo L", tree.root.label
+    assert tree.root.is_expanded, "tree root collapsed — children must be visible"
+    peer = tree.root.children[0]
+    assert peer is not None
+    assert peer.label.plain == "Mia M (z 5.21 / mean sim 81.0%)", peer.label
+    assert len(peer.children) == 2, len(peer.children)  # both assignments
+    tree.move_cursor(peer)
+    await pilot.pause()
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AggregatePairDetailScreen))
+    agg = app.screen
+    assert isinstance(agg, AggregatePairDetailScreen)
+    banner = text(agg.query_one("#detail-banner", Static))
+    assert "Mia(415019)" in banner, banner
+    assert "aggregate z 5.21" in banner, banner
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: isinstance(app.screen, StudentDetailScreen))
+    student = app.screen
+    assert isinstance(student, StudentDetailScreen)
+    tree = student.query_one("#detail-tree", Tree)
+    child = tree.root.children[0].children[0]
+    tree.move_cursor(child)
+    await pilot.pause()
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentPairDetailScreen))
+    pair_screen = app.screen
+    assert isinstance(pair_screen, AssignmentPairDetailScreen)
+    banner = text(pair_screen.query_one("#detail-banner", Static))
+    assert "Assignment One" in banner, banner
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: isinstance(app.screen, StudentDetailScreen))
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, StudentDetailScreen))
+
+
+async def _check_highlight_regression(
+    screen: PlagiarismScreen, pilot: Pilot, app: TataApp
+) -> None:
+    """(h) highlight on the pairs pane never grows the screen stack."""
+    await _go_tab(screen, pilot, "pane-pairs")
+    table = screen.query_one("#pairs-table", DataTable)
+    stack_before = len(app.screen_stack)
+    table.move_cursor(row=0)
+    await wait_for(pilot, lambda: screen.query_one("#cmp-pane", Horizontal).display)
+    table.move_cursor(row=1)
+    await pilot.pause()
+    assert len(app.screen_stack) == stack_before, "highlight must not push screens"
+
+
+async def _check_details(app: TataApp, pilot: Pilot) -> None:
+    """Feedback 3: Enter/double-click on a pane row opens that entry's
+    full-screen detail; drill-down and esc-pop navigate a detail stack."""
+    _make_detail_fixture(app.state.assignments_dir)
+    _set_detail_state(app)
+    screen = app.screen.query_one(PlagiarismScreen)
+    screen.reload_all()
+    await asyncio.sleep(0.05)
+    await _check_agg_enter(app, pilot)
+    await _check_agg_drill(app, pilot)
+    await _check_assignment_detail(app, pilot)
+    await _check_pair_detail(app, pilot)
+    await _check_student_detail(app, pilot)
+    await _check_highlight_regression(screen, pilot, app)
+
+
 async def check_screen(app: TataApp, pilot: Pilot) -> None:
     _set_state(app)
     screen = await _enter(app, pilot)
@@ -595,6 +914,7 @@ async def check_screen(app: TataApp, pilot: Pilot) -> None:
     _check_late_alias_resolution(app)
     await _check_jobs(screen, pilot, app)
     await _check_detect_from_assignments_pane(app, pilot)
+    await _check_details(app, pilot)
 
 
 async def main() -> None:

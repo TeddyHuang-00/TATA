@@ -13,13 +13,14 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from e2e_common import COURSE, make_course, text, wait_for  # isort: skip - seeds repo-root sys.path before src imports
-from src.tui.app import TataApp
+from e2e_common import COURSE, cell, make_course, text, wait_for  # isort: skip - seeds repo-root sys.path before src imports
+from src.tui.app import DashboardScreen, TataApp
 from src.tui.library import LibraryScreen
 from src.tui.plagiarism import PlagiarismScreen
 from src.tui.scan import scan_assignments, scan_courses
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import AssignmentScreen
+from textual.pilot import Pilot
 from textual.widgets import DataTable, Static, TabbedContent
 
 COURSE_A = COURSE
@@ -55,6 +56,28 @@ def _check_scanner(assignments_dir: Path) -> None:
     assert a2.flagged_pairs == 0
 
 
+async def _check_header_sort(pilot: Pilot, app: TataApp, table: DataTable) -> None:
+    """Item 4: header click on column 0 toggles asc -> desc -> asc."""
+    dash = app.query_one(DashboardScreen)
+    table.focus()
+    await pilot.pause()
+    await pilot.click("#dashboard-table", offset=(5, 1))
+    await pilot.pause()
+    assert dash._sort == (0, False), dash._sort
+    assert cell(table, 0, 0) == COURSE_A, cell(table, 0, 0)
+    await asyncio.sleep(0.6)  # clear the double-click window
+    await pilot.click("#dashboard-table", offset=(5, 1))
+    await pilot.pause()
+    assert dash._sort == (0, True), dash._sort
+    assert cell(table, 0, 0) == COURSE_B, cell(table, 0, 0)
+    await asyncio.sleep(0.6)
+    # back to asc so the drill-down below hits COURSE_A at row 0
+    await pilot.click("#dashboard-table", offset=(5, 1))
+    await pilot.pause()
+    assert dash._sort == (0, False), dash._sort
+    assert cell(table, 0, 0) == COURSE_A, cell(table, 0, 0)
+
+
 async def _check_navigation(root: Path) -> None:
     """UI flow: global -> course -> assignment -> back up, breadcrumb text."""
     app = TataApp(root_dir=root)
@@ -65,6 +88,11 @@ async def _check_navigation(root: Path) -> None:
 
         assert table.row_count == 2, table.row_count
         assert "Global" in text(breadcrumb)
+        # Item 4: default order = display name asc (here == dir-name order,
+        # no aliases), independent of any previous sort state
+        assert cell(table, 0, 0) == COURSE_A, cell(table, 0, 0)
+        assert cell(table, 1, 0) == COURSE_B, cell(table, 1, 0)
+        await _check_header_sort(pilot, app, table)
 
         # drill down: Global -> Course (row 0 = COURSE_A)
         table.focus()
@@ -74,6 +102,9 @@ async def _check_navigation(root: Path) -> None:
         assert app.state.current_course is not None
         assert app.state.current_course.dir_name == COURSE_A
         assert table.row_count == 2  # a1, a2
+        # Item 4: default assignment order = display name asc (a1 < a2)
+        assert cell(table, 0, 0) == "a1", cell(table, 0, 0)
+        assert cell(table, 1, 0) == "a2", cell(table, 1, 0)
         assert COURSE_A in text(breadcrumb)
 
         # drill up: Course -> Global

@@ -78,21 +78,19 @@ def is_displayed(widget: Widget) -> bool:
     return widget.screen is widget.app.screen
 
 
-# State vocabulary (design 99 §2). "Flagged" fires on display-level pairs
-# (max_similarity_pct >= DISPLAY_THRESHOLD_PCT), NOT on aggregate z-score
-# flags (S4) — the TUI does not consume the aggregate report.
+# State vocabulary (design 99 §2). The ``flagged`` pipeline state was removed
+# (feedback 5): plagiarism flags live in the plagiarism pane only (display
+# threshold), never in the pipeline state badge.
 _STATE_LABELS = {
     "not_run": "Not run",
     "partial": "Partial",
     "done": "Done",
-    "flagged": "Flagged",
 }
 
 _BADGE_COLOR = {
     "not_run": "dim",
     "partial": "yellow",
     "done": "green",
-    "flagged": "red",
 }
 
 _STAGE_KEYS = (
@@ -107,8 +105,6 @@ _STAGE_KEYS = (
 
 def state_key(a: AssignmentInfo) -> str:
     """Map an AssignmentInfo to a ``_STATE_LABELS`` key."""
-    if a.flagged_pairs:
-        return "flagged"
     if a.counts.raw == 0:
         return "not_run"
     if (
@@ -122,8 +118,6 @@ def state_key(a: AssignmentInfo) -> str:
 
 def fmt_state(a: AssignmentInfo) -> str:
     """Counts-based pipeline state label (design 99 §2 vocabulary)."""
-    if a.flagged_pairs:
-        return f"{_STATE_LABELS['flagged']} ({a.flagged_pairs})"
     return _STATE_LABELS[state_key(a)]
 
 

@@ -116,7 +116,7 @@ def _load_pairs(assignment_dir: Path) -> tuple[list[dict] | None, str | None]:
     return data["pairs"], None
 
 
-def _load_course_pairs(
+def load_course_pairs(
     state: AppState,
 ) -> tuple[list[tuple[AssignmentInfo, dict]], list[str]]:
     """Course-scoped pairs: ``(assignment_info, pair)`` for every assignment
@@ -139,7 +139,7 @@ def _load_course_pairs(
     return loaded, errors
 
 
-def _load_aggregate(course_dir: Path) -> tuple[dict | None, str | None]:
+def load_aggregate(course_dir: Path) -> tuple[dict | None, str | None]:
     """(aggregate payload, error).  ``None`` payload = file absent."""
     data, err = _load_payload(_aggregate_file(course_dir))
     if err is not None:
@@ -279,6 +279,18 @@ def _side_lines(assignment_dir: Path, file_name: str, overlap_lines: set[int]) -
 # ---------- embedded compare pane ----------
 
 
+def compare_content(assignment_dir: Path, pair: dict) -> tuple[str, str]:
+    """(left, right) compare text for one pair (shared with detail screens)."""
+    overlap = pair.get("token_overlap")
+    overlap_lines = (
+        {int(line) for line in overlap} if isinstance(overlap, list) else set()
+    )
+    return (
+        _side_lines(assignment_dir, str(pair.get("test_file")), overlap_lines),
+        _side_lines(assignment_dir, str(pair.get("reference_file")), overlap_lines),
+    )
+
+
 def _cmp_pane() -> ComposeResult:
     """Side-by-side compare below the pairs table (hidden by default)."""
     with Horizontal(id="cmp-pane"), Vertical():
@@ -326,6 +338,12 @@ class PlagiarismScreen(JobHost):
         self._course_errors: list[str] = []
         self._visible_rows: list[tuple[AssignmentInfo, dict]] = []
         self._assign_rows: list[AssignmentInfo] = []
+        self._students_rows: list[str] = []
+        self._agg_rows: list[dict] = []
+        self._agg_rows_all: list[
+            dict
+        ] = []  # full ranking (docs use; pane shows top-20)
+        self._pairs_by_assignment: dict[str, list[dict]] = {}
         self._agg: dict | None = None
         self._agg_error: str | None = None
         self._threshold_pct = DEFAULT_DISPLAY_THRESHOLD_PCT
@@ -446,8 +464,8 @@ class PlagiarismScreen(JobHost):
         # (shared tolerant helper with scan_courses — malformed configs
         # fall back to the default instead of blanking the pane)
         self._threshold_pct = _plagiarism_threshold_pct(course.config_path)
-        self._course_pairs, self._course_errors = _load_course_pairs(state)
-        self._agg, self._agg_error = _load_aggregate(course.config_path.parent)
+        self._course_pairs, self._course_errors = load_course_pairs(state)
+        self._agg, self._agg_error = load_aggregate(course.config_path.parent)
         self._notify_load_errors()
         self._render_topbar()
         self._render_assignments()
@@ -496,6 +514,7 @@ class PlagiarismScreen(JobHost):
         by_assignment: dict[str, list[dict]] = {}
         for a, pair in self._course_pairs:
             by_assignment.setdefault(a.dir_name, []).append(pair)
+        self._pairs_by_assignment = by_assignment
         state = self.state
         course_dir_name = self._course_dir_name()
         rows: list[tuple[AssignmentInfo, int, int, float]] = []
@@ -576,7 +595,9 @@ class PlagiarismScreen(JobHost):
                 if flagged:
                     rec[2] += 1
                 rec[3] = max(rec[3], sim)
-        rows = sorted(students.values(), key=lambda r: (-r[3], str(r[0])))
+        rows = sorted(students.items(), key=lambda kv: (-kv[1][3], str(kv[1][0])))
+        self._students_rows = [uid for uid, _rec in rows]
+        rows = [rec for _uid, rec in rows]
         if not rows:
             self._show_pane_empty(
                 empty,
@@ -662,6 +683,8 @@ class PlagiarismScreen(JobHost):
         table = self.query_one("#agg-table", DataTable)
         empty = self.query_one("#agg-empty", Static)
         table.clear(columns=True)
+        self._agg_rows = []
+        self._agg_rows_all = []
         if self._agg_error is not None:
             self._show_pane_empty(empty, table, f"Load failed: {self._agg_error}")
             return
@@ -678,7 +701,11 @@ class PlagiarismScreen(JobHost):
         ranking = sorted(
             rows,
             key=lambda row: (-float(row.get("z_score") or 0.0),),
-        )[:PAGE_ROWS]
+        )
+        # pane shows the top PAGE_ROWS; the detail screens get the full
+        # ranking so students beyond the page still see their correlations
+        self._agg_rows_all = ranking
+        self._agg_rows = ranking[:PAGE_ROWS]
         for index, row in enumerate(ranking):
             p = float(row.get("one_sided_p_value") or 1.0)
             z = float(row.get("z_score") or 0.0)
@@ -763,10 +790,6 @@ class PlagiarismScreen(JobHost):
             return
         course_dir_name = state.current_course.dir_name
         a, pair = self._visible_rows[cursor]
-        overlap = pair.get("token_overlap")
-        overlap_lines = (
-            {int(line) for line in overlap} if isinstance(overlap, list) else set()
-        )
         sim = _pair_pct(pair)
         flag_note = "  [red]FLAG[/red]" if sim >= self._threshold_pct else ""
         test_name = pair_side_name(
@@ -786,19 +809,71 @@ class PlagiarismScreen(JobHost):
             f"{escape(ref_name)}   max_sim {sim:.1f}%"
             f"   token_overlap {_overlap_display(pair)}{flag_note}[/b]"
         )
-        assignment_dir = a.config_path.parent
-        self.query_one("#cmp-left", Static).update(
-            _side_lines(assignment_dir, str(pair.get("test_file")), overlap_lines)
-        )
-        self.query_one("#cmp-right", Static).update(
-            _side_lines(assignment_dir, str(pair.get("reference_file")), overlap_lines)
-        )
+        left, right = compare_content(a.config_path.parent, pair)
+        self.query_one("#cmp-left", Static).update(left)
+        self.query_one("#cmp-right", Static).update(right)
         pane.display = True
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "pairs-table":
             return
         self._update_compare()
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter/click on a pane row: push that row's full-screen detail.
+
+        event.stop() keeps the selection from bubbling into the host
+        DashboardScreen, whose own row-selected handler navigates the
+        dashboard table (feedback 3 bug).
+        """
+        event.stop()
+        index = event.cursor_row
+        course = self.state.current_course
+        table_id = event.data_table.id
+        if course is None:
+            return
+        # local import: plagiarism_detail imports plagiarism (compare helpers)
+        from src.tui.plagiarism_detail import (  # ruff: ignore[import-outside-top-level]
+            AggregatePairDetailScreen,
+            AssignmentDetailScreen,
+            AssignmentPairDetailScreen,
+            PlagiarismDocs,
+            StudentDetailScreen,
+            parse_uid,
+        )
+
+        docs = PlagiarismDocs(
+            state=self.state,
+            course=course,
+            pairs_by_assignment=self._pairs_by_assignment,
+            aggregate_rows=self._agg_rows_all,
+            threshold_pct=self._threshold_pct,
+        )
+        if table_id == "agg-table":
+            if not (0 <= index < len(self._agg_rows)):
+                return
+            row = self._agg_rows[index]
+            self.app.push_screen(
+                AggregatePairDetailScreen(
+                    docs,
+                    parse_uid(str(row.get("student_a") or "")),
+                    parse_uid(str(row.get("student_b") or "")),
+                    row,
+                )
+            )
+        elif table_id == "assign-table":
+            if not (0 <= index < len(self._assign_rows)):
+                return
+            self.app.push_screen(AssignmentDetailScreen(docs, self._assign_rows[index]))
+        elif table_id == "students-table":
+            if not (0 <= index < len(self._students_rows)):
+                return
+            self.app.push_screen(StudentDetailScreen(docs, self._students_rows[index]))
+        elif table_id == "pairs-table":
+            if not (0 <= index < len(self._visible_rows)):
+                return
+            info, pair = self._visible_rows[index]
+            self.app.push_screen(AssignmentPairDetailScreen(docs, info, pair))
 
     # ---------- actions ----------
 

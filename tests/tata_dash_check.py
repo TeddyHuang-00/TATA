@@ -40,6 +40,7 @@ from src.tui.app import (
     TataApp,
 )
 from src.tui.plagiarism import PlagiarismScreen
+from src.tui.plagiarism_detail import AssignmentPairDetailScreen
 from src.tui.score_review import ScoreReviewScreen
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import ConfirmationModal
@@ -287,7 +288,8 @@ async def _check_config_keys(pilot: Pilot, app: TataApp) -> None:
 
 
 async def _check_filter(pilot: Pilot, app: TataApp) -> None:
-    """1-5 filter: 5 -> flagged only; 1 -> all."""
+    """1-4 filter (the 5/Flagged filter was removed): 3 -> partial (the
+    fixture's state), 2 -> empty; pressing 5 is a no-op now."""
     app.switch_tab("tab-dashboard")
     await pilot.pause()
     # enter course again
@@ -297,13 +299,122 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     await pilot.pause()
     assert app.state.dashboard_level == "course"
     assert table.row_count == 2
-    await pilot.press("5")
+    await pilot.press("3")
     await pilot.pause()
-    assert table.row_count == 1, table.row_count
+    assert table.row_count == 2, table.row_count  # both assignments are partial
+    await pilot.press("2")
+    await pilot.pause()
+    assert table.row_count == 0, table.row_count  # none are done
+    assert app.query_one("#dash-empty", Static).display
+    await pilot.press("5")  # feedback 5: the flagged binding is gone
+    await pilot.pause()
+    assert table.row_count == 0
     await pilot.press("1")
     await pilot.pause()
     assert table.row_count == 2
     assert app.query_one(DashboardScreen)._filter is None
+
+
+async def _check_search_sort(pilot: Pilot, app: TataApp) -> None:
+    """Item 4: live search filters rows (search AND filter), header click
+    toggles per-column sort, default order = display name asc."""
+    dash = app.query_one(DashboardScreen)
+    table = app.query_one("#dashboard-table", DataTable)
+    search = app.query_one("#search-input", Input)
+    assert app.state.dashboard_level == "course"
+    assert search.display
+    assert table.row_count == 2
+    # live search: substring match on display names (case-insensitive)
+    search.value = "my"
+    await wait_for(pilot, lambda: table.row_count == 1)
+    assert cell(table, 0, 0) == "My Alias", cell(table, 0, 0)
+    search.value = "second"
+    await wait_for(pilot, lambda: table.row_count == 1)
+    assert cell(table, 0, 0) == "Second Alias", cell(table, 0, 0)
+    # no match -> empty state
+    search.value = "zzz-no-such"
+    await wait_for(pilot, lambda: table.row_count == 0)
+    assert text(app.query_one("#dash-empty", Static)) == (
+        "No assignments match the filter/search."
+    )
+    search.value = ""
+    await wait_for(pilot, lambda: table.row_count == 2)
+    # default order = display name asc (My Alias before Second Alias)
+    assert cell(table, 0, 0) == "My Alias", cell(table, 0, 0)
+    assert cell(table, 1, 0) == "Second Alias", cell(table, 1, 0)
+    # header click on column 0: asc -> desc (double-click interval avoided
+    # by a real sleep between clicks; see feedback-3 double-click notes)
+    table.focus()
+    await pilot.pause()
+    await pilot.click("#dashboard-table", offset=(5, 1))
+    await pilot.pause()
+    assert dash._sort == (0, False), dash._sort
+    assert cell(table, 0, 0) == "My Alias", cell(table, 0, 0)
+    await asyncio.sleep(0.6)  # clear the double-click window
+    await pilot.click("#dashboard-table", offset=(5, 1))
+    await pilot.pause()
+    assert dash._sort == (0, True), dash._sort
+    assert cell(table, 0, 0) == "Second Alias", cell(table, 0, 0)
+    # search AND filter compose: filter 3 (partial) + search "second"
+    await pilot.press("3")
+    await pilot.pause()
+    assert table.row_count == 2
+    search.value = "second"
+    await wait_for(pilot, lambda: table.row_count == 1)
+    assert cell(table, 0, 0) == "Second Alias", cell(table, 0, 0)
+    search.value = ""
+    await pilot.press("1")
+    await pilot.pause()
+    # global level: course list is searchable too; sort resets on nav
+    await pilot.press("escape")
+    await pilot.pause()
+    assert app.state.dashboard_level == "global"
+    assert dash._sort is None
+    search.value = "my"
+    await wait_for(pilot, lambda: table.row_count == 1)
+    assert cell(table, 0, 0) == "My Course", cell(table, 0, 0)
+    search.value = ""
+    await wait_for(pilot, lambda: table.row_count == 1)
+
+
+async def _check_search_keystroke(pilot: Pilot, app: TataApp) -> None:
+    """MAJOR-D: real keystrokes accumulate in #search-input. Every
+    Input.Changed rebuilds the table via render_level, whose _refocus() must
+    not grab focus back from the input mid-typing (that swallowed chars 2+)."""
+    table = app.query_one("#dashboard-table", DataTable)
+    search = app.query_one("#search-input", Input)
+    table.focus()
+    await pilot.press("enter")
+    await pilot.pause()
+    assert app.state.dashboard_level == "course"
+    assert table.row_count == 2
+    search.focus()
+    await pilot.pause()
+    for ch in "sec":
+        await pilot.press(ch)
+        await pilot.pause()
+    # regression: all three keystrokes landed in the input, focus not stolen
+    assert search.value == "sec", search.value
+    assert search.has_focus, "focus stolen from #search-input after typing"
+    await wait_for(pilot, lambda: table.row_count == 1)
+    assert cell(table, 0, 0) == "Second Alias", cell(table, 0, 0)
+    # real-key clear (ctrl+u deletes left-of-cursor = all), still focused
+    await pilot.press("ctrl+u")
+    await pilot.pause()
+    assert search.value == "", search.value
+    await wait_for(pilot, lambda: table.row_count == 2)
+    # user can leave the input (Tab) and drive the rebuilt table again
+    await pilot.press("tab")
+    await pilot.pause()
+    assert not search.has_focus, "tab did not leave #search-input"
+    table.focus()
+    await pilot.press("down")
+    await pilot.pause()
+    assert table.cursor_row in {0, 1}, table.cursor_row
+    # leave no search residue for the following checks
+    await pilot.press("escape")
+    await pilot.pause()
+    assert app.state.dashboard_level == "global"
 
 
 async def _check_plagiarism_embed(pilot: Pilot, app: TataApp) -> None:
@@ -341,6 +452,22 @@ async def _check_plagiarism_embed(pilot: Pilot, app: TataApp) -> None:
     assert table.region.height >= 10
     # pane compactness: buttons row is at content height, no blank filler
     assert plag.query_one("#plag-buttons").region.height <= 4
+    # feedback 3 regression: Enter on a plagiarism pane row pushes its detail
+    # screen — it must NOT navigate the dashboard into the assignment view
+    pairs_table = plag.query_one("#pairs-table", DataTable)
+    assert pairs_table.row_count == 1, pairs_table.row_count
+    stack_len = len(app.screen_stack)
+    pairs_table.focus()
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentPairDetailScreen))
+    assert app.state.dashboard_level == "course", app.state.dashboard_level
+    assert len(app.screen_stack) == stack_len + 1
+    await pilot.press("escape")
+    await wait_for(
+        pilot, lambda: not isinstance(app.screen, AssignmentPairDetailScreen)
+    )
+    assert app.state.dashboard_level == "course", app.state.dashboard_level
+    assert len(app.screen_stack) == stack_len
     # assignment level: pane hidden again (embedded at course level only)
     table.focus()
     await pilot.press("enter")
@@ -550,6 +677,8 @@ async def main() -> None:
                 await _check_config_keys(pilot, app)
                 await _check_plagiarism_embed(pilot, app)
                 await _check_filter(pilot, app)
+                await _check_search_sort(pilot, app)
+                await _check_search_keystroke(pilot, app)
                 await _check_aliases(pilot, app)
         finally:
             tata_app_mod.list_assignments = orig_la
