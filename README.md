@@ -165,8 +165,8 @@ rubric = "rubrics/0-10-first-colab.toml"
 ## Starter Assets
 
 - Example assignment config: [data/example/config.toml](data/example/config.toml)
-- Example rubric: [rubrics/example_rubric.toml](rubrics/example_rubric.toml)
-- Generic system prompt: [prompt/system.md](prompt/system.md)
+- Example rubric: [data/rubrics/example_rubric.toml](data/rubrics/example_rubric.toml)
+- Generic system prompt: [data/prompt/system.md](data/prompt/system.md)
 - Reference mismatch audit script (repo-dev utility; not installed):
   [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)
 - Plagiarism: `uv run main.py plagiarism -c data/<course>/config.toml --aggregate`
