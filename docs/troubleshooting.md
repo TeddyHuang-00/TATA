@@ -24,7 +24,7 @@ Symptom:
 Fix:
 
 - Check for missing quotes, commas, or section headers.
-- Regenerate schemas with `schema` and use editor schema validation.
+- Run `cli validate -c <config>` for guidance on the failing field.
 
 ## 3. No supported files found in raw/
 
@@ -104,7 +104,7 @@ Symptom:
 Fix:
 
 1. Set required environment variable in `.env`
-1. Check provider entry in [config/provider.toml](../config/provider.toml)
+1. Check provider entry in [data/providers](../data/providers)
 1. Re-run grade stage
 
 ## 10. Slow grading throughput

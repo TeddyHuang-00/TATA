@@ -1,6 +1,7 @@
 # Assignment Config Format
 
-This guide explains how to write `data/<assignment-name>/config.toml` without relying on schema validation.
+This guide explains how to write `data/<assignment-name>/config.toml`; the
+config is validated by pydantic models every time a stage loads it.
 
 ## Layered config
 
@@ -224,7 +225,7 @@ Fields:
 
 - `rubric` (required string): rubric TOML path.
 - `system_prompt` (required string or list of strings): prompt file path(s) combined during grading.
-- `provider` (required string): provider key from `config/provider.toml`.
+- `provider` (required string): provider file stem in `data/providers/`.
 - `max_parallel_tasks` (optional int, default `10`, range `1..10`): grading concurrency.
 
 ## `[scoring]` report generation

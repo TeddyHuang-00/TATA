@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import re
 import tomllib
+from pathlib import Path
 
 import dotenv
 from instructor import Mode
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src import REPO_ROOT
 
@@ -64,13 +65,28 @@ class ProviderList(BaseModel):
         return provider
 
 
-def get_providers() -> ProviderList:
+def get_providers(providers_dir: Path | None = None) -> ProviderList:
+    """Load every ``*.toml`` in ``data/providers/``; one provider per file.
 
-    config_file = PROJECT_ROOT / "config" / "provider.toml"
-    if not config_file.exists():
-        msg = f"Provider configuration file not found: {config_file}"
+    The provider name is the filename stem; keys are flat top-level fields
+    (base_url, api_key, model, mode, temperature).
+    """
+    providers_dir = providers_dir or (PROJECT_ROOT / "data" / "providers")
+    provider_files = sorted(providers_dir.glob("*.toml"))
+    if not provider_files:
+        msg = f"no provider files at {providers_dir}"
         raise FileNotFoundError(msg)
 
-    config = tomllib.loads(config_file.read_text())
+    providers: dict[str, ProviderInfo] = {}
+    for file in provider_files:
+        name = file.stem
+        try:
+            provider = ProviderInfo.model_validate(
+                tomllib.loads(file.read_text(encoding="utf-8"))
+            )
+        except (tomllib.TOMLDecodeError, ValidationError) as exc:
+            msg = f"invalid provider file {file}: {exc}"
+            raise ValueError(msg) from exc
+        providers[name] = provider
 
-    return ProviderList.model_validate(config)
+    return ProviderList(providers=providers)

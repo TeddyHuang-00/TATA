@@ -7,7 +7,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 ## Core Features
 
 - **Config-first architecture**: define assignment behavior in TOML, not ad-hoc scripts.
-- **Dynamic schema validation**: assignment/provider/rubric models are validated with generated JSON schemas for safer edits and faster onboarding.
+- **Config validation**: assignment/provider/rubric models are parsed and validated with pydantic models on load; `cli validate` checks a config end to end (rubric, prompts, provider, reference).
 - **Rubric-driven LLM grading**: grading response schemas are generated from rubric criteria, keeping evaluation structure consistent and auditable.
 - **Parallel grading engine**: bounded concurrency boosts throughput while preserving checkpointed progress and deterministic outputs.
 - **Stage-level control**: run only what you need (`preprocess`, `plagiarism`, `grade`, `score`, `analyze`, `fetch`, `view`).
@@ -23,11 +23,15 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv sync
    ```
 
-2. Generate schemas:
+2. Validate an assignment config (rubric, prompts, provider, reference):
 
    ```bash
-   uv run main.py schema
+   uv run cli validate -c data/<course>/<assignment>/config.toml
    ```
+
+   The bare `data/example/config.toml` copy source validates only at its
+   destination depth (`data/<course>/<assignment>/`), where rubric/prompt
+   paths resolve against `data/`.
 
 3. Create assignment config from [data/example/config.toml](data/example/config.toml)
 

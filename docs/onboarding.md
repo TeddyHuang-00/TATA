@@ -24,21 +24,21 @@ Example for DeepSeek:
 DEEPSEEK_API_KEY=your_key_here
 ```
 
-Provider definitions are in [config/provider.toml](../config/provider.toml).
+Provider definitions are one file each in [data/providers](../data/providers)
+(`<name>.toml`, flat top-level keys; the file stem is the provider name).
 
-## 4. Generate schemas (recommended)
+## 4. Validate a config (recommended)
 
-Generate all schemas before creating a new assignment config:
+Validate before creating a new assignment config:
 
 ```bash
-uv run main.py schema
+uv run cli validate -c data/example/config.toml
 ```
 
-This generates:
-
-- [config/assignment.schema.json](../config/assignment.schema.json)
-- [config/provider.schema.json](../config/provider.schema.json)
-- [config/rubric.schema.json](../config/rubric.schema.json)
+`validate` checks the config with the same pydantic models used at runtime,
+plus the rubric files, prompt files, `[grading].provider` against
+`data/providers/`, and the reference file when set. It exits `1` when
+anything is wrong.
 
 ## 5. Start from example config
 

@@ -7,7 +7,7 @@ Use this project as a starter by keeping only generic assets:
 - [data/example/config.toml](../data/example/config.toml)
 - [rubrics/example_rubric.toml](../rubrics/example_rubric.toml)
 - [prompt/system.md](../prompt/system.md)
-- schemas under [config](../config)
+- a couple of generic provider files under `data/providers/`
 
 Create one folder per assignment under data/.
 
@@ -32,7 +32,7 @@ Create one folder per assignment under data/.
 - Do not commit real student submissions by default.
 - Keep assignment-specific data in ignored folders.
 - Keep only reusable templates and examples in version control.
-- Regenerate schemas when config models change.
+- Run `cli validate` on each assignment config when config models change.
 
 ## 5. Extending for new coursework types
 
@@ -45,7 +45,7 @@ Create one folder per assignment under data/.
 - Replace rubric path in config
 - Replace prompt path in config
 - Add or verify template path for plagiarism (`template.ipynb` by default)
-- Ensure provider exists in [config/provider.toml](../config/provider.toml)
+- Ensure provider exists in [data/providers](../data/providers)
 - Confirm reference file exists
 - Run plagiarism, preprocess, grade, score (analyze optional)
 

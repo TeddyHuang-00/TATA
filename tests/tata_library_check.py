@@ -11,8 +11,8 @@ Mounts the full :class:`src.tui.app.TataApp` over a tmp fixture
   (ConfirmationModal cancel keeps the file, confirm removes it, referencing
   assignment configs are reported in the message) and rename (new file
   written, old removed, Select re-pointed);
-- the Providers pane (over a tmp ``config/provider.toml`` via
-  ``config_path`` injection — never the real one): add, edit, delete with
+- the Providers pane (over a tmp ``data/providers/`` folder via
+  ``providers_dir`` injection — never the real one): add, edit, delete with
   reference count, and test connection (OpenAI client patched; captures the
   resolved base_url/api_key/model; success and failure paths).
 
@@ -54,7 +54,6 @@ from textual.widgets import (
 )
 
 SAMPLE_TOML = (
-    "# schema: ../../config/rubric.schema.json\n"
     "[[criterion]]\n"
     'name = "Reflection"\n'
     'desc = "A generic description."\n'
@@ -66,18 +65,14 @@ SAMPLE_TOML = (
 PROMPT_ONE = "# Hello\nworld\n"
 PROMPT_TWO = "# Lab\ndo it\n"
 
-PROVIDER_TOML = (
-    "# schema: provider.schema.json\n"
-    "# @schema provider.schema.json\n"
-    "#:schema provider.schema.json\n"
-    "\n"
-    "[providers.ollama]\n"
+PROVIDER_OLLAMA = (
     'base_url = "http://localhost:11434/v1"\n'
     'api_key = "ollama"\n'
     'model = "qwen3.8:latest"\n'
     'mode = "markdown_json_mode"\n'
-    "\n"
-    "[providers.deepseek]\n"
+)
+
+PROVIDER_DEEPSEEK = (
     "# main cloud provider\n"
     'base_url = "https://api.deepseek.com"\n'
     'api_key = "${DEEPSEEK_API_KEY}"\n'
@@ -95,9 +90,10 @@ def _build_fixture(root: Path) -> None:
     prompts.mkdir()
     (prompts / "hello.md").write_text(PROMPT_ONE, encoding="utf-8")
     (prompts / "lab.md").write_text(PROMPT_TWO, encoding="utf-8")
-    config_dir = root / "config"
-    config_dir.mkdir()
-    (config_dir / "provider.toml").write_text(PROVIDER_TOML, encoding="utf-8")
+    config_dir = root / "data" / "providers"
+    config_dir.mkdir(parents=True)
+    (config_dir / "ollama.toml").write_text(PROVIDER_OLLAMA, encoding="utf-8")
+    (config_dir / "deepseek.toml").write_text(PROVIDER_DEEPSEEK, encoding="utf-8")
     # one assignment config referencing prompt/hello.md (reference-count path)
     course = root / "data" / "c1"
     course.mkdir()
@@ -114,9 +110,9 @@ def _build_fixture(root: Path) -> None:
 
 
 class ProviderHost(App[None]):
-    """Minimal host for ProvidersPane with an injected config path
+    """Minimal host for ProvidersPane with an injected providers dir
 
-    (test isolation: the pane never touches the repo's config/provider.toml).
+    (test isolation: the pane never touches the repo's data/providers/).
     """
 
     def __init__(self, pane: ProvidersPane) -> None:
@@ -277,9 +273,9 @@ async def _check_prompt_rename(root: Path) -> None:
         assert "prompt/lab.md" not in config_text
 
 
-async def _check_provider_add(root: Path, provider_cfg: Path) -> None:
-    """Add: New provider -> name + fields -> Save writes the table."""
-    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+async def _check_provider_add(root: Path, provider_dir: Path) -> None:
+    """Add: New provider -> name + fields -> Save writes the flat file."""
+    pane = ProvidersPane(AppState(root_dir=root), providers_dir=provider_dir)
     app = ProviderHost(pane)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
@@ -296,13 +292,10 @@ async def _check_provider_add(root: Path, provider_cfg: Path) -> None:
         pane.query_one("#pv-temperature", Input).value = "0.5"
         await pilot.click("#pv-save")
         await pilot.pause()
-        text = provider_cfg.read_text(encoding="utf-8")
-        assert text.startswith(
-            "# schema: provider.schema.json\n# @schema provider.schema.json\n"
-            "#:schema provider.schema.json\n"
-        )
+        text = (provider_dir / "pilot.toml").read_text(encoding="utf-8")
+        assert "# schema:" not in text
         doc = tomllib.loads(text)
-        assert doc["providers"]["pilot"] == {
+        assert doc == {
             "base_url": "http://localhost:9999/v1",
             "api_key": "${TEST_API_KEY}",
             "model": "pilot-model",
@@ -312,9 +305,9 @@ async def _check_provider_add(root: Path, provider_cfg: Path) -> None:
         assert select.value == "pilot"
 
 
-async def _check_provider_edit(root: Path, provider_cfg: Path) -> None:
-    """Edit: model + temperature update; other provider tables untouched."""
-    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+async def _check_provider_edit(root: Path, provider_dir: Path) -> None:
+    """Edit: model + temperature update; other provider files untouched."""
+    pane = ProvidersPane(AppState(root_dir=root), providers_dir=provider_dir)
     app = ProviderHost(pane)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
@@ -329,16 +322,19 @@ async def _check_provider_edit(root: Path, provider_cfg: Path) -> None:
         pane.query_one("#pv-temperature", Input).value = "0.5"
         await pilot.click("#pv-save")
         await pilot.pause()
-        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
-        assert doc["providers"]["ollama"]["model"] == "qwen3.9"
-        assert math.isclose(doc["providers"]["ollama"]["temperature"], 0.5)
-        assert doc["providers"]["deepseek"]["model"] == "deepseek-chat"
-        assert math.isclose(doc["providers"]["deepseek"]["temperature"], 0.3)
+        doc = tomllib.loads((provider_dir / "ollama.toml").read_text(encoding="utf-8"))
+        assert doc["model"] == "qwen3.9"
+        assert math.isclose(doc["temperature"], 0.5)
+        deepseek = tomllib.loads(
+            (provider_dir / "deepseek.toml").read_text(encoding="utf-8")
+        )
+        assert deepseek["model"] == "deepseek-chat"
+        assert math.isclose(deepseek["temperature"], 0.3)
 
 
-async def _check_provider_delete(root: Path, provider_cfg: Path) -> None:
+async def _check_provider_delete(root: Path, provider_dir: Path) -> None:
     """Delete: reference count shown; cancel keeps; confirm removes."""
-    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+    pane = ProvidersPane(AppState(root_dir=root), providers_dir=provider_dir)
     app = ProviderHost(pane)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
@@ -351,21 +347,19 @@ async def _check_provider_delete(root: Path, provider_cfg: Path) -> None:
         assert "1 assignment config(s) reference ollama" in _modal_message(app)
         await pilot.click("#cancel")
         await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
-        assert tomllib.loads(provider_cfg.read_text(encoding="utf-8"))["providers"].get(
-            "ollama"
-        )
+        assert (provider_dir / "ollama.toml").is_file()
         await pilot.click("#pv-delete")
         await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
         await pilot.click("#delete")
         await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
-        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
-        assert "ollama" not in doc["providers"]
+        assert not (provider_dir / "ollama.toml").exists()
+        assert (provider_dir / "deepseek.toml").is_file()
 
 
-async def _check_provider_rename(root: Path, provider_cfg: Path) -> None:
-    """Rename: modal flow moves the table (comments + values kept); existing
+async def _check_provider_rename(root: Path, provider_dir: Path) -> None:
+    """Rename: modal flow moves the file (comment + values kept); existing
     name rejected without a confirmation."""
-    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+    pane = ProvidersPane(AppState(root_dir=root), providers_dir=provider_dir)
     app = ProviderHost(pane)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
@@ -385,24 +379,18 @@ async def _check_provider_rename(root: Path, provider_cfg: Path) -> None:
         assert "assignment config(s)" not in message
         await pilot.click("#rename")
         await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
-        text = provider_cfg.read_text(encoding="utf-8")
-        assert text.startswith(
-            "# schema: provider.schema.json\n# @schema provider.schema.json\n"
-            "#:schema provider.schema.json\n"
-        )
+        assert not (provider_dir / "deepseek.toml").exists()
+        cohere = provider_dir / "cohere.toml"
+        text = cohere.read_text(encoding="utf-8")
+        assert "# main cloud provider" in text  # comment moved with the file
         doc = tomllib.loads(text)
-        assert "deepseek" not in doc["providers"]
-        assert doc["providers"]["cohere"] == {
+        assert doc == {
             "base_url": "https://api.deepseek.com",
             "api_key": "${DEEPSEEK_API_KEY}",
             "model": "deepseek-chat",
             "mode": "tool_call",
             "temperature": 0.3,
         }
-        # the table's own comment moved with it (file-order change is
-        # expected: tomlkit appends the reassigned table at the end)
-        comment_idx = text.index("# main cloud provider")
-        assert text.index("[providers.cohere]") < comment_idx
         assert select.value == "cohere"
         assert not pane.query_one("#pv-rename", Button).disabled
 
@@ -415,9 +403,8 @@ async def _check_provider_rename(root: Path, provider_cfg: Path) -> None:
         await pilot.pause()
         assert "already exists" in str(status.content)
         assert not isinstance(app.screen, ConfirmationModal)
-        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
-        assert "pilot" in doc["providers"]
-        assert "cohere" in doc["providers"]
+        assert (provider_dir / "pilot.toml").is_file()
+        assert (provider_dir / "cohere.toml").is_file()
 
         # -- path separator / reserved "__new__" are rejected (no confirm) --
         await _check_rename_rejected(pilot, app, status, "a/b", "Invalid provider name")
@@ -457,7 +444,7 @@ async def _check_rename_empty_rejected(pilot: Pilot, app: ProviderHost) -> None:
     await wait_for(pilot, lambda: not isinstance(app.screen, FileNameModal))
 
 
-async def _check_provider_rename_ref(root: Path, provider_cfg: Path) -> None:
+async def _check_provider_rename_ref(root: Path, provider_dir: Path) -> None:
     """Referenced rename: ref count in the confirmation; confirm and cancel
     paths."""
     ref = root / "data" / "c1" / "000002"
@@ -466,7 +453,7 @@ async def _check_provider_rename_ref(root: Path, provider_cfg: Path) -> None:
     (root / "data" / "c1" / "000001" / "config.toml").write_text(
         '[grading]\nprovider = "cohere"\n', encoding="utf-8"
     )
-    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+    pane = ProvidersPane(AppState(root_dir=root), providers_dir=provider_dir)
     app = ProviderHost(pane)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
@@ -482,9 +469,11 @@ async def _check_provider_rename_ref(root: Path, provider_cfg: Path) -> None:
         assert "1 assignment config(s) reference cohere" in _modal_message(app)
         await pilot.click("#rename")
         await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
-        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
-        assert "cohere" not in doc["providers"]
-        assert doc["providers"]["sagemaker"]["model"] == "deepseek-chat"
+        assert not (provider_dir / "cohere.toml").exists()
+        doc = tomllib.loads(
+            (provider_dir / "sagemaker.toml").read_text(encoding="utf-8")
+        )
+        assert doc["model"] == "deepseek-chat"
         assert select.value == "sagemaker"
 
         # -- cancel keeps things as they are --
@@ -495,15 +484,14 @@ async def _check_provider_rename_ref(root: Path, provider_cfg: Path) -> None:
         await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
         await pilot.click("#cancel")
         await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
-        doc = tomllib.loads(provider_cfg.read_text(encoding="utf-8"))
-        assert "nope" not in doc["providers"]
-        assert "sagemaker" in doc["providers"]
+        assert not (provider_dir / "nope.toml").exists()
+        assert (provider_dir / "sagemaker.toml").is_file()
 
 
-async def _check_provider_test(root: Path, provider_cfg: Path) -> None:
+async def _check_provider_test(root: Path, provider_dir: Path) -> None:
     """Test connection: patched OpenAI captures resolved args; success and
     failure paths."""
-    pane = ProvidersPane(AppState(root_dir=root), config_path=provider_cfg)
+    pane = ProvidersPane(AppState(root_dir=root), providers_dir=provider_dir)
     app = ProviderHost(pane)
     async with app.run_test(size=(120, 44)) as pilot:
         await wait_for(pilot, lambda: pane.query_one("#pv-name", Select).value)
@@ -583,13 +571,13 @@ async def main() -> None:
         await _check_prompt_edit_save(root)
         await _check_prompt_create_delete(root)
         await _check_prompt_rename(root)
-        provider_cfg = root / "config" / "provider.toml"
-        await _check_provider_add(root, provider_cfg)
-        await _check_provider_edit(root, provider_cfg)
-        await _check_provider_delete(root, provider_cfg)
-        await _check_provider_rename(root, provider_cfg)
-        await _check_provider_rename_ref(root, provider_cfg)
-        await _check_provider_test(root, provider_cfg)
+        provider_dir = root / "data" / "providers"
+        await _check_provider_add(root, provider_dir)
+        await _check_provider_edit(root, provider_dir)
+        await _check_provider_delete(root, provider_dir)
+        await _check_provider_rename(root, provider_dir)
+        await _check_provider_rename_ref(root, provider_dir)
+        await _check_provider_test(root, provider_dir)
     print("tata library check OK")
 
 

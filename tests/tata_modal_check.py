@@ -195,7 +195,7 @@ async def _check_import_flow() -> None:
             await wait_for(pilot, lambda: app.state.active_job is None)
             config = data / COURSE / "999999" / "config.toml"
             cfg_text = config.read_text(encoding="utf-8")
-            assert cfg_text.startswith("# schema: ../../config/assignment.schema.json")
+            assert "# schema:" not in cfg_text
             assert 'rubric = "rubrics/alpha.toml"' in cfg_text
             assert 'system_prompt = ["prompt/p1.md"]' in cfg_text
             assert 'provider = "delta"' in cfg_text

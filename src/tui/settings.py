@@ -13,8 +13,8 @@ deliberately does not import or modify that file (the ``AppState`` type is
 imported under TYPE_CHECKING only, breaking the circular import).
 
 v1 scope limits (design 05): the provider registry is read-only (edit
-``config/provider.toml`` with e=$EDITOR), ``.env`` is display-only, and
-schema generation / full hook-model editing are not implemented.
+``data/providers/*.toml`` with e=$EDITOR), ``.env`` is display-only, and
+full hook-model editing are not implemented.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ _FIELD_SPECS: tuple[tuple[str, str], ...] = (
     ("assignment.reference_file", "str"),
 )
 
-# (fqid) Select fields: provider (from config/provider.toml) and rubric (from
+# (fqid) Select fields: provider (from data/providers/) and rubric (from
 # data/rubrics), both dynamic lists.
 _SELECT_SPECS: tuple[str, ...] = ("grading.provider", "grading.rubric")
 
@@ -111,7 +111,7 @@ def _field_widget_id(fqid: str) -> str:
 
 
 def _read_registry() -> dict[str, ProviderInfo]:
-    """Provider registry from ``config/provider.toml`` ({} on any failure)."""
+    """Provider registry from ``data/providers/*.toml`` ({} on any failure)."""
     try:
         return get_providers().providers
     except Exception:  # display-only; the screen must not crash
@@ -370,7 +370,7 @@ class SettingsScreen(Vertical):
         with TabbedContent(id="settings-tabs"):
             with TabPane("Grading", id="tab-grading"), ScrollableContainer():
                 yield _LField(
-                    "provider (from config/provider.toml)",
+                    "provider (from data/providers/)",
                     self._select("grading.provider"),
                     reset=self._reset_button("grading.provider"),
                 )

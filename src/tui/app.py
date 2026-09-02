@@ -539,9 +539,6 @@ class DashboardScreen(Vertical):
         config_dir = self.state.assignments_dir / course.dir_name / str(aid)
         config_dir.mkdir(parents=True, exist_ok=True)
         config_path = config_dir / "config.toml"
-        config_path.write_text(
-            "# schema: ../../config/assignment.schema.json\n", encoding="utf-8"
-        )
         edit_config(config_path, {"grading": value})
         if name:
             seed_assignment_alias(
@@ -1120,7 +1117,7 @@ class AssignmentSetupModal(_ImportBase):
     """Quick setup after picking an assignment: rubric / prompt(s) / provider.
 
     Reads the local libraries (data/rubrics/*.toml, data/prompt/*.md) and the
-    provider registry (config/provider.toml) synchronously. Import dismisses
+    provider registry (data/providers/) synchronously. Import dismisses
     with ``{"rubric": "rubrics/<file>", "system_prompt": ["prompt/<file>",
     ...], "provider": "<name>"}`` (the Dashboard writes config.toml + aliases);
     Cancel dismisses None. Import stays disabled while no prompt is checked
@@ -1147,7 +1144,7 @@ class AssignmentSetupModal(_ImportBase):
             errors.append("No prompt files found in data/prompt.")
         if not self._providers:
             errors.append(
-                "No providers configured — add [providers] to config/provider.toml."
+                "No providers configured — add provider files to data/providers/."
             )
         self._error = " ".join(errors) or None
 

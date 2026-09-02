@@ -36,7 +36,6 @@ from textual.pilot import Pilot
 from textual.widgets import DataTable, Input, Select, Static, TextArea
 
 SAMPLE_TOML = (
-    "# schema: ../../config/rubric.schema.json\n"
     "[[criterion]]\n"
     'name = "Reflection"\n'
     'desc = "A generic description."\n'
@@ -204,7 +203,7 @@ async def _check_save_roundtrip(root: Path) -> None:
         text = path.read_text(encoding="utf-8")
         assert "[[criterion]]" in text
         assert "criterion = [" not in text  # array of tables, not inline array
-        assert "# schema: ../../config/rubric.schema.json" in text
+        assert "# schema:" not in text
 
         loaded = get_rubric_definition(path)
         assert len(loaded.criterion) == 2

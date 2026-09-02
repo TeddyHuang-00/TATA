@@ -1,10 +1,12 @@
 # Provider Config Format
 
-This guide explains how to structure `config/provider.toml` without schema validation.
+This guide explains how to structure provider files under `data/providers/`
+without schema validation.
 
-## Where this file sits in the workflow
+## Where these files sit in the workflow
 
-During `grade` stage, `grading.provider` in assignment config selects one provider entry from this file. That entry determines:
+During `grade` stage, `grading.provider` in assignment config selects one
+provider file from `data/providers/`. That file determines:
 
 - API endpoint (`base_url`)
 - Authentication (`api_key`)
@@ -15,10 +17,10 @@ If provider config is wrong, grading fails before or during API calls.
 
 ## Top-level structure
 
-Each provider is a TOML table under `providers`:
+One provider per TOML file named `<provider_name>.toml` in `data/providers/`.
+The filename stem is the provider name; keys are flat top-level fields:
 
 ```toml
-[providers.<provider_name>]
 base_url = "..."
 api_key = "..."
 model = "..."
@@ -27,14 +29,18 @@ mode = "..."
 
 ## Example
 
+`data/providers/deepseek_chat_tool.toml`:
+
 ```toml
-[providers.deepseek_chat_tool]
 base_url = "https://api.deepseek.com"
 api_key = "${DEEPSEEK_API_KEY}"
 model = "deepseek-chat"
 mode = "tool_call"
+```
 
-[providers.ollama]
+`data/providers/ollama.toml`:
+
+```toml
 base_url = "http://localhost:11434/v1"
 api_key = "ollama"
 model = "qwen3.5:35b-a3b"
@@ -47,6 +53,7 @@ mode = "markdown_json_mode"
 - `api_key` (string): auth token; supports `${ENV_VAR}` placeholder substitution at runtime.
 - `model` (string): model name passed to provider API.
 - `mode` (string): instructor response parsing mode.
+- `temperature` (optional float, `0.0`-`2.0`): sampling temperature. Omitted or `None` for provider default.
 
 ## Allowed mode values
 
@@ -69,16 +76,16 @@ If env var is missing, placeholder resolves to empty string, which usually cause
 
 ## Cross-file consistency rule
 
-`data/<name>/config.toml` -> `[grading].provider` must exactly match a key under `[providers.<name>]` here.
+`data/<course>/<assignment>/config.toml` -> `[grading].provider` must exactly match a provider file stem in `data/providers/`.
 
 Example:
 
 - Assignment config uses `provider = "deepseek_chat_tool"`
-- Then this file must contain `[providers.deepseek_chat_tool]`
+- Then `data/providers/deepseek_chat_tool.toml` must exist.
 
 ## Common mistakes
 
 - Missing required field (`base_url/api_key/model/mode`).
 - Invalid `mode` value.
-- Typo between assignment provider key and provider table name.
+- Typo between assignment provider key and provider file stem.
 - Placeholder env var not exported in runtime environment.

@@ -4,7 +4,8 @@ Hosted by :mod:`src.tui.app` inside the Library TabPane (T4-d). Three inner
 TabPanes: *Rubrics* (:class:`RubricsPane`, migrated from the former
 ``RubricBuilderScreen`` — no Screen, no push_screen), *Prompts*
 (:class:`PromptsPane`, TextArea over ``data/prompt/*.md``) and *Providers*
-(:class:`ProvidersPane`, the ``config/provider.toml`` registry). Non-Screen
+(:class:`ProvidersPane`, one ``data/providers/<name>.toml`` per provider).
+Non-Screen
 widgets get their styling via ``DEFAULT_CSS`` (class-level ``CSS`` does not
 apply to them — lesson c9272e81). All UI copy is English.
 """
@@ -40,7 +41,7 @@ from textual.widgets import (
 )
 
 from src import REPO_ROOT
-from src.shared.provider import ProviderList
+from src.shared.provider import ProviderInfo
 from src.shared.rubric import Grading, Rating, RubricDefinition, get_rubric_definition
 from src.tui.workspace import ConfirmationModal
 
@@ -509,7 +510,7 @@ class RubricsPane(Vertical):
                 })
             )
         doc["criterion"] = rows
-        return "# schema: ../../config/rubric.schema.json\n" + tomlkit.dumps(doc)
+        return tomlkit.dumps(doc)
 
     @staticmethod
     def _fmt_validation_errors(exc: ValidationError) -> list[str]:
@@ -949,31 +950,33 @@ class PromptsPane(Vertical):
 class ProvidersPane(Vertical):
     """Provider registry editor: Select + form + Save/Delete/Test connection.
 
-    Edits ``config/provider.toml`` (``[providers.<name>]`` tables) with
-    tomlkit field-level patches, preserving unrelated tables and the file's
-    schema-comment header. ``config_path`` is injectable for isolated tests;
-    the default is the repo's ``config/provider.toml``.
+    One provider per file in ``data/providers/<name>.toml`` with flat
+    top-level keys (base_url, api_key, model, mode, temperature), edited
+    with tomlkit (comment-preserving). ``providers_dir`` is injectable for
+    isolated tests; the default is the repo's ``data/providers``.
     """
 
     DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
 
-    def __init__(self, state: AppState, config_path: Path | None = None) -> None:
+    def __init__(self, state: AppState, providers_dir: Path | None = None) -> None:
         super().__init__()
         self.state = state
-        self._config_path = config_path or (REPO_ROOT / "config" / "provider.toml")
+        self._providers_dir = providers_dir or (REPO_ROOT / "data" / "providers")
         #: Name of the provider loaded into the form (None = new provider).
         self._current: str | None = None
 
-    def _doc(self) -> tomlkit.TOMLDocument:
-        """Parse the registry; an empty document when missing/unreadable."""
+    def _provider_file(self, name: str) -> Path:
+        return self._providers_dir / f"{name}.toml"
+
+    def _doc(self, name: str) -> tomlkit.TOMLDocument:
+        """Parse one provider file; an empty document when missing/unreadable."""
         try:
-            return tomlkit.parse(self._config_path.read_text(encoding="utf-8"))
+            return tomlkit.parse(self._provider_file(name).read_text(encoding="utf-8"))
         except (OSError, tomlkit.exceptions.ParseError):
             return tomlkit.document()
 
     def _names(self) -> list[str]:
-        providers = self._doc().get("providers")
-        return sorted(providers) if isinstance(providers, MutableMapping) else []
+        return sorted(p.stem for p in self._providers_dir.glob("*.toml"))
 
     def _options(self) -> list[tuple[str, str]]:
         return [(name, name) for name in self._names()] + [
@@ -1046,19 +1049,18 @@ class ProvidersPane(Vertical):
         self._load_provider(value)
 
     def _load_provider(self, name: str) -> None:
-        providers = self._doc().get("providers")
-        table = providers.get(name) if isinstance(providers, MutableMapping) else None
-        if not isinstance(table, MutableMapping):
+        doc = self._doc(name)
+        if not doc:
             self._set_status(f"[red]Could not load provider {escape(name)}[/red]")
             self._clear_form()
             return
-        mode = str(table.get("mode", _MODE_VALUES[0]))
+        mode = str(doc.get("mode", _MODE_VALUES[0]))
         if mode not in _MODE_VALUES:
             mode = _MODE_VALUES[0]
-        temperature = table.get("temperature")
-        self.query_one("#pv-base-url", Input).value = str(table.get("base_url", ""))
-        self.query_one("#pv-api-key", Input).value = str(table.get("api_key", ""))
-        self.query_one("#pv-model", Input).value = str(table.get("model", ""))
+        temperature = doc.get("temperature")
+        self.query_one("#pv-base-url", Input).value = str(doc.get("base_url", ""))
+        self.query_one("#pv-api-key", Input).value = str(doc.get("api_key", ""))
+        self.query_one("#pv-model", Input).value = str(doc.get("model", ""))
         self.query_one("#pv-mode", Select).value = mode
         self.query_one("#pv-temperature", Input).value = (
             "" if temperature is None else str(temperature)
@@ -1140,13 +1142,14 @@ class ProvidersPane(Vertical):
         self._set_status(f"[red]{escape(message)}[/red]")
         self.app.notify(message, severity="error")
 
-    def _write(self, doc: tomlkit.TOMLDocument) -> bool:
+    def _write(self, name: str, doc: tomlkit.TOMLDocument) -> bool:
         out = tomlkit.dumps(doc)
         if not out.endswith("\n"):
             out += "\n"
         try:
-            self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            self._config_path.write_text(out, encoding="utf-8")
+            path = self._provider_file(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(out, encoding="utf-8")
         except OSError as exc:
             self._set_status(f"[red]Write failed: {exc}[/red]")
             return False
@@ -1162,22 +1165,17 @@ class ProvidersPane(Vertical):
         if values is None:
             return
         try:
-            ProviderList.model_validate({"providers": {name: values}})
+            ProviderInfo.model_validate(values)
         except ValidationError as exc:
             self._show_validation_errors(exc)
             return
-        doc = self._doc()
-        providers = doc.setdefault("providers", tomlkit.table())
-        table = providers.get(name)
-        if not isinstance(table, MutableMapping):
-            table = tomlkit.table()
-            providers[name] = table
+        doc = self._doc(name)
         for key, value in values.items():
-            table[key] = value
+            doc[key] = value
         if "temperature" not in values:
             with suppress(KeyError):
-                del table["temperature"]
-        if not self._write(doc):
+                del doc["temperature"]
+        if not self._write(name, doc):
             return
         self._current = name
         self.query_one("#pv-name", Select).set_options(self._options())
@@ -1207,13 +1205,14 @@ class ProvidersPane(Vertical):
     def _finish_delete(self, choice: str | None, name: str) -> None:
         if choice is None:
             return
-        doc = self._doc()
-        providers = doc.get("providers")
-        if not isinstance(providers, MutableMapping) or name not in providers:
+        path = self._provider_file(name)
+        if not path.exists():
             self._set_status(f"[red]Not found: {escape(name)}[/red]")
             return
-        del providers[name]
-        if not self._write(doc):
+        try:
+            path.unlink()
+        except OSError as exc:
+            self._set_status(f"[red]Remove failed: {exc}[/red]")
             return
         self._current = None
         self.query_one("#pv-name", Select).set_options(self._options())
@@ -1267,17 +1266,14 @@ class ProvidersPane(Vertical):
     ) -> None:
         if choice is None:
             return
-        doc = self._doc()
-        providers = doc.get("providers")
-        table = providers.get(old) if isinstance(providers, MutableMapping) else None
-        if not isinstance(table, MutableMapping):
+        old_path = self._provider_file(old)
+        if not old_path.exists():
             self._set_status(f"[red]Not found: {escape(old)}[/red]")
             return
-        # move the table: del + reassign keeps the table's inline comments and
-        # values; preceding section comments may be dropped by tomlkit
-        del providers[old]
-        providers[new] = table
-        if not self._write(doc):
+        try:
+            old_path.rename(self._provider_file(new))
+        except OSError as exc:
+            self._set_status(f"[red]Rename failed: {exc}[/red]")
             return
         self._current = new
         self.query_one("#pv-name", Select).set_options(self._options())

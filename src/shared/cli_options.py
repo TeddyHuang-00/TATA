@@ -111,12 +111,13 @@ class ScoreCliOptions(ConfigFileOptions):
     """Compute scores from grading results."""
 
 
+class ValidateCliOptions(ConfigFileOptions):
+    """Validate an assignment config: model load, rubric, prompts,
+    provider, reference."""
+
+
 class AnalyzeCliOptions(ConfigFileOptions):
     """Run meta analysis on scores."""
-
-
-class SchemaCliOptions(BaseModel):
-    """Generate JSON schemas from the config models."""
 
 
 class FetchCliOptions(BaseModel):
@@ -210,8 +211,8 @@ class TataCli(CliOptions):
     grade: CliSubCommand[GradeCliOptions]
     score: CliSubCommand[ScoreCliOptions]
     analyze: CliSubCommand[AnalyzeCliOptions]
-    # "schema_gen" avoids shadowing BaseModel.schema; alias keeps the CLI name.
-    schema_gen: CliSubCommand[SchemaCliOptions] = Field(alias="schema")
+    # "validate_cmd" avoids shadowing BaseModel.validate; alias keeps the CLI name.
+    validate_cmd: CliSubCommand[ValidateCliOptions] = Field(alias="validate")
     fetch: CliSubCommand[FetchCliOptions]
     view: CliSubCommand[ScoreReviewCliOptions]
     config: CliSubCommand[ConfigCliOptions]

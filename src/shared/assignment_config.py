@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -444,12 +443,3 @@ def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
             + guidance
         )
         raise ValueError(msg) from exc
-
-
-def write_assignment_schema(output_path: Path) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(AssignmentFileConfig.model_json_schema(), indent=4),
-        encoding="utf-8",
-    )
-    return output_path

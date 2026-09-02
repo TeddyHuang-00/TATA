@@ -102,7 +102,6 @@ def _build_fixture(root: Path) -> None:
     rubrics = root / "data" / "rubrics"
     rubrics.mkdir()
     rubric_toml = (
-        "# schema: ../../config/rubric.schema.json\n"
         "[[criterion]]\n"
         'name = "Reflection"\n'
         'desc = "A generic description."\n'

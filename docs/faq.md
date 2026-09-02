@@ -29,19 +29,25 @@ If omitted, defaults are:
 
 No. The pipeline now auto-creates assignment folders when running stages.
 
-## 4. How do I generate all schemas?
+## 4. How do I validate an assignment config?
 
 Run:
 
 ```bash
-uv run main.py schema
+uv run cli validate -c data/my-assignment/config.toml
 ```
 
-This generates:
+or with the short flag: `-c` is shorthand for `--config`.
 
-- [config/assignment.schema.json](../config/assignment.schema.json)
-- [config/provider.schema.json](../config/provider.schema.json)
-- [config/rubric.schema.json](../config/rubric.schema.json)
+`validate` loads the config with the same pydantic models used at runtime,
+then checks the chain it would grade against:
+
+- the rubric file exists and parses (criteria count is reported),
+- every `system_prompt` file exists,
+- the `[grading].provider` matches a provider in `data/providers/`,
+- the reference file exists when `[assignment].reference_file` is set.
+
+It prints one line per check and exits `1` when any check fails.
 
 ## 5. How can I speed up grading?
 
