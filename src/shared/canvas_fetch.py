@@ -10,12 +10,14 @@ import re
 import shutil
 import sys
 from collections.abc import MutableMapping
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import dotenv
 import tomlkit
 from canvasapi import Canvas
+from markitdown import MarkItDown, StreamInfo
 
 from src.shared.aliases import upsert_student_aliases
 
@@ -48,6 +50,29 @@ def _submitter(sub: object) -> tuple[int, str, str, bool]:
     return uid, name, sortable, bool(getattr(sub, "late", False))
 
 
+def _save_assignment_description(assignment: object, out: Path) -> None:
+    """Save the assignment description (HTML) as markdown beside the raw
+    folder. Empty or missing descriptions write nothing; a conversion
+    failure degrades to the raw HTML text and never interrupts the fetch."""
+    description = getattr(assignment, "description", None)
+    if not description:
+        return
+    try:
+        markdown = (
+            MarkItDown()
+            .convert_stream(
+                BytesIO(description.encode("utf-8")),
+                stream_info=StreamInfo(extension=".html"),
+            )
+            .text_content
+        )
+    except Exception:
+        markdown = description
+    if not isinstance(markdown, str):
+        markdown = str(markdown)
+    (out.parent / "assignment.md").write_text(markdown, encoding="utf-8")
+
+
 def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-many-statements]
     canvas: Canvas,
     course_id: int,
@@ -62,6 +87,7 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
     course = canvas.get_course(course_id)
     assignment = course.get_assignment(assignment_id)
     out.mkdir(parents=True, exist_ok=True)
+    _save_assignment_description(assignment, out)
     cache_path = out / ".fetch-cache.json"
     cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
     subs = list(assignment.get_submissions(include=["user", "attachments"]))

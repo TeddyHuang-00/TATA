@@ -4,6 +4,7 @@ import json
 import tomllib
 from pathlib import Path
 
+import pytest
 from src.shared.aliases import load_alias_file
 from src.shared.canvas_fetch import fetch_assignment, remember_course_fetch
 from src.shared.processing import preprocess_assignment
@@ -39,8 +40,9 @@ class StubSub:
 
 
 class StubAssignment:
-    def __init__(self, subs: list[StubSub]) -> None:
+    def __init__(self, subs: list[StubSub], description: str | None = "") -> None:
         self._subs = subs
+        self.description = description
 
     def get_submissions(self, include: list[str]) -> list[StubSub]:
         return self._subs
@@ -492,3 +494,39 @@ def test_fetch_same_uid_flat_and_folder_keeps_folder(tmp_path: Path) -> None:
     cache = json.loads((out / ".fetch-cache.json").read_text())
     assert "100.html" in cache  # the folder copy carries the name
     assert "100_0.docx" in cache
+
+
+def test_assignment_description_saved_as_markdown(tmp_path: Path) -> None:
+    out = tmp_path / "raw"
+    canvas = StubCanvas(StubAssignment([], description="<h1>HW</h1><p>due</p>"))
+    fetch_assignment(canvas, 1, 2, out)
+
+    md = out.parent / "assignment.md"
+    assert md.exists()
+    assert md.parent == out.parent  # beside raw/, never inside it
+    content = md.read_text(encoding="utf-8")
+    assert "HW" in content
+    assert "due" in content
+    assert "<h1>" not in content
+
+
+def test_assignment_description_empty_or_none_skips(tmp_path: Path) -> None:
+    for i, desc in enumerate(("", None)):
+        out = tmp_path / f"raw_{i}"
+        fetch_assignment(StubCanvas(StubAssignment([], description=desc)), 1, 2, out)
+        assert not (out.parent / "assignment.md").exists()
+
+
+def test_assignment_description_conversion_failure_degrades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "raw"
+
+    class Boom:
+        def convert_stream(self, *args: object, **kwargs: object) -> object:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+    monkeypatch.setattr("src.shared.canvas_fetch.MarkItDown", Boom)
+    fetch_assignment(StubCanvas(StubAssignment([], description="<p>hi</p>")), 1, 2, out)
+    assert (out.parent / "assignment.md").read_text(encoding="utf-8") == "<p>hi</p>"
