@@ -123,7 +123,7 @@ def _collect_submissions(
     return [p for p in submission_files if p.stem != reference_stem]
 
 
-def _build_client(provider_name: str) -> tuple[Any, str]:
+def build_client(provider_name: str) -> tuple[Any, str]:
     providers = get_providers()
     provider = providers[provider_name]
 
@@ -421,7 +421,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
                 "success_rate": 0,
             }
 
-    client, model_name = _build_client(cfg.provider_name)
+    client, model_name = build_client(cfg.provider_name)
     worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))
 
     if hook_runtime is not None:

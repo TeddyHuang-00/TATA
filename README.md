@@ -98,6 +98,20 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv run main.py config set -c data/my-assignment/config.toml processing.remove_base64_images false
    ```
 
+10. Generate a grading rubric from the fetched assignment description
+    (optional):
+
+   ```bash
+   uv run cli fetch -c data/<course>/<assignment>/config.toml
+   uv run cli rubric generate -c data/<course>/<assignment>/config.toml
+   ```
+
+   `fetch` also saves the assignment description as `assignment.md` in the
+   assignment directory; `rubric generate` reads it and writes the rubric to
+   `data/rubrics/<assignment>.toml` (it refuses to overwrite an existing
+   file — use `-o` for a new path or delete first). Then wire it up:
+   `uv run cli config set -c data/<course>/<assignment>/config.toml grading.rubric rubrics/<assignment>.toml`.
+
 ## Layered Config
 
 Config is layered (three levels): the global base config `data/config.toml`

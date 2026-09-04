@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from instructor import Mode
 from src.shared.grading import (
-    _build_client,
     _build_grading_messages,
+    build_client,
     grade_assignment,
 )
 from src.shared.provider import ProviderInfo, ProviderList
@@ -54,7 +54,7 @@ def _fake_client(calls: list) -> MagicMock:
 
 def _patch_grade_deps(monkeypatch: pytest.MonkeyPatch, calls: list[MagicMock]) -> None:
     client = _fake_client(calls)
-    monkeypatch.setattr("src.shared.grading._build_client", lambda name: (client, "m1"))
+    monkeypatch.setattr("src.shared.grading.build_client", lambda name: (client, "m1"))
     monkeypatch.setattr(
         "src.shared.grading.get_providers",
         lambda: ProviderList(
@@ -184,7 +184,7 @@ class TestBuildClient:
         ):
             mock_get.return_value = {"test": mock_provider}
 
-            _build_client("test")
+            build_client("test")
 
             call_kwargs = mock_openai.call_args.kwargs
             assert call_kwargs["temperature"] == pytest.approx(0.0)
@@ -207,7 +207,7 @@ class TestBuildClient:
         ):
             mock_get.return_value = {"test": mock_provider}
 
-            _build_client("test")
+            build_client("test")
 
             call_kwargs = mock_openai.call_args.kwargs
             assert "temperature" not in call_kwargs

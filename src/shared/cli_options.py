@@ -195,6 +195,24 @@ class ConfigSetCliOptions(BaseModel):
     value: CliPositionalArg[str]
 
 
+class RubricGenCliOptions(ConfigFileOptions):
+    """Generate a rubric from the fetched assignment description."""
+
+    out: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("out", "o"),
+        description="Write the rubric to this TOML file (default: "
+        "REPO_ROOT/data/rubrics/<assignment dir name>.toml).",
+    )
+
+
+class RubricCliOptions(BaseModel):
+    """Rubric root: ``rubric generate`` creates a rubric from the assignment
+    description with the ``[grading].provider``."""
+
+    generate: CliSubCommand[RubricGenCliOptions]
+
+
 class ConfigCliOptions(BaseModel):
     """Config root: ``config set`` edits one dotted ``section.key`` value."""
 
@@ -216,6 +234,7 @@ class TataCli(CliOptions):
     fetch: CliSubCommand[FetchCliOptions]
     view: CliSubCommand[ScoreReviewCliOptions]
     config: CliSubCommand[ConfigCliOptions]
+    rubric: CliSubCommand[RubricCliOptions]
 
 
 def parse_cli_args[TModel: CliOptions](

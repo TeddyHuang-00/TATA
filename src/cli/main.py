@@ -30,6 +30,8 @@ from src.shared.cli_options import (
     GradeCliOptions,
     PlagiarismCliOptions,
     PreprocessCliOptions,
+    RubricCliOptions,
+    RubricGenCliOptions,
     ScoreCliOptions,
     ScoreReviewCliOptions,
     TataCli,
@@ -42,6 +44,7 @@ from src.shared.plagiarism import detect_plagiarism
 from src.shared.processing import preprocess_assignment
 from src.shared.provider import get_providers
 from src.shared.rubric import get_rubric_definition
+from src.shared.rubric_gen import generate_rubric
 from src.shared.scoring import score_assignment
 from src.tui.score_review import run as run_score_viewer
 
@@ -442,6 +445,22 @@ def _run_validate(args: ValidateCliOptions) -> None:  # ruff: ignore[too-many-br
     print(f"OK {cfg_path}")
 
 
+def _run_rubric_generate(args: RubricGenCliOptions) -> None:
+    """Generate a rubric from the fetched assignment description."""
+    out = args.out or (
+        REPO_ROOT / "data" / "rubrics" / f"{args.config.resolve().parent.name}.toml"
+    )
+    try:
+        rubric = generate_rubric(args.config, out)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.exit(f"error: {exc}")
+    print(f"[rubric] wrote {len(rubric.criterion)} criteria to {out}")
+    print(
+        f"[rubric] hint: set [grading].rubric = rubrics/{out.name} "
+        f"(uv run cli config set -c {args.config} grading.rubric rubrics/{out.name})"
+    )
+
+
 def main() -> None:
     cmd = parse_cli_args(TataCli)
     sub = get_subcommand(cmd, is_required=False)
@@ -463,6 +482,14 @@ def main() -> None:
                 "error: config requires a subcommand: config set -c PATH section.key VALUE"
             )
         _run_config_set(sub.set)
+        return
+
+    if isinstance(sub, RubricCliOptions):
+        if sub.generate is None:
+            sys.exit(
+                "error: rubric requires a subcommand: rubric generate -c PATH [-o OUT]"
+            )
+        _run_rubric_generate(sub.generate)
         return
 
     if isinstance(sub, ScoreReviewCliOptions):
