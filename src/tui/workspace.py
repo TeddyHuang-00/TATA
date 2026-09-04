@@ -577,9 +577,10 @@ class AssignmentScreen(JobHost):
             return
         # ponytail: blocking on purpose — the editor needs the tty; the TUI
         # redraws once the child exits.
-        subprocess.run(
-            f"{editor} {shlex.quote(str(config_path))}", shell=True, check=False
-        )
+        with self.app.suspend():
+            subprocess.run(
+                f"{editor} {shlex.quote(str(config_path))}", shell=True, check=False
+            )
         self.render_all()
         self.app.notify("Config reloaded", severity="information")
 

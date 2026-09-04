@@ -1110,7 +1110,10 @@ class SettingsScreen(Vertical):
             )
             return
         target.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(f"{editor} {shlex.quote(str(target))}", shell=True, check=False)
+        with self.app.suspend():
+            subprocess.run(
+                f"{editor} {shlex.quote(str(target))}", shell=True, check=False
+            )
         self._load_context()
         self._set_result("[dim]Config reloaded from disk[/dim]")
         self.app.notify("Config reloaded", severity="information")
