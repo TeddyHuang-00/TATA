@@ -25,15 +25,20 @@ import asyncio
 import math
 import os
 import tempfile
+import threading
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import override
 
-from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
+try:
+    from e2e_common import spy_notify, wait_for  # isort: skip - script run puts tests/ on sys.path
+except ModuleNotFoundError:
+    from tests.e2e_common import spy_notify, wait_for  # isort: skip - pytest package import mode
 from src.tui import library as tui_library
 from src.tui.app import AppState, TataApp
 from src.tui.library import (
+    AutoGenModal,
     FileNameModal,
     LibraryScreen,
     PromptsPane,
@@ -61,6 +66,9 @@ SAMPLE_TOML = (
     'rating = "ternary"\n'
     'grading = "standard"\n'
 )
+
+#: Marker content distinguishing a regenerated rubric from SAMPLE_TOML.
+NEW_TOML = "# regenerated\n" + SAMPLE_TOML
 
 PROMPT_ONE = "# Hello\nworld\n"
 PROMPT_TWO = "# Lab\ndo it\n"
@@ -563,6 +571,333 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
             tui_library.OpenAI = original_openai
 
 
+# ---------- rubric auto-generate ----------
+
+
+def _build_autogen_fixture(root: Path, *, with_md: bool = True) -> None:
+    """Course c1 with assignments 000001/000003 (fetched descriptions when
+    ``with_md``) and 000002 (config only) — for auto-generate enumeration."""
+    rubrics = root / "data" / "rubrics"
+    rubrics.mkdir(parents=True)
+    course = root / "data" / "c1"
+    course.mkdir()
+    (course / "config.toml").write_text(
+        "[fetch]\ncourse_id = 111111\n", encoding="utf-8"
+    )
+    for name in ("000001", "000002", "000003"):
+        a_dir = course / name
+        a_dir.mkdir()
+        (a_dir / "config.toml").write_text(
+            '[grading]\nrubric = "rubrics/sample.toml"\n'
+            'system_prompt = ["prompt/hello.md"]\n'
+            'provider = "ollama"\n',
+            encoding="utf-8",
+        )
+        if with_md and name != "000002":
+            (a_dir / "assignment.md").write_text(
+                "# HW1\nWrite a program that prints hello.\n", encoding="utf-8"
+            )
+
+
+class RubricsHost(App[None]):
+    """Minimal host for RubricsPane (same pattern as ProviderHost)."""
+
+    def __init__(self, pane: RubricsPane) -> None:
+        super().__init__()
+        self._pane = pane
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield self._pane
+
+
+def _autogen_meta(pane: RubricsPane) -> Select:
+    return pane.query_one("#rb-file", Select)
+
+
+async def _check_autogen_modal(root: Path) -> None:
+    """Modal lists only assignments with a fetched assignment.md."""
+    _build_autogen_fixture(root)
+    rubrics_dir = root / "data" / "rubrics"
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    calls: list[tuple[str, str]] = []
+
+    def spy_generate(config_path: Path, out: Path) -> None:
+        calls.append((str(config_path), str(out)))
+
+    original = tui_library.generate_rubric
+    tui_library.generate_rubric = spy_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            select = app.screen.query_one("#ag-assignment", Select)
+            values = [value for _, value in select._options if value != Select.NULL]
+            configs = [
+                str(root / "data" / "c1" / name / "config.toml")
+                for name in ("000001", "000003")
+            ]
+            assert values == configs, values
+            labels = [
+                label for label, value in select._options if value != Select.NULL
+            ]
+            assert labels == ["000001 (c1/000001)", "000003 (c1/000003)"], labels
+            # cancel dismisses the modal without side effects: no generate
+            # call, no new .toml
+            await pilot.click("#cancel")
+            await wait_for(pilot, lambda: not isinstance(app.screen, AutoGenModal))
+            assert calls == [], calls
+            assert list(rubrics_dir.glob("*.toml")) == []
+    finally:
+        tui_library.generate_rubric = original
+
+
+async def _check_autogen_generate(root: Path) -> None:
+    """Pick + Generate: generate_rubric(config_path, out) called, success
+    notify, Select switched to the new rubric which is loaded."""
+    _build_autogen_fixture(root)
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    calls: list[tuple[str, str, bool]] = []
+
+    def fake_generate(config_path: Path, out: Path) -> None:
+        calls.append((str(config_path), str(out), out.exists()))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(SAMPLE_TOML, encoding="utf-8")
+
+    original = tui_library.generate_rubric
+    tui_library.generate_rubric = fake_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            expected_out = root / "data" / "rubrics" / "000001.toml"
+            expected_tmp = root / "data" / "rubrics" / "000001.toml.tmp"
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message == "Generated rubric: 000001.toml" and sev == "success"
+                    for message, sev in notices
+                ),
+            )
+            assert calls == [
+                (
+                    str(root / "data" / "c1" / "000001" / "config.toml"),
+                    str(expected_tmp),
+                    False,
+                )
+            ], calls
+            assert expected_out.is_file()
+            assert not expected_tmp.exists()
+            assert _autogen_meta(pane).value == "000001.toml"
+            assert pane.query_one("#rb-criteria").row_count == 1
+    finally:
+        tui_library.generate_rubric = original
+
+
+async def _check_autogen_overwrite(root: Path) -> None:
+    """Existing out: ConfirmationModal first; generation writes a tmp which is
+    atomically replaced over out on success (old content survives a failure)."""
+    _build_autogen_fixture(root)
+    out = root / "data" / "rubrics" / "000001.toml"
+    out.write_text(SAMPLE_TOML, encoding="utf-8")
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    calls: list[tuple[str, str, bool]] = []
+
+    def fake_generate(config_path: Path, out_path: Path) -> None:
+        calls.append((str(config_path), str(out_path), out_path.exists()))
+        out_path.write_text(NEW_TOML, encoding="utf-8")
+
+    original = tui_library.generate_rubric
+    tui_library.generate_rubric = fake_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+            assert "already exists" in _modal_message(app)
+            assert "assignment c1/000001" in _modal_message(app)
+            await pilot.click("#overwrite")
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message == "Generated rubric: 000001.toml" and sev == "success"
+                    for message, sev in notices
+                ),
+            )
+            expected_tmp = root / "data" / "rubrics" / "000001.toml.tmp"
+            # generation went to the tmp; out was replaced atomically with the
+            # new content instead of being unlinked up front
+            assert calls == [
+                (
+                    str(root / "data" / "c1" / "000001" / "config.toml"),
+                    str(expected_tmp),
+                    False,
+                )
+            ], calls
+            assert out.read_text(encoding="utf-8") == NEW_TOML
+            assert not expected_tmp.exists()
+            assert _autogen_meta(pane).value == "000001.toml"
+    finally:
+        tui_library.generate_rubric = original
+
+
+async def _check_autogen_empty(root: Path) -> None:
+    """No fetched assignment.md anywhere: warning notify, no modal."""
+    _build_autogen_fixture(root, with_md=False)
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    async with app.run_test(size=(160, 100)) as pilot:
+        await wait_for(pilot, lambda: _autogen_meta(pane).display)
+        notices, _ = spy_notify(app)
+        await pilot.click("#rb-autogen")
+        await pilot.pause()
+        assert not isinstance(app.screen, AutoGenModal)
+        assert any(
+            "No fetched assignment descriptions" in message and sev == "warning"
+            for message, sev in notices
+        ), notices
+
+
+async def _check_autogen_failure(root: Path) -> None:
+    """generate_rubric raises with an existing out: old rubric kept byte-for-
+    byte, no tmp residue, pane stays usable (no deadlock)."""
+    _build_autogen_fixture(root)
+    out = root / "data" / "rubrics" / "000001.toml"
+    out.write_text(SAMPLE_TOML, encoding="utf-8")
+    tmp = root / "data" / "rubrics" / "000001.toml.tmp"
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+
+    def failing_generate(config_path: Path, out: Path) -> None:
+        message = "boom"
+        raise ValueError(message)
+
+    original = tui_library.generate_rubric
+    tui_library.generate_rubric = failing_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            await pilot.click("#ag-generate")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+            await pilot.click("#overwrite")
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message.startswith("Auto-generate failed: ValueError: boom")
+                    and sev == "error"
+                    for message, sev in notices
+                ),
+            )
+            assert not isinstance(app.screen, AutoGenModal)
+            # the overwrite failed: the old rubric is intact and no tmp is left
+            assert out.read_text(encoding="utf-8") == SAMPLE_TOML
+            assert not tmp.exists()
+            # the pane still responds: opening the modal again works
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+    finally:
+        tui_library.generate_rubric = original
+
+
+async def _check_autogen_reentrancy(root: Path) -> None:
+    """Worker in flight: button disabled, second trigger rejected (no second
+    worker), and state fully restored when the generation finishes."""
+    _build_autogen_fixture(root)
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_generate(config_path: Path, out: Path) -> None:
+        started.set()
+        release.wait(timeout=10)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(SAMPLE_TOML, encoding="utf-8")
+
+    original = tui_library.generate_rubric
+    tui_library.generate_rubric = blocking_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            await wait_for(pilot, started.is_set)
+            # in flight: every writable control is frozen and the guard
+            # rejects the action
+            for selector in (
+                "#rb-edit",
+                "#rb-remove",
+                "#rb-add",
+                "#rb-update",
+                "#rb-save",
+                "#rb-rename",
+                "#rb-delete",
+                "#rb-autogen",
+                "#rb-filename",
+            ):
+                assert pane.query_one(selector).disabled is True, selector
+            pane.action_autogen()
+            await pilot.pause()
+            assert not isinstance(app.screen, AutoGenModal)
+            assert any(
+                message == "Auto-generation already in progress" and sev == "warning"
+                for message, sev in notices
+            ), notices
+            # finish: flag restored, writable controls re-enabled (the
+            # conditionally-enabled ones per the new file state), pane usable
+            release.set()
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message == "Generated rubric: 000001.toml" and sev == "success"
+                    for message, sev in notices
+                ),
+            )
+            assert pane._autogen_running is False
+            for selector in (
+                "#rb-add",
+                "#rb-save",
+                "#rb-edit",
+                "#rb-rename",
+                "#rb-delete",
+                "#rb-autogen",
+            ):
+                assert pane.query_one(selector).disabled is False, selector
+            assert pane.query_one("#rb-filename").disabled is False
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+    finally:
+        release.set()
+        tui_library.generate_rubric = original
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -578,7 +913,41 @@ async def main() -> None:
         await _check_provider_rename(root, provider_dir)
         await _check_provider_rename_ref(root, provider_dir)
         await _check_provider_test(root, provider_dir)
+        # auto-generate: separate fixture sub-trees per scenario (no cross-mutation)
+        await _check_autogen_modal(root / "ag-modal")
+        await _check_autogen_generate(root / "ag-generate")
+        await _check_autogen_overwrite(root / "ag-overwrite")
+        await _check_autogen_empty(root / "ag-empty")
+        await _check_autogen_failure(root / "ag-failure")
+        await _check_autogen_reentrancy(root / "ag-reentrancy")
     print("tata library check OK")
+
+
+# ---------- pytest entry points (uv run pytest tests/tata_library_check.py) ----------
+
+
+def test_autogen_modal(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_modal(tmp_path))
+
+
+def test_autogen_generate(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_generate(tmp_path))
+
+
+def test_autogen_overwrite(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_overwrite(tmp_path))
+
+
+def test_autogen_empty(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_empty(tmp_path))
+
+
+def test_autogen_failure(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_failure(tmp_path))
+
+
+def test_autogen_reentrancy(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_reentrancy(tmp_path))
 
 
 if __name__ == "__main__":

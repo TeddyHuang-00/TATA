@@ -12,6 +12,7 @@ apply to them — lesson c9272e81). All UI copy is English.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import MutableMapping
@@ -41,8 +42,11 @@ from textual.widgets import (
 )
 
 from src import REPO_ROOT
+from src.shared.aliases import assignment_display_name
 from src.shared.provider import ProviderInfo
 from src.shared.rubric import Grading, Rating, RubricDefinition, get_rubric_definition
+from src.shared.rubric_gen import generate_rubric
+from src.tui.scan import scan_assignments, scan_courses
 from src.tui.workspace import ConfirmationModal
 
 if TYPE_CHECKING:
@@ -51,7 +55,23 @@ if TYPE_CHECKING:
 #: Select value for the "New rubric…" file option (never a real file name).
 _NEW_VALUE = "__new__"
 
+log = logging.getLogger(__name__)
+
 _RATING_VALUES = tuple(rating.value for rating in Rating)
+
+#: Controls frozen while an auto-generation worker is in flight (write races
+#: against the same rubric file — MINOR audit 2024-09).
+_AUTOGEN_BUSY_SELECTORS = (
+    "#rb-edit",
+    "#rb-remove",
+    "#rb-add",
+    "#rb-update",
+    "#rb-save",
+    "#rb-rename",
+    "#rb-delete",
+    "#rb-autogen",
+    "#rb-filename",
+)
 _GRADING_VALUES = tuple(grading.value for grading in Grading)
 _MODE_VALUES = tuple(mode.value for mode in Mode)
 
@@ -223,6 +243,49 @@ class FileNameModal(ModalScreen[str | None]):
         self._submit()
 
 
+class AutoGenModal(ModalScreen[str | None]):
+    """Pick an assignment description and generate a rubric from it.
+
+    ``assignments`` is a list of (label, config_path str) pairs; Generate
+    dismisses with the config path string, Cancel with None.
+    """
+
+    BINDINGS: ClassVar = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, assignments: list[tuple[str, str]]) -> None:
+        super().__init__()
+        self._assignments = assignments
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @override
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="confirm-modal"):
+            yield Static("[b]Auto-generate rubric[/b]", classes="modal-title")
+            yield Static("Pick an assignment description to generate from:")
+            yield Select(self._assignments, id="ag-assignment", allow_blank=False)
+            with Horizontal(classes="modal-actions"):
+                yield Button("Cancel", id="cancel")
+                yield Button(
+                    "Generate",
+                    id="ag-generate",
+                    variant="primary",
+                    disabled=not self._assignments,
+                )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.action_cancel()
+        elif event.button.id == "ag-generate":
+            self._submit()
+
+    def _submit(self) -> None:
+        value = self.query_one("#ag-assignment", Select).value
+        if value is not None:
+            self.dismiss(str(value))
+
+
 class RubricsPane(Vertical):
     """Rubric editor: file picker + criteria table + one-criterion form.
 
@@ -241,6 +304,8 @@ class RubricsPane(Vertical):
         self._current_file: str | None = None
         #: Index of the criterion loaded into the form (None = Add mode).
         self._editing_idx: int | None = None
+        #: True while an auto-generate worker is in flight (re-entrancy guard).
+        self._autogen_running = False
 
     def _rubrics_dir(self) -> Path:
         return self.state.assignments_dir / "rubrics"
@@ -296,6 +361,7 @@ class RubricsPane(Vertical):
                 yield Button("Save rubric", id="rb-save")
                 yield Button("Rename", id="rb-rename", disabled=True)
                 yield Button("Delete", id="rb-delete", disabled=True)
+                yield Button("Auto-generate", id="rb-autogen")
 
     @override
     def on_mount(self) -> None:
@@ -670,6 +736,125 @@ class RubricsPane(Vertical):
         else:
             self.app.notify(f"Renamed rubric: {new}", severity="success")
 
+    # ---------- auto-generate ----------
+
+    def action_autogen(self) -> None:
+        """Pick an assignment description and generate a rubric from it."""
+        if self._autogen_running:
+            self.app.notify("Auto-generation already in progress", severity="warning")
+            return
+        assignments = self._autogen_assignments()
+        if not assignments:
+            self.app.notify(
+                "No fetched assignment descriptions. Fetch assignments first.",
+                severity="warning",
+            )
+            return
+        self.app.push_screen(AutoGenModal(assignments), self._handle_autogen)
+
+    def _handle_autogen(self, config_path: str | None) -> None:
+        if config_path is None:
+            return
+        self._run_autogen(Path(config_path))
+
+    def _autogen_assignments(self) -> list[tuple[str, str]]:
+        """(label, config_path) for every assignment with a fetched description."""
+        options: list[tuple[str, str]] = []
+        for course in scan_courses(self.state.assignments_dir):
+            for assignment in scan_assignments(
+                self.state.assignments_dir / course.dir_name
+            ):
+                config = assignment.config_path
+                if not (
+                    config.is_file()
+                    and (config.parent / "assignment.md").is_file()
+                ):
+                    continue
+                name = assignment_display_name(
+                    self.state.assignments_dir,
+                    course.dir_name,
+                    assignment.dir_name,
+                    assignment.assignment_id,
+                )
+                label = f"{name} ({course.dir_name}/{assignment.dir_name})"
+                options.append((label, str(config)))
+        return options
+
+    def _set_autogen_busy(self, busy: bool) -> None:
+        """Freeze (busy=True) or restore (busy=False) every writable control
+        while an auto-generation worker is in flight. Restore must be
+        followed by the per-state syncs so conditionally-disabled buttons
+        (rename/delete, edit/remove/update) land on their true state."""
+        for selector in _AUTOGEN_BUSY_SELECTORS:
+            self.query_one(selector, (Button, Input)).disabled = busy
+
+    def _restore_autogen_buttons(self) -> None:
+        self._set_autogen_busy(False)
+        self._sync_file_buttons()
+        self._sync_action_buttons()
+
+    def _run_autogen(self, config_path: Path) -> None:
+        """Generate (or regenerate) the rubric for an assignment description."""
+        out = self._rubrics_dir() / f"{config_path.parent.name}.toml"
+        if out.exists():
+            self.app.push_screen(
+                ConfirmationModal(
+                    "Overwrite rubric",
+                    f"rubrics/{out.name} already exists "
+                    f"(assignment {config_path.parent.parent.name}/"
+                    f"{config_path.parent.name}). Overwrite it with a new "
+                    "generation?",
+                    [("Overwrite", "overwrite")],
+                ),
+                lambda choice: self._confirm_autogen(choice, config_path, out),
+            )
+            return
+        self._confirm_autogen("continue", config_path, out)
+
+    def _confirm_autogen(self, choice: str | None, config_path: Path, out: Path) -> None:
+        if choice is None:
+            return
+        tmp = out.parent / f"{out.name}.tmp"
+        with suppress(OSError):  # stale tmp from a crashed run; generator reports real errors
+            tmp.unlink()
+        self._autogen_running = True
+        self._set_autogen_busy(True)
+        self.app.notify("Generating rubric…", severity="information")
+        self.run_worker(
+            lambda: self._autogen_worker(config_path, out, tmp),
+            thread=True,
+            group="rubric-gen",
+            exclusive=True,
+        )
+
+    def _autogen_worker(self, config_path: Path, out: Path, tmp: Path) -> None:
+        try:
+            generate_rubric(config_path, tmp)
+            # Atomic replace in the same directory: the old rubric survives a
+            # failed generation instead of being unlinked up front.
+            tmp.replace(out)
+        except Exception as exc:
+            with suppress(OSError):  # don't leave a half-written tmp behind
+                tmp.unlink()
+            log.error("rubric auto-generate failed for %s: %s", config_path, exc)
+            message = f"Auto-generate failed: {type(exc).__name__}: {exc}"
+            ok = False
+        else:
+            message = f"Generated rubric: {out.name}"
+            ok = True
+        with suppress(RuntimeError):  # app closed mid-generation
+            self.app.call_from_thread(self._autogen_done, ok, message, out)
+
+    def _autogen_done(self, ok: bool, message: str, out: Path) -> None:
+        self._autogen_running = False
+        self._restore_autogen_buttons()
+        self.reload_files()
+        if ok:
+            select = self.query_one("#rb-file", Select)
+            select.value = out.name
+            self._on_file_change(str(select.value))
+        self.app.notify(message, severity="success" if ok else "error")
+
     def _select_first_file(self) -> None:
         """Point the Select at the first remaining file, or New when empty."""
         first = next(
@@ -694,6 +879,8 @@ class RubricsPane(Vertical):
             self.action_rename()
         elif button_id == "rb-delete":
             self.action_delete()
+        elif button_id == "rb-autogen":
+            self.action_autogen()
 
 
 class PromptsPane(Vertical):
