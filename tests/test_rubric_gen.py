@@ -15,7 +15,11 @@ from src.shared.cli_options import (
 )
 from src.shared.provider import ProviderInfo, ProviderList
 from src.shared.rubric import RubricDefinition, get_rubric_definition
-from src.shared.rubric_gen import _validate_rubric_content, generate_rubric
+from src.shared.rubric_gen import (
+    RUBRIC_GEN_SYSTEM_PROMPT,
+    _validate_rubric_content,
+    generate_rubric,
+)
 
 GRADING_CONFIG = (
     "[grading]\n"
@@ -266,3 +270,21 @@ def test_rubric_without_subcommand_exits_1(
         main()
     # sys.exit(str) sets the code to that string; the process status is 1.
     assert str(exc.value.code).startswith("error:")
+
+
+def test_prompt_default_ternary_standard() -> None:
+    """Generation prompt pins ternary rating + standard grading, never offers
+    custom_scale, keeps desc quality-level based (not point based), and does
+    not invent nitpicky sub-rules beyond the assignment."""
+    prompt = RUBRIC_GEN_SYSTEM_PROMPT.lower()
+    assert '"rating": "ternary"' in prompt
+    assert '"grading": "standard"' in prompt
+    assert 'never generate "custom_scale"' in prompt
+    assert "quality levels" in prompt
+    assert "without tying" in prompt
+    assert "points or deductions" in prompt
+    assert "nitpick" in prompt
+    assert "explicitly" in prompt
+    assert "quantitative" in prompt
+    assert "not state" in prompt
+    assert "rubric table" in prompt

@@ -17,18 +17,31 @@ every student submission.
 
 Output a RubricDefinition: an array "criterion". Each criterion is an object:
 - "name": short, distinctive criterion name.
-- "desc": a precise, self-contained evaluation instruction. It must say exactly
-  what earns or loses points, and be specific enough that a grader can locate
-  the relevant part of a student answer and apply it. It must not just restate
-  the assignment requirement.
-- "rating": one of "binary", "ternary", "likert" (the correctness scale).
-- "grading": one of "standard", "strict", "round up", "custom". When "custom",
-  also provide "custom_scale": one value per rating of the chosen scale,
-  ordered from lowest to highest.
+- "desc": a precise, self-contained evaluation instruction that describes the
+  quality levels (what a correct, a partially correct, and an incorrect
+  answer look like) without tying them to specific points or deductions. It
+  must be specific enough that a grader can locate the relevant part of a
+  student answer and apply it, and must not just restate the assignment
+  requirement.
+- "rating": "ternary" (correct, partial, incorrect). Always "ternary".
+- "grading": "standard". Always "standard"; never "custom", "strict", or
+  "round up", and never generate "custom_scale".
 - "pts": a positive number of points awarded for this criterion.
 
 Rules:
-- Cover every major requirement of the assignment with at least one criterion.
+- Cover every major requirement explicitly stated in the assignment description
+  with at least one criterion. Do not add criteria or finer sub-rules the
+  assignment does not explicitly require, and do not nitpick details it does
+  not mention.
+- Do not invent specific quantitative thresholds, counts, or structural
+  requirements that the assignment does not state. If the assignment describes
+  a requirement qualitatively (e.g., "multiple test cases", "organized and
+  readable"), keep it qualitative; assessing such a requirement must not add
+  numbers or conditions the assignment never specifies.
+- If the assignment description includes a rubric table (criterion names with
+  point values), use those exact names and point values for the corresponding
+  criteria; do not rename or reinterpret them. Only follow the table when the
+  assignment actually provides one.
 - Prefer fewer, broader criteria (typically 3-10) over many overlapping ones.
 - All "pts" must be positive; all "name"/"desc" must be non-empty.
 - pts across all criteria should sum to the assignment total (100 unless the assignment states otherwise).
