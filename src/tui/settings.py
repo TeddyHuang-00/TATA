@@ -88,7 +88,7 @@ _FIELD_SPECS: tuple[tuple[str, str], ...] = (
 # data/rubrics), both dynamic lists.
 _SELECT_SPECS: tuple[str, ...] = ("grading.provider", "grading.rubric")
 
-# (fqid, label) Checkbox fields (design 05 §④ — the six common switches).
+# (fqid, label) Checkbox fields (design 05 §④).
 _CHECKBOX_SPECS: tuple[tuple[str, str], ...] = (
     ("processing.remove_base64_images", "remove_base64_images"),
     ("processing.clean_filenames", "clean_filenames"),
@@ -96,6 +96,7 @@ _CHECKBOX_SPECS: tuple[tuple[str, str], ...] = (
     ("processing.strip_html_callouts", "strip_html_callouts"),
     ("processing.strip_html_escaped_backslashes", "strip_html_escaped_backslashes"),
     ("processing.strip_html_div_tags", "strip_html_div_tags"),
+    ("processing.visual_evaluation", "Visual evaluation (screenshots)"),
 )
 
 # Context -> writable TOML sections (design 05 §2.5).

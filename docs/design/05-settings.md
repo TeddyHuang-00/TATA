@@ -92,12 +92,12 @@ ______________________________________________________________________
 
 ### ④ 路径与高级
 
-| 字段                           | 控件          | 说明                                                                           |
-| ------------------------------ | ------------- | ------------------------------------------------------------------------------ |
-| raw/processed/graded/logs 目录 | `Input`×4     | `[assignment]` 段                                                              |
-| reference_file / template_file | `Input`       | 可空                                                                           |
-| `[processing]` 开关组          | `Checkbox`×12 | strip_canvas_suffix、remove_base64_images 等（**仅展示常用 6 项，其余折叠**）  |
-| 生成 schema                    | `Button`      | 复用 `generate_all_schemas`；完成后 status 行列出生成文件（等同 CLI `schema`） |
+| 字段                           | 控件              | 说明                                                                           |
+| ------------------------------ | ----------------- | ------------------------------------------------------------------------------ |
+| raw/processed/graded/logs 目录 | `Input`×4         | `[assignment]` 段                                                              |
+| reference_file / template_file | `Input`           | 可空                                                                           |
+| `[processing]` 开关组          | `Checkbox`×7 平铺 | strip_canvas_suffix、remove_base64_images、visual_evaluation 等，全部展开      |
+| 生成 schema                    | `Button`          | 复用 `generate_all_schemas`；完成后 status 行列出生成文件（等同 CLI `schema`） |
 
 ## 4. 交互流
 

@@ -96,6 +96,9 @@ reference_file = "reference.md"
 # ("image" = scanned/photo docs, OCR'd via Firecrawl and rasterized to PDF)
 # input_format = ["ipynb", "html", "markdown"]
 remove_base64_images = true
+# Render submission screenshots for multimodal grading: docx/pdf pages +
+# embedded ipynb images; requires a vision-capable model.
+visual_evaluation = false
 clean_filenames = true
 strip_canvas_suffix = true
 strip_html_callouts = true

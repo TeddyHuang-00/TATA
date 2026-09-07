@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import anydoc
 import nbformat
 import pytest
+from PIL import Image
 from src.shared.grading import _read_reference_text
 from src.shared.processing import (
     SUPPORTED_INPUT_FORMATS,
     _format_for_suffix,
+    _render_screenshots,
     convert_ipynb_to_markdown,
     convert_pdf_to_markdown,
     preprocess_assignment,
@@ -80,9 +85,10 @@ def test_reference_text_converts_ipynb_and_html(tmp_path: Path) -> None:
     assert "<p>" not in html_text
 
 
-def _write_grading_config(tmp_path: Path) -> None:
+def _write_grading_config(tmp_path: Path, extra: str = "") -> None:
     (tmp_path / "config.toml").write_text(
-        '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\nprovider = "deepseek"\n',
+        '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\nprovider = "deepseek"\n'
+        + extra,
         encoding="utf-8",
     )
 
@@ -545,3 +551,319 @@ def test_hosted_ocr_failure_raises_with_key_hint(
     with pytest.raises(RuntimeError, match="FIRECRAWL_API_KEY") as exc_info:
         convert_pdf_to_markdown(pdf_path, out_path)
     assert "out of credits" in str(exc_info.value)
+
+
+# ------------------------------------------------------------- visual_evaluation
+
+
+def _fake_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[list[str]],
+    which: dict[str, str] | None = None,
+    *,
+    pages: int = 1,
+) -> None:
+    """Fake soffice/pdftoppm presence and runs: soffice writes a fake PDF
+    into its --outdir, pdftoppm writes ``{prefix}-{i}.png`` for `pages`."""
+
+    def fake_which(name: str) -> str | None:
+        return which.get(name) if which is not None else None
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        cmd = list(cmd)
+        calls.append(cmd)
+        if cmd[0] == "soffice":
+            outdir = Path(cmd[cmd.index("--outdir") + 1])
+            src = Path(cmd[-1])
+            (outdir / f"{src.stem}.pdf").write_bytes(f"pdf:{src.name}".encode())
+        elif cmd[0] == "pdftoppm":
+            prefix = cmd[-1]
+            pdf_bytes = Path(cmd[4]).read_bytes()
+            for i in range(1, pages + 1):
+                Path(f"{prefix}-{i}.png").write_bytes(pdf_bytes + f" page {i}".encode())
+        return subprocess.CompletedProcess(cmd, 0)
+
+    if which is None:
+        which = {"soffice": "/usr/bin/soffice", "pdftoppm": "/usr/bin/pdftoppm"}
+    monkeypatch.setattr("src.shared.processing.shutil.which", fake_which)
+    monkeypatch.setattr("src.shared.processing.subprocess.run", fake_run)
+
+
+def test_visual_eval_docx_renders_all_pages_without_page_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docx screenshots: soffice -> pdf -> pdftoppm with NO -f/-l page
+    limit; pages renamed {stem}_pN.png; the temp _pdf dir is removed."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_docx(raw / "100.docx", "hello screenshots")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls)
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    assert result is not None
+    assert result["success"] == 1
+    shots = tmp_path / "processed" / "screenshots"
+    assert (shots / "100_p1.png").is_file()
+    assert not (shots / "_pdf").exists()  # temp pdf dir cleaned up
+    pdftoppm_calls = [c for c in calls if c[0] == "pdftoppm"]
+    assert len(pdftoppm_calls) == 1
+    cmd = pdftoppm_calls[0]
+    assert "-f" not in cmd  # no page-limit args
+    assert "-l" not in cmd
+    assert cmd[cmd.index("-r") + 1] == "100"
+    # pdftoppm read the pdf produced by (mocked) soffice in shots/_pdf
+    assert Path(cmd[4]) == shots / "_pdf" / "100.pdf"
+
+
+def test_visual_eval_pdf_skips_soffice_and_renders_all_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pdf screenshots: pdftoppm directly on the raw pdf, soffice never
+    called, and no -f/-l page limit."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_pdf(raw / "100.pdf", "tata pdf test 12345")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, which={"pdftoppm": "/usr/bin/pdftoppm"})
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert (tmp_path / "processed" / "screenshots" / "100_p1.png").is_file()
+    assert all(c[0] != "soffice" for c in calls)
+    cmd = next(c for c in calls if c[0] == "pdftoppm")
+    assert Path(cmd[4]) == raw / "100.pdf"
+    assert "-l" not in cmd
+    assert "-f" not in cmd
+
+
+def test_visual_eval_ipynb_extracts_embedded_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An embedded base64 png in a notebook markdown cell is saved as
+    {stem}_i0.png with bytes identical to the original, and the processed
+    md stays base64-free."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(buf, "PNG")
+    png_bytes = buf.getvalue()
+    embedded = f"![plot](data:image/png;base64,{base64.b64encode(png_bytes).decode()})"
+    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_markdown_cell(embedded)])
+    nbformat.write(nb, raw / "100.ipynb")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    md = tmp_path / "processed" / "100.md"
+    assert md.exists()
+    content = md.read_text(encoding="utf-8")
+    assert "base64" not in content
+    assert "data:image" not in content
+    shot = tmp_path / "processed" / "screenshots" / "100_i0.png"
+    assert shot.read_bytes() == png_bytes
+
+
+def test_visual_eval_folder_docx_triggers_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folderized multi-file student: member docx files render screenshots
+    named after the submission (folder) stem with CONTINUOUS page numbers
+    across members (R2: 3+3 pages -> _p1.._p6, no per-member overwrite,
+    each page's bytes coming from the right member)."""
+    raw = tmp_path / "raw"
+    (raw / "415019").mkdir(parents=True)
+    _write_docx(raw / "415019" / "415019.docx", "part one")
+    _write_docx(raw / "415019" / "415019_1.docx", "part two")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, pages=3)
+    preprocess_assignment(tmp_path / "config.toml")
+
+    md = tmp_path / "processed" / "415019.md"
+    assert md.exists()
+    shots = tmp_path / "processed" / "screenshots"
+    page_shots = sorted(shots.glob("415019_p*.png"))
+    assert [f.name for f in page_shots] == [
+        "415019_p1.png",
+        "415019_p2.png",
+        "415019_p3.png",
+        "415019_p4.png",
+        "415019_p5.png",
+        "415019_p6.png",
+    ]
+    for i, shot in enumerate(page_shots, 1):
+        member = "415019.docx" if i <= 3 else "415019_1.docx"
+        page_in_member = i if i <= 3 else i - 3
+        assert shot.read_bytes() == f"pdf:{member} page {page_in_member}".encode()
+    assert all("-l" not in c and "-f" not in c for c in calls if c[0] == "pdftoppm")
+
+
+def test_visual_eval_rerender_cleans_old_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2: a re-render starts by deleting the stem's old shots — after a
+    12-page run, then a 3-page run, only _p1.._p3 remain (no stale _p4..
+    _p12 mixed into the set grading collects)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_docx(raw / "100.docx", "v1")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, pages=12)
+    preprocess_assignment(tmp_path / "config.toml")
+    shots = tmp_path / "processed" / "screenshots"
+    assert len(list(shots.glob("100_p*.png"))) == 12
+
+    _write_docx(raw / "100.docx", "v2 changed")
+    _fake_tools(monkeypatch, calls, pages=3)
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert sorted(f.name for f in shots.glob("100_p*.png")) == [
+        "100_p1.png",
+        "100_p2.png",
+        "100_p3.png",
+    ]
+
+
+def test_visual_eval_rerender_swapped_to_ipynb_cleans_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2: swapping a docx submission for an ipynb must delete the old _pN
+    pages — only _iN embedded images remain."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_docx(raw / "100.docx", "docx text")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls)
+    preprocess_assignment(tmp_path / "config.toml")
+    shots = tmp_path / "processed" / "screenshots"
+    assert (shots / "100_p1.png").is_file()
+
+    (raw / "100.docx").unlink()
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(buf, "PNG")
+    png_bytes = buf.getvalue()
+    embedded = f"![plot](data:image/png;base64,{base64.b64encode(png_bytes).decode()})"
+    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_markdown_cell(embedded)])
+    nbformat.write(nb, raw / "100.ipynb")
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert list(shots.glob("100_p*.png")) == []  # no stale pages
+    shot = shots / "100_i0.png"
+    assert shot.is_file()
+    assert shot.read_bytes() == png_bytes
+
+
+def test_preprocess_visual_evaluation_off_no_screenshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2: visual_evaluation defaults off -> preprocess creates no
+    screenshots/ directory at all, never renders, and md conversion output
+    is unchanged (zero side effects)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_docx(raw / "100.docx", "hello off")
+    _write_grading_config(tmp_path)  # no [processing] section -> off
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls)
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    assert result is not None
+    assert result["success"] == 1
+    assert not (tmp_path / "processed" / "screenshots").exists()
+    md = tmp_path / "processed" / "100.md"
+    assert md.is_file()
+    assert "hello off" in md.read_text(encoding="utf-8")
+    assert all(c[0] not in {"soffice", "pdftoppm"} for c in calls)
+
+
+def test_visual_eval_rerenders_when_screenshots_missing_from_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache hit (md unchanged) still re-renders screenshots when they are
+    missing; a cache hit WITH screenshots does not re-render."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_docx(raw / "100.docx", "hello screenshots")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls)
+    preprocess_assignment(tmp_path / "config.toml")
+    assert len([c for c in calls if c[0] == "pdftoppm"]) == 1
+
+    # cache hit + screenshots present -> nothing to do
+    preprocess_assignment(tmp_path / "config.toml")
+    assert len([c for c in calls if c[0] == "pdftoppm"]) == 1
+
+    # screenshots wiped -> cache hit re-renders from the raw docx
+    shutil.rmtree(tmp_path / "processed" / "screenshots")
+    preprocess_assignment(tmp_path / "config.toml")
+    assert len([c for c in calls if c[0] == "pdftoppm"]) == 2
+    assert (tmp_path / "processed" / "screenshots" / "100_p1.png").is_file()
+
+
+def test_visual_eval_image_renders_via_pil(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A .png raw file gets an additional {stem}_p1.png screenshot made with
+    PIL (no pdftoppm involved)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    Image.new("RGB", (5, 3), "blue").save(raw / "100.png", "PNG")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    monkeypatch.setattr(anydoc, "to_markdown", lambda *a, **k: "image text\n")
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    shot = tmp_path / "processed" / "screenshots" / "100_p1.png"
+    assert shot.is_file()
+    with Image.open(shot) as out:
+        assert out.size == (5, 3)
+
+
+def test_render_screenshots_ipynb_passes_template_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ipynb screenshot extraction must use the same nbconvert template config
+    as convert_ipynb_to_markdown (R1 finding regression guard)."""
+    captured: dict = {}
+
+    class FakeExporter:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def from_filename(self, path: str) -> tuple[str, dict]:
+            return "# nb\n", {}
+
+    monkeypatch.setattr("src.shared.processing.MarkdownExporter", FakeExporter)
+    nb = tmp_path / "nb.ipynb"
+    nb.write_text("{}", encoding="utf-8")
+
+    tpl_dir = tmp_path / "templates"
+    _render_screenshots(
+        nb,
+        "nb",
+        tmp_path / "processed",
+        "ipynb",
+        template_name="mdoutput",
+        template_dir=tpl_dir,
+    )
+
+    assert captured == {
+        "template_name": "mdoutput",
+        "extra_template_basedirs": [str(tpl_dir)],
+    }
+
+    captured.clear()
+    _render_screenshots(nb, "nb", tmp_path / "processed", "ipynb")
+    assert captured == {}

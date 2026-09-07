@@ -8,6 +8,9 @@
 # every submission type per student: a multi-file student lands in
 # raw/<uid>/, a single-file submission stays flat at raw/<name>.
 
+# [processing]
+# visual_evaluation = false   # render submission screenshots for multimodal grading
+
 [grading]
 rubric = "rubrics/example_rubric.toml"
 system_prompt = "prompt/system.md"

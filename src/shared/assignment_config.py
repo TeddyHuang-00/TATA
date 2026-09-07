@@ -74,11 +74,11 @@ class ProcessingSection(BaseModel):
     remove_nbconvert_assets: bool = Field(default=True)
     nbconvert_template: str | None = Field(default=None)
     nbconvert_template_dir: str | None = Field(default=None)
-    render_screenshots: bool = Field(
+    visual_evaluation: bool = Field(
         default=False,
-        description="Render docx submissions to page screenshots (PDF->PNG) for multimodal grading. Optional, default off.",
+        validation_alias=AliasChoices("visual_evaluation", "render_screenshots"),
+        description="Render submission screenshots (docx/pdf pages, embedded ipynb images, image submissions) for multimodal grading. Optional, default off.",
     )
-    screenshot_pages: int = Field(default=2, ge=1)
 
 
 class HooksSection(BaseModel):

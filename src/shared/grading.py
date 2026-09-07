@@ -359,7 +359,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     # logs/grading.cache.json AND the graded JSON exists. Hash covers the
     # processed md, rubric, system prompts, reference, the [grading] section,
     # the provider entry (name/base_url/model/mode/temperature) and the
-    # render_screenshots flag; any change regrades.
+    # visual_evaluation flag; any change regrades.
     cache_path = cfg.logs_dir / "grading.cache.json"
     cache = load_cache(cache_path)
     provider = get_providers().providers[cfg_model.grading.provider]
@@ -373,7 +373,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
                 "mode": getattr(provider.mode, "value", provider.mode),
                 "temperature": provider.temperature,
             },
-            "render_screenshots": cfg_model.processing.render_screenshots,
+            "visual_evaluation": cfg_model.processing.visual_evaluation,
         },
         sort_keys=True,
     ).encode("utf-8")
@@ -443,14 +443,18 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     error_count = 0
 
     screenshots_dir = cfg.processed_dir / "screenshots"
-    use_images = cfg_model.processing.render_screenshots and screenshots_dir.exists()
+    use_images = cfg_model.processing.visual_evaluation and screenshots_dir.exists()
 
     def _images_for(submission: Path) -> list[str]:
         if not use_images:
             return []
+        # Order: page renders (docx/pdf _pN) first, then notebook-extracted
+        # outputs (ipynb _iN); each class in natural filename order.
+        page_files = sorted(screenshots_dir.glob(f"{submission.stem}_p*.png"))
+        extracted_files = sorted(screenshots_dir.glob(f"{submission.stem}_i*.png"))
         return [
             base64.b64encode(f.read_bytes()).decode()
-            for f in sorted(screenshots_dir.glob(f"{submission.stem}_p*.png"))
+            for f in page_files + extracted_files
         ]
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:

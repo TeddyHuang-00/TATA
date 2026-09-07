@@ -169,7 +169,7 @@ def _check_dump_roundtrip() -> None:
                 "after_score": ["a.py", "b.py"],
             },
         },
-        "processing": {"remove_base64_images": True, "screenshot_pages": 2},
+        "processing": {"remove_base64_images": True, "visual_evaluation": False},
     }
     parsed = tomllib.loads(dump_toml(original))
     assert parsed == original, parsed

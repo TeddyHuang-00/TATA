@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,7 +15,7 @@ from src.shared.grading import (
 from src.shared.provider import ProviderInfo, ProviderList
 
 
-def _setup_grade_env(tmp_path: Path) -> Path:
+def _setup_grade_env(tmp_path: Path, *, visual_evaluation: bool = False) -> Path:
     """Course/assignment layout so grading config paths resolve like real data."""
     a_dir = tmp_path / "data" / "c1" / "a1"
     (a_dir / "processed").mkdir(parents=True)
@@ -31,11 +32,13 @@ def _setup_grade_env(tmp_path: Path) -> Path:
     (tmp_path / "data" / "prompt" / "system.md").write_text(
         "You are a TA.\n", encoding="utf-8"
     )
-    (a_dir / "config.toml").write_text(
+    config = (
         '[grading]\nrubric = "rubrics/r.toml"\n'
-        'system_prompt = ["prompt/system.md"]\nprovider = "test"\n',
-        encoding="utf-8",
+        'system_prompt = ["prompt/system.md"]\nprovider = "test"\n'
     )
+    if visual_evaluation:
+        config += "[processing]\nvisual_evaluation = true\n"
+    (a_dir / "config.toml").write_text(config, encoding="utf-8")
     return a_dir / "config.toml"
 
 
@@ -127,6 +130,82 @@ def test_grade_force_reqrades_despite_valid_cache(
     assert len(calls) == 2
 
 
+def _image_payloads(content: list[dict]) -> list[bytes]:
+    """Decoded bytes of every image_url part, in message order."""
+    return [
+        base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
+        for part in content
+        if part.get("type") == "image_url"
+    ]
+
+
+class TestGradingVisualEvaluation:
+    def test_mixed_p_and_i_ordered_pages_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Item: _images_for consumes both _p* and _i*; pages first, then extracted."""
+        config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
+        calls: list[MagicMock] = []
+        _patch_grade_deps(monkeypatch, calls)
+        shots = tmp_path / "data" / "c1" / "a1" / "processed" / "screenshots"
+        shots.mkdir()
+        (shots / "100001_p2.png").write_bytes(b"page2")
+        (shots / "100001_p1.png").write_bytes(b"page1")
+        (shots / "100001_i0.png").write_bytes(b"img0")
+
+        grade_assignment(config_path)
+
+        content = calls[0]["messages"][-1]["content"]
+        assert isinstance(content, list)
+        assert _image_payloads(content) == [b"page1", b"page2", b"img0"]
+
+    def test_only_i_images(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Item: ipynb-only student (only _i*) still gets its extracted images."""
+        config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
+        calls: list[MagicMock] = []
+        _patch_grade_deps(monkeypatch, calls)
+        shots = tmp_path / "data" / "c1" / "a1" / "processed" / "screenshots"
+        shots.mkdir()
+        (shots / "100001_i0.png").write_bytes(b"notebook-img")
+
+        grade_assignment(config_path)
+
+        content = calls[0]["messages"][-1]["content"]
+        assert isinstance(content, list)
+        assert _image_payloads(content) == [b"notebook-img"]
+
+    def test_visual_enabled_but_no_matching_files_falls_back_to_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Item: empty glob -> [] -> plain text content (no list/dict)."""
+        config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
+        calls: list[MagicMock] = []
+        _patch_grade_deps(monkeypatch, calls)
+        (tmp_path / "data" / "c1" / "a1" / "processed" / "screenshots").mkdir()
+
+        grade_assignment(config_path)
+
+        content = calls[0]["messages"][-1]["content"]
+        assert isinstance(content, str)
+        assert "Student Answer" in content
+
+    def test_visual_disabled_plain_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Item: visual_evaluation off -> no image parts at all."""
+        config_path = _setup_grade_env(tmp_path)
+        calls: list[MagicMock] = []
+        _patch_grade_deps(monkeypatch, calls)
+
+        grade_assignment(config_path)
+
+        content = calls[0]["messages"][-1]["content"]
+        assert isinstance(content, str)
+        assert "Student Answer" in content
+
+
 class TestBuildGradingMessages:
     def test_includes_system_prompt(self) -> None:
         messages = _build_grading_messages(
@@ -163,6 +242,35 @@ class TestBuildGradingMessages:
         )
         assert messages[-1]["role"] == "user"
         assert "Student Answer" in messages[-1]["content"]
+
+    def test_images_become_image_url_parts(self) -> None:
+        messages = _build_grading_messages(
+            system_prompt="TA",
+            reference_text="",
+            student_text="stu",
+            images=["aGVsbG8=", "d29ybGQ="],
+        )
+        content = messages[-1]["content"]
+        assert isinstance(content, list)
+        assert content[0]["type"] == "text"
+        assert "Student Answer" in content[0]["text"]
+        image_parts = [p for p in content if p["type"] == "image_url"]
+        assert len(image_parts) == 2
+        assert all(
+            p["image_url"]["url"].startswith("data:image/png;base64,")
+            for p in image_parts
+        )
+        assert image_parts[0]["image_url"]["url"] == "data:image/png;base64,aGVsbG8="
+        assert image_parts[1]["image_url"]["url"] == "data:image/png;base64,d29ybGQ="
+
+    def test_no_images_plain_text_content(self) -> None:
+        messages = _build_grading_messages(
+            system_prompt="TA",
+            reference_text="",
+            student_text="stu",
+            images=None,
+        )
+        assert isinstance(messages[-1]["content"], str)
 
 
 class TestBuildClient:
