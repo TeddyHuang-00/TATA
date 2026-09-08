@@ -722,7 +722,8 @@ class DashboardScreen(Vertical):
             )
         )
         # M3: record the assignment in the course config's [[fetch.assignments]]
-        # so fetch-all (F) picks it up later. CLI's _remember does not maintain
+        # so fetch-all (F) picks it up later. fetch_pipeline.remember does not
+        # maintain
         # that list; a plain append lands in [fetch] (TOML table headers are
         # absolute). Dedup on id (legacy assignment_id key also accepted);
         # skip when the config is unreadable — the fetch already succeeded.
@@ -1051,7 +1052,7 @@ class DashboardScreen(Vertical):
 
 
 class TataApp(App[None]):
-    """TATA Workbench shell: Header + 4 work tabs + Footer."""
+    """TATA Workbench shell: Header + 3 work tabs + Footer."""
 
     TITLE = "TATA Workbench"
     CSS_PATH = "styles/app.tcss"

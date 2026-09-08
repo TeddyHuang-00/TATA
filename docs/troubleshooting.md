@@ -35,7 +35,8 @@ Symptom:
 Fix:
 
 1. Place files in `raw/`
-1. Use supported extensions: `.ipynb`, `.html`, `.md`
+1. Use supported extensions: `.ipynb`, `.html`, `.txt` (treated as HTML —
+   Canvas text-entry bodies), `.md`, `.docx`, `.pdf`, `.jpg/.jpeg/.png` (images)
 1. If needed, set `[processing].input_format`
 
 ## 4. No files found for input_format
@@ -70,7 +71,7 @@ Symptom:
 Fix:
 
 - Set `grading.rubric` to an existing TOML file in the repository
-- Example: `rubrics/example_rubric.toml`
+- Example: `data/rubrics/example_rubric.toml`
 
 ## 7. System prompt file not found
 
@@ -81,7 +82,7 @@ Symptom:
 Fix:
 
 - Set `grading.system_prompt` to an existing markdown file
-- Example: `prompt/system.md`
+- Example: `data/prompt/system.md`
 
 ## 8. No graded files found in graded/
 
@@ -126,7 +127,7 @@ Symptom:
 
 Fix:
 
-1. Remove `logs/grading.checkpoint.json`
+1. Remove `logs/grading.cache.json` (and `logs/grading.checkpoint.json` if present)
 1. Remove stale files in `graded/`
 1. Run grade again
 
@@ -164,18 +165,3 @@ Fix:
 1. Make sure `template.ipynb` contains assignment boilerplate/common starter code
 1. Confirm it is correctly configured as `[plagiarism].template_file`
 1. Tune `[plagiarism].display_threshold` as needed
-
-## 15. Reference TODO/instruction mismatch review is inconsistent
-
-Symptom:
-
-- You are unsure whether reference TODO implementations strictly match instructions.
-
-Fix:
-
-Run the rule-based audit helper and manually review flagged TODOs:
-
-```bash
-uv run misc/reference_mismatch_audit.py \
-   --notebook data/my-assignment/reference.ipynb
-```

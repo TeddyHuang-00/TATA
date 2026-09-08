@@ -235,7 +235,8 @@ def _incremental_line(info: AssignmentInfo) -> str:
 
 
 def _run_fetch_job(config_path: Path) -> None:
-    """Fetch through the CLI entry point (single source of truth, main.py)."""
+    """Fetch one assignment via src.shared.fetch_pipeline.run_fetch (the
+    same function the CLI ``fetch`` subcommand calls)."""
     run_fetch(FetchCliOptions(config=config_path))
 
 

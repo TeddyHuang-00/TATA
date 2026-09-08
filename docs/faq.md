@@ -23,7 +23,8 @@ If omitted, defaults are:
 - processed_dir -> `processed`
 - graded_dir -> `graded`
 - logs_dir -> `logs`
-- reference_file -> `reference.md`
+- reference_file -> none (no reference file; set it to enable
+  reference-based grading)
 
 ## 3. Do I need to create folders manually?
 
@@ -86,16 +87,17 @@ uv run main.py analyze -c data/my-assignment/config.toml
 - Logs and checkpoint: `logs/`
 - Plagiarism report and extracted files: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
 
-## 8. Why do I get "All submissions already graded (checkpoint hit)"?
+## 8. Why do I get "All submissions already graded (cache hit)"?
 
-The checkpoint file records completed submissions.
+The grading cache (`logs/grading.cache.json`, keyed by submission input
+hashes) remembers which submissions were graded with unchanged inputs.
 
 If you want to regrade from scratch, remove:
 
-- `logs/grading.checkpoint.json`
+- `logs/grading.cache.json` (and `logs/grading.checkpoint.json` if present)
 - old files in `graded/`
 
-Then run grade again.
+or re-run with `--force`. Then run grade again.
 
 ## 9. Can preprocessing accept multiple submission formats?
 
@@ -168,25 +170,7 @@ Recommended workflow:
 1. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
 1. Escalate only when evidence is consistent with policy.
 
-## 13. Is there a helper to audit TODO instruction/code mismatches in reference notebooks?
-
-Yes. Use:
-
-```bash
-uv run misc/reference_mismatch_audit.py \
-	--notebook data/my-assignment/reference.ipynb
-```
-
-You can also output JSON:
-
-```bash
-uv run misc/reference_mismatch_audit.py \
-	--notebook data/my-assignment/reference.ipynb \
-	--format json \
-	--output misc/audit_report.json
-```
-
-## 14. Can I combine plagiarism results across all assignments into one report?
+## 13. Can I combine plagiarism results across all assignments into one report?
 
 Yes. Use the aggregate helper script:
 
@@ -195,13 +179,14 @@ uv run main.py plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 
-Useful options:
+Tuning knobs live in the `[plagiarism]` config section instead of CLI
+flags (allowed ranges are validated by
+`src/shared/assignment_config.py`):
 
-- `--format json` for machine-readable output
-- `--pairwise-alpha 0.005` for stricter pair-level significance
-- `--individual-alpha 0.005` for stricter student-level significance
-- `--score-floor 0.001` and `--score-cap 0.999` to control logit clipping bounds
+- `pairwise_alpha` / `individual_alpha` (default `0.01`, range 0–1) for
+  stricter pair-level / student-level significance
+- `score_floor` (default `0.001`, range 0–0.5) and `score_cap`
+  (default `0.999`, range 0.5–1) to control logit clipping bounds
 
-The script uses Pydantic/pydantic-settings for CLI option parsing and validation.
 It reads `plagiarism/all_pairs.json` (full pair coverage).
 It reports significant pairs and significant students as separate sections.

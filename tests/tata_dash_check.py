@@ -148,7 +148,7 @@ def _fake_providers(names: list[str]) -> Iterator[None]:
 
 async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
     """Course + c: ImportAssignmentModal -> AssignmentSetupModal (defaults
-    confirmed) -> import calls main._run_fetch."""
+    confirmed) -> import calls tata_app_mod.run_fetch."""
     data = app.state.assignments_dir
     (data / "rubrics").mkdir()
     (data / "rubrics" / "alpha.toml").write_text("", encoding="utf-8")

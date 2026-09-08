@@ -32,8 +32,12 @@ Provider definitions are one file each in [data/providers](../data/providers)
 Validate before creating a new assignment config:
 
 ```bash
-uv run cli validate -c data/example/config.toml
+uv run cli validate -c data/<course>/<assignment>/config.toml
 ```
+
+The bare `data/example/config.toml` copy source validates only at its
+destination depth (`data/<course>/<assignment>/`), where rubric/prompt
+paths resolve against `data/`.
 
 `validate` checks the config with the same pydantic models used at runtime,
 plus the rubric files, prompt files, `[grading].provider` against
@@ -56,7 +60,8 @@ Path-related fields under `[assignment]` are optional and default to:
 - processed
 - graded
 - logs
-- reference.md
+- none (no reference file — set `[assignment].reference_file` to enable
+  reference-based grading)
 
 Plagiarism settings are optional under `[plagiarism]` and default to:
 
@@ -109,13 +114,6 @@ Analyze grading quality (meta analysis):
 uv run main.py analyze -c data/my-assignment/config.toml
 ```
 
-Audit reference notebook TODO/instruction mismatches:
-
-```bash
-uv run misc/reference_mismatch_audit.py \
-	--notebook data/my-assignment/reference.ipynb
-```
-
 Aggregate plagiarism reports across assignments:
 
 ```bash
@@ -123,7 +121,9 @@ uv run main.py plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 
-Run all stages:
+Run every stage — in this order (plagiarism is optional but recommended):
+`preprocess` → `plagiarism` → `grade` → `score` → `analyze`, run each one
+individually:
 
 ```bash
 uv run main.py preprocess -c data/my-assignment/config.toml
@@ -132,8 +132,6 @@ uv run main.py grade -c data/my-assignment/config.toml
 uv run main.py score -c data/my-assignment/config.toml
 uv run main.py analyze -c data/my-assignment/config.toml
 ```
-
-`all` executes stages in this order: plagiarism -> preprocess -> grade -> score -> analyze.
 
 ## 8. Outputs
 

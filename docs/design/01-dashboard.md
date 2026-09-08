@@ -62,7 +62,7 @@ ______________________________________________________________________
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ TATA · Dashboard [Course: 271218]  [c]Import assignment [F]Fetch all        │
-│                                    [p]Plagiarism+aggregate [cfg]Config     │
+│                                    [p]Plagiarism+aggregate [o]Config     │
 │                                    [r]Rescan  [q]Quit                       │
 ├────────────────────────────────────────────────────────────────────────────┤
 │ # Assignment           ID      raw  proc  grad  Avg  State       Last run   │
@@ -89,12 +89,12 @@ ______________________________________________________________________
 
 ### Course 层跨作业操作（用户点名，全部走 job 协议）
 
-| 动作       | 键    | 等价 CLI                                              | 行为                                                                                                                                                                                                                                                                                                                                             |
-| ---------- | ----- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 导入作业   | `c`   | `fetch` 交互选择                                      | ImportAssignmentModal 选 Canvas 作业 → AssignmentSetupModal（rubric Select 自 `data/rubrics/*.toml`、prompt 多选框自 `data/prompt/*.md`、provider Select 自注册表；默认 第一个/全选/第一个；空库或无勾选 prompt 时 Import 禁用）→ 写 `data/<course>/<id>/config.toml`（`[grading]` + schema 头）+ 种子 `[assignment]` 别名 → 单作业 fetch → 重扫 |
-| fetch 全部 | `F`   | `fetch -c data/<course>/config.toml`                  | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」                                                                                                                                                                                                                                                            |
-| 查重+聚合  | `p`   | `plagiarism -c data/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏                                                                                                                                                                                                                                                                     |
-| 课程配置   | `cfg` | —                                                     | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖）                                                                                                                                                                                                                                |
+| 动作       | 键  | 等价 CLI                                              | 行为                                                                                                                                                                                                                                                                                                                                                    |
+| ---------- | --- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 导入作业   | `c` | `fetch` 交互选择                                      | ImportAssignmentModal 选 Canvas 作业 → AssignmentSetupModal（rubric Select 自 `data/rubrics/*.toml`、prompt 多选框自 `data/prompt/*.md`、provider Select 自注册表；默认 第一个/全选/第一个；空库或无勾选 prompt 时 Import 禁用）→ 写 `data/<course>/<id>/config.toml`（`[grading]`，无 `# schema:` 头）+ 种子 `[assignment]` 别名 → 单作业 fetch → 重扫 |
+| fetch 全部 | `F` | `fetch -c data/<course>/config.toml`                  | 拉取 course config 清单全部条目；确认 Modal 显示「将拉取 N 项（M 份提交，缓存跳过）」                                                                                                                                                                                                                                                                   |
+| 查重+聚合  | `p` | `plagiarism -c data/<course>/config.toml --aggregate` | 跑全部作业检测 + 跨作业 z-score 聚合（一条命令语义）；完成后自动切 S4 查重屏                                                                                                                                                                                                                                                                            |
+| 课程配置   | `o` | —                                                     | 切 S5 并置 Settings 上下文=Course（编辑 course config.toml：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖）                                                                                                                                                                                                                                       |
 
 > `[maybe]` 全局聚合（跨课程查重）v1 不做 —— 用户未要求，YAGNI；将来加就是 global 视图一个按钮。
 
@@ -127,13 +127,14 @@ Assignment 层新增职责（相对 v1 的 S2）：
 | `c`                 | Global            | Import course                        | Modal: pick Canvas course → create `data/<dir>/config.toml` + seed `[course]` alias (fill-missing) → enter Course view                                                       |
 | `c`                 | Course            | Import assignment                    | Modal: pick assignment → AssignmentSetupModal quick setup (rubric/prompt/provider) → write `data/<course>/<id>/config.toml` + seed `[assignment]` alias → fetch job → rescan |
 | `F`                 | Course            | Fetch all                            | Per-assignment cache skip (`.fetch-cache.json`)                                                                                                                              |
-| `p`                 | Course            | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to S4                                                                                                                               |
-| `cfg`               | Course            | Course config                        | Switch to S5 (context=Course)                                                                                                                                                |
+| `p`                 | Course            | Plagiarism + aggregate (this course) | `--aggregate` full run; on finish switch to Plagiarism pane                                                                                                                  |
+| `o`                 | Course            | Course config                        | Switch to S5 (context=Course)                                                                                                                                                |
 | `g`                 | Global            | Global config                        | Switch to S5 (context=Global)                                                                                                                                                |
+| `a`                 | Global/Course     | Edit aliases                         | Global: course alias (`data/alias.toml` `[course]`); Course: assignment alias (`data/<course>/alias.toml` `[assignment]`)                                                    |
 | `s`                 | Course            | Score review (selected assignment)   | `push_screen(ScoreReviewScreen)`                                                                                                                                             |
 | `r`                 | All layers        | Rescan                               | Global rescans courses; Course/Assignment rescans assignments                                                                                                                |
-| `1..9`              | Course            | Filter by state                      | 1=All 2=Done 3=Partial 4=Not run 5=Flagged                                                                                                                                   |
-| `q`                 | Global            | Quit                                 | Confirm if a job is running                                                                                                                                                  |
+| `1..4`              | Course            | Filter by state                      | 1=All 2=Done 3=Partial 4=Not run                                                                                                                                             |
+| `q`                 | Global            | Quit                                 | Exits immediately (no running-job confirmation — known baseline deviation)                                                                                                   |
 
 ## 6. 交互流
 
@@ -158,8 +159,7 @@ Course 视图 [c] → ImportAssignmentModal(Canvas 作业 Select)      # 后台�
          prompt(s): Checkbox 多选 data/prompt/*.md（值 "prompt/<file>"），默认全选
          provider: Select 枚举 config/provider.toml 注册表，默认第一个
          Import 禁用条件：任一库为空（rubrics/prompt/provider）或未勾选任何 prompt
-    → 确认 → 创建 data/<course>/<dir>/config.toml，首行 "# schema: ../../config/assignment.schema.json"
-             + [grading] = { rubric, system_prompt[], provider }
+    → 确认 → 创建 data/<course>/<dir>/config.toml（`[grading]` = { rubric, system_prompt[], provider }，无 `# schema:` 头）
              # 写入目标：assignment 级 config（非 course config 的 [[fetch.assignments]]）
     → seed_assignment_alias（course 级 data/<course>/alias.toml 的 [assignment] 表，fill-missing）
     → job: _run_fetch(FetchCliOptions(course, assignment, config=course_config))
@@ -254,9 +254,9 @@ data/
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `src/assignment_config.py`     | `find_root_config` 保持；新增 `find_global_config` + 三层 `_merge_configs`；`is_root_config` 文档语义更新                        |
 | `main.py` 或新 `src/scan.py`   | `scan_assignments()` 升级：输入 course_dir，汇总按 course 分组；global 视图聚合计算                                              |
-| TUI `tata_app.py`              | `AppState` 加 `courses`、`current_course`、`dashboard_level`；S1 三层视图类（`DashboardScreen` 三态切换 + 面包屑 `#breadcrumb`） |
+| TUI `src/tui/app.py`           | `AppState` 加 `courses`、`current_course`、`dashboard_level`；S1 三层视图类（`DashboardScreen` 三态切换 + 面包屑 `#breadcrumb`） |
 | `docs/design/00-ia.md`         | 屏幕清单、导航图、状态模型（本次同步更新）                                                                                       |
 | `docs/design/02-pipeline.md`   | 头部面包屑 + `esc` 返回绑定 + 「作业设置 v2 占位」                                                                               |
 | `docs/design/05-settings.md`   | 写入目标三层化；上下文选择器（Global/Course/Assignment）                                                                         |
 | `docs/design/04-plagiarism.md` | 顶部课程上下文；`a` 键语义改为 course config；空态文案                                                                           |
-| 迁移脚本                       | `scripts/migrate_courses.sh`（一次性；或手动 mv + 验证，见 §8）                                                                  |
+| 迁移（手动）                   | copy → verify → delete 三步（见 §8；**无 `scripts/migrate_courses.sh`，无迁移脚本**）                                            |

@@ -2,7 +2,7 @@
 
 Follows tests/tata_app_check.py: App.run_test() + Pilot on a tmp course
 layout, no pytest-asyncio. Skips real Canvas by monkeypatching
-main_mod._run_fetch with a recorder. Asserts: loader-driven target count,
+tata_app_mod.run_fetch with a recorder. Asserts: loader-driven target count,
 per-target sequential calls with entry id, live
 panel states (pending/running/done/failed), completion summary, no raw
 paths in the panel, and the empty-list notify path.

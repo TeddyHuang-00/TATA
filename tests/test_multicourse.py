@@ -214,7 +214,7 @@ def test_nested_config_does_not_break_container_detection(
     """M1 regression: a nested config.toml (data/111111/a/solutions/)
     defeats the leaf heuristics (is_course_config/is_global_config both
     return False), but the container check (is_root_config) must stay True so
-    _load_config keeps treating the global/course configs as containers."""
+    load_config keeps treating the global/course configs as containers."""
     global_cfg = write_tree(
         tmp_path,
         "data/config.toml",
@@ -235,7 +235,7 @@ def test_nested_config_does_not_break_container_detection(
     assert is_root_config(global_cfg)
     assert is_root_config(course_cfg)
 
-    # _load_config must classify both as containers (fetch-only state), never
+    # load_config must classify both as containers (fetch-only state), never
     # fall through to load_assignment_file and fail on missing [grading].
     path, fetch = load_config(global_cfg)
     assert path == global_cfg
@@ -280,7 +280,7 @@ def test_remember_nested_assignment_no_container_pollution(
 ) -> None:
     """M1 regression: data/111111/a/config.toml has a nested
     subdirectory config (a/solutions/config.toml), which made the
-    structural container heuristics classify it as a container — _remember
+    structural container heuristics classify it as a container — remember
     then wrote course_id/mode into the ASSIGNMENT config (pollution) and
     the course config never got mode. Pure self-evidence: it loads as an
     assignment, so course keys go to the course config."""
@@ -315,7 +315,7 @@ def test_retry_fetch_dedups_shared_assignment(
 ) -> None:
     """Mixed-tree retry: global (data/config.toml) and course
     configs both list assignment 9901 — the shared seen set must fetch it
-    exactly once (driven through _fetch_course, the same loop _retry_fetch
+    exactly once (driven through fetch_course, the same loop retry_fetch
     runs, with fetch_assignment mocked)."""
     global_cfg = write_tree(
         tmp_path,
@@ -340,7 +340,7 @@ def test_container_bad_toml_raises_guidance_not_bare_decode(
 ) -> None:
     """COSMETIC-3: a container config with broken TOML (unclosed string)
     must surface load_assignment_file's 'Invalid TOML' ValueError with the
-    tip — never a bare TOMLDecodeError from _root_fetch's own parse."""
+    tip — never a bare TOMLDecodeError from root_fetch's own parse."""
     cont = write_tree(tmp_path, "cont/config.toml", '[fetch]\ncourse_id = "111111\n')
     write_tree(tmp_path, "cont/child/config.toml", grading_config)
 
@@ -417,7 +417,7 @@ def test_remember_fresh_course_container(
 ) -> None:
     """MAJOR-B: a fresh course config — only [fetch] state + its
     [[fetch.assignments]] list, no subdirectory configs — defeats all three
-    structural heuristics; _remember must still treat it as a container
+    structural heuristics; remember must still treat it as a container
     (self-evidence): course_id stays in the course config, assignment
     keys go to out.parent/config.toml, and nothing climbs to (or creates) a
     shared data/config.toml."""
@@ -443,7 +443,7 @@ def test_remember_fresh_course_container(
 
 
 def test_fetch_course_missing_config_returns_false(tmp_path: Path) -> None:
-    """MAJOR-A: _retry_fetch must never hand _fetch_course a path that does
+    """MAJOR-A: retry_fetch must never hand fetch_course a path that does
     not exist (fresh three-level layout has no data/config.toml);
     the existence guard makes a missing file return False, not raise."""
     missing = tmp_path / "data" / "config.toml"
@@ -455,7 +455,7 @@ def test_load_config_container_without_fetch(
 ) -> None:
     """MINOR-1: container = cannot load as an assignment (no [grading]).
     A config with no [fetch] at all — a fresh course/global config — is
-    still a container: _load_config returns (path, None) instead of
+    still a container: load_config returns (path, None) instead of
     falling through to 'Missing required config fields: grading'."""
     cont = write_tree(
         tmp_path,

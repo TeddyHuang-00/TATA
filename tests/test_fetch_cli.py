@@ -204,7 +204,6 @@ def test_retry_finds_course_config_list(
     calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
-    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
@@ -229,7 +228,6 @@ def test_run_fetch_course_config_positional_derives_aid_raw_out(
 
     calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
-    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
@@ -269,7 +267,6 @@ def test_run_fetch_assignment_config_uses_course_fetch_state(
 
     calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
-    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",
@@ -331,7 +328,6 @@ def test_remember_never_writes_mode_key(
 
     calls: list[tuple[int, int, str]] = []
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
-    monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
         main_mod,
         "fetch_assignment",

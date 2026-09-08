@@ -1,5 +1,8 @@
 # DECISIONS.md
 
+> 旧决策为历史快照，现状以 README/HERMES.md 与代码为准；部分早期决策已被
+> 后续批次取代（如 schema 机制已移除、fetch mode/out 已删除），追溯历史请
+> 按时间线阅读。
 
 ## TUI module renames + TCSS consolidation
 

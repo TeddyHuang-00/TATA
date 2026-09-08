@@ -74,7 +74,7 @@ def test_course_config_display_threshold_drives_flags(tmp_path: Path) -> None:
 
 def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> None:
     """M1 regression: wrong-typed [plagiarism] display_threshold must not
-    crash _plagiarism_threshold_pct/scan_courses; threshold falls back to the
+    crash plagiarism_threshold_pct/scan_courses; threshold falls back to the
     default 80.0 (dirty-data tolerance doctrine)."""
     from src.tui.scan import (
         DISPLAY_THRESHOLD_PCT,

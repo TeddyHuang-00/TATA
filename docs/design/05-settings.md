@@ -1,8 +1,8 @@
 # TATA 设计稿 v1.1 — 05 · Settings（S5）
 
-> 职责：provider、Canvas、plagiarism 权重、路径与 schema 生成的集中配置编辑；**上下文选择器：Global / Course / Assignment 三级**（右上 Select）
+> 职责：provider、Canvas、plagiarism 权重、路径的集中配置编辑；**上下文选择器：Global / Course / Assignment 三级**（右上 Select）；无 schema 生成机制（v5 2026-09-02 已移除——provider/rubric 直接由 TOML 加载）
 > v1.1 变更：写入目标由「根配置/作业配置」两层改为**三层**：global config（`data/config.toml`，可选，跨课程默认）、**course config**（`data/<course>/config.toml`：course_id/`[[fetch.assignments]]`/[plagiarism] 覆盖）、assignment config（`data/<course>/<name>/config.toml`：`[grading]`/`[plagiarism]`/`[assignment]`/`[processing]`）；.env 仍全局
-> 上下文来源：`state.current_course` / `state.current_assignment`；从 S1 三层的 `cfg`/`g` 进入时预置（Global 视图 `g`→Global 上下文；Course 视图 `cfg`→Course 上下文；Assignment 视图 `e`→Assignment 上下文）
+> 上下文来源：`state.current_course` / `state.current_assignment`；从 S1 三层的 `o`/`g` 进入时预置（Global 视图 `g`→Global 上下文；Course 视图 `o`→Course 上下文；Assignment 视图 `e`→Assignment 上下文）
 > 保存逻辑：全屏右侧显示「将写入: 文件路径」；内容经 `load_assignment_file` 校验通过才落盘（pydantic 错误逐条展示）
 > v2 (2026-09-01 update)：rubric/prompt/provider 三字段全部改为本地库枚举（Select / 多选框）；Assignment 上下文显示 `(inherited)` 继承徽章；新增 RubricBuilderScreen（§7）；布局契约与 `DEFAULT_CSS` 陷阱见 §8
 > v4 (2026-09-01 update)：context 下拉显示 `Alias (id)`；Canvas tab 改为可编辑（url/token 写 `.env`、遮蔽预览、Save/Reload，测试连接保留）；provider 注册表编辑迁至 **Library tab → ProvidersPane**（Settings 不再展示只读注册表，provider 下拉来源 config/provider.toml）；`.prompt-row` 高度修复（行高 `auto`，见 §8.3）
@@ -41,7 +41,7 @@ ______________________________________________________________________
 | 布尔         | `Checkbox`（remove_base64_images 等 `[processing]` 开关，④ 页批量）                                                                                  | 处理选项                                                                                                                                                         |
 | 单选         | `RadioSet`+`RadioButton`（chat/reasoning mode）                                                                                                      | 互斥模式                                                                                                                                                         |
 | 状态行       | `Static`（`#settings-status`）                                                                                                                       | 校验结果（通过/错误摘要）+ 目标文件路径                                                                                                                          |
-| 操作         | `Button`（保存/重置/生成 schema/测试连接/打开目录）                                                                                                  | 动作                                                                                                                                                             |
+| 操作         | `Button`（保存/重置 / Save .env / Reload .env / Test Canvas connection）                                                                             | 动作                                                                                                                                                             |
 | 错误         | `notify` + `ModalScreen`（校验失败详情列表）                                                                                                         | pydantic 逐条错误                                                                                                                                                |
 
 ## 2.5 上下文规则（三层写入目标）
@@ -92,12 +92,11 @@ ______________________________________________________________________
 
 ### ④ 路径与高级
 
-| 字段                           | 控件              | 说明                                                                           |
-| ------------------------------ | ----------------- | ------------------------------------------------------------------------------ |
-| raw/processed/graded/logs 目录 | `Input`×4         | `[assignment]` 段                                                              |
-| reference_file / template_file | `Input`           | 可空                                                                           |
-| `[processing]` 开关组          | `Checkbox`×7 平铺 | strip_canvas_suffix、remove_base64_images、visual_evaluation 等，全部展开      |
-| 生成 schema                    | `Button`          | 复用 `generate_all_schemas`；完成后 status 行列出生成文件（等同 CLI `schema`） |
+| 字段                           | 控件              | 说明                                                                      |
+| ------------------------------ | ----------------- | ------------------------------------------------------------------------- |
+| raw/processed/graded/logs 目录 | `Input`×4         | `[assignment]` 段                                                         |
+| reference_file / template_file | `Input`           | 可空                                                                      |
+| `[processing]` 开关组          | `Checkbox`×7 平铺 | strip_canvas_suffix、remove_base64_images、visual_evaluation 等，全部展开 |
 
 ## 4. 交互流
 
@@ -112,22 +111,19 @@ ______________________________________________________________________
   → 通过: 写盘(仅改动的段) + notify(success) + status 行「已保存」
   → 失败: Modal 列出全部 pydantic 错误(字段: 原因) + 对应 Input 红边框，不写盘
 测试连接(Canvas 页) → 后台线程 list_courses → 成功: 「连接正常, 课程 N 个」; 失败: 红字原因
-生成 schema → 后台线程 → 成功: 列出路径; 失败: notify(error)
 ```
 
 ## 5. 键盘映射表
 
-| 键                  | 动作                              | 说明                                    |
-| ------------------- | --------------------------------- | --------------------------------------- |
-| `tab` / `shift+tab` | Switch tab / move between fields  | 原生                                    |
-| `1`–`4`             | Jump to tab ①–④                   |                                         |
-| `ctrl+s`            | Save current tab                  | 校验语义见 §4                           |
-| `r`                 | Reset to disk values              | 弹确认（覆盖未保存改动）                |
-| `b`                 | Open Rubric builder               | Grading Tab 按钮「Rubric builder…」等价 |
-| `e`                 | Open config file in `$EDITOR`     | 深度编辑放行（v1 不做 TUI 全量编辑）    |
-| `t`                 | Test Canvas connection            | 仅 Canvas Tab                           |
-| `esc`               | Back — confirm if unsaved changes |                                         |
-| `?`                 | Help                              | 全域                                    |
+| 键                  | 动作                             | 说明                                         |
+| ------------------- | -------------------------------- | -------------------------------------------- |
+| `tab` / `shift+tab` | Switch tab / move between fields | 原生                                         |
+| `1`–`4`             | Jump to tab ①–④                  |                                              |
+| `ctrl+s`            | Save current tab                 | 校验语义见 §4                                |
+| `r`                 | Reset to disk values             | 直接重载当前上下文，无确认（覆盖未保存改动） |
+| `e`                 | Open config file in `$EDITOR`    | 深度编辑放行（v1 不做 TUI 全量编辑）         |
+| `t`                 | Test Canvas connection           | 仅 Canvas Tab                                |
+| `?`                 | Help                             | 全域（应用级 `toggle_help`）                 |
 
 ## 6. 空态 / 错误态 / 加载态
 
@@ -140,15 +136,14 @@ ______________________________________________________________________
 | **加载态·测试连接**          | 「正在连接 Canvas…」+ 按钮 disabled + 不定态旋转符                                                                                           |
 | **错误态·校验失败**          | Modal 错误列表（见 §4）；例：「grading.max_parallel_tasks: Input should be less than or equal to 10」「plagiarism weights: sum 1.20 ≠ 1.00」 |
 | **错误态·写盘失败(权限)**    | `notify(error, "写入失败: <err>")`；不丢输入（field 内容保留，可重试）                                                                       |
-| **错误态·schema 生成失败**   | notify(error) + 日志区（本屏右下固定 1 条 RichLog 摘要）记录堆栈首行                                                                         |
 
 ## 7. Rubric builder（v2 新增，2026-09-01）
 
-`RubricBuilderScreen`（`src/tata_rubric.py`）—— 与 Settings **平级的独立 pushed Screen**（同 ScoreReviewScreen 模式），入口：Grading Tab 按钮「Rubric builder…」（`btn-rubric-builder`）或 `b` 绑定（`action_rubric_builder`）。Esc 关闭**不保存**。
+`RubricsPane`（`src/tui/rubrics_pane.py`）——Rubric builder + 列表的 pane，位于 **Library tab → Rubrics pane**（v3 起收进 Library，不再 push_screen）；Settings 内无「Rubric builder…」按钮（无 `btn-rubric-builder`）、无 `b` 绑定（无 `action_rubric_builder`）、无 push/pop。
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ [b]Rubric builder                                            esc=Back      │
+│ RubricsPane (Library tab) · Rubric builder                          │
 ├────────────────────────────────────────────────────────────────────────────┤
 │ File: [existing.toml ▾]  [new rubric filename___]   (New rubric… 时显示)   │
 │ (error line, red, optional)                                              │
@@ -157,14 +152,14 @@ ______________________________________________________________________
 │ name / desc(TextArea,h5) / rating Select / grading Select / pts Input /   │
 │ custom_scale(comma-separated, 仅 grading=custom 可用)                      │
 │ [Edit] [Remove] [Add] [Update] [Save rubric]                              │
-│ Esc closes without saving.                                                │
+│ Save rubric writes data/rubrics/<name>.toml.                              │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **文件**：Select = 现有 `data/rubrics/*.toml` + 「New rubric…」（显示 filename Input）；载入选中的 rubric（`get_rubric_definition`；失败 → 红色错误行，屏幕存活）
 - **准则编辑**：一次一条 —— Edit（选中行载入表单）/ Remove / Add / Update；表单校验 name 必填、pts 数值、custom_scale 仅 grading=custom（否则 Input 禁用 dim）
-- **Save rubric**：`RubricDefinition.model_validate` 全量校验（pydantic 错误逐条展示 + notify(error)）→ 写 `data/rubrics/<name>.toml`（tomlkit `[[criterion]]` AoT；首行 `# schema: ../../config/rubric.schema.json`；无 criteria 时报错「Add at least one criterion」）→ notify(success) + pop
-- **返回刷新**：`_on_rubric_builder_closed` → `_load_context()` 重新枚举 rubric/prompt 列表，新建/修改的 rubric 立即出现在 Grading Tab Select
+- **Save rubric**：`RubricDefinition.model_validate` 全量校验（pydantic 错误逐条展示 + notify(error)）→ 写 `data/rubrics/<name>.toml`（tomlkit `[[criterion]]` AoT；**无 `# schema:` 头**；无 criteria 时报错「Add at least one criterion」）→ notify(success)
+- **保存后刷新**：RubricsPane 重新枚举文件 Select（新建/修改的 rubric 立即可选）；Settings 的 Grading rubric 枚举在切到 Settings 时随上下文载入重新扫描（`on_tabbed_content_tab_activated` → `_load_context`）
 - UI 文案全英文
 
 ## 8. v2 布局契约与 CSS 陷阱（2026-09-01）
@@ -183,7 +178,7 @@ ______________________________________________________________________
 
 > **Textual 8.2.8 对非 Screen 的 widget 忽略 `CSS` classvar —— 必须用 `DEFAULT_CSS`。**
 > `SettingsScreen` 是 `Vertical`（非 Screen），所以 c9272e81 之前其类内 `CSS = """…"""` **从未生效**（顶栏/字段/滚动布局全丢）——这就是「Context: 」空白与布局塌陷的根因。改用 `DEFAULT_CSS` 后恢复。
-> 真正的 Screen（`RubricBuilderScreen`、各 ModalScreen）用 `CSS` 则正常。**规则：目标类继承自 `Screen` → `CSS`；其他 widget → `DEFAULT_CSS`。**
+> 真正的 Screen（`FileNameModal`、各 ModalScreen）用 `CSS` 则正常。**规则：目标类继承自 `Screen` → `CSS`；其他 widget → `DEFAULT_CSS`。**
 
 ### 8.3 v4：prompt 列表高度修复（zutorusvmynx，2026-09-01）
 

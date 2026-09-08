@@ -13,7 +13,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
 - **Stage-level control**: run only what you need (`preprocess`, `plagiarism`, `grade`, `score`, `analyze`, `fetch`, `view`).
 - **Plagiarism coverage at two levels**: intra-assignment detection with boilerplate/template filtering plus inter-assignment aggregation with statistical significance analysis.
 - **Extensible hook lifecycle**: inject custom logic before/after key events across preprocess, grade, score, analyze, and plagiarism without modifying core pipeline code.
-- **Reference quality safeguards**: built-in TODO instruction/implementation audit to catch mismatch risks before grading at scale.
+- **Reference safety checks**: config validation verifies the reference file, prompt files, and rubric files exist before grading.
 
 ## Quick Start
 
@@ -59,16 +59,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv run main.py analyze -c data/my-assignment/config.toml
    ```
 
-7. Audit reference notebook TODO/instruction mismatches (optional; repo-dev
-   utility — runs only from a source checkout, it is not part of the
-   installed package):
-
-   ```bash
-   uv run misc/reference_mismatch_audit.py \
-      --notebook data/my-assignment/reference.ipynb
-   ```
-
-8. Aggregate plagiarism results across assignments (optional):
+7. Aggregate plagiarism results across assignments (optional):
 
    ```bash
    uv run main.py plagiarism -c data/<course>/config.toml --aggregate -o data/plagiarism-report.txt
@@ -89,7 +80,7 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    (`data/*/config.toml`); use a course config for a per-course run.
    Likewise, `fetch --retry` scans the global plus every course config.
 
-9. Edit one config value from the CLI (optional; comments and unrelated keys
+8. Edit one config value from the CLI (optional; comments and unrelated keys
    are preserved, and the result is validated against the same pydantic models
    the settings screen uses before writing):
 
@@ -98,8 +89,8 @@ TATA is a configuration-driven grading pipeline for human TAs. It preprocesses s
    uv run main.py config set -c data/my-assignment/config.toml processing.remove_base64_images false
    ```
 
-10. Generate a grading rubric from the fetched assignment description
-    (optional):
+9. Generate a grading rubric from the fetched assignment description
+   (optional):
 
    ```bash
    uv run cli fetch -c data/<course>/<assignment>/config.toml
@@ -181,6 +172,4 @@ rubric = "rubrics/0-10-first-colab.toml"
 - Example assignment config: [data/example/config.toml](data/example/config.toml)
 - Example rubric: [data/rubrics/example_rubric.toml](data/rubrics/example_rubric.toml)
 - Generic system prompt: [data/prompt/system.md](data/prompt/system.md)
-- Reference mismatch audit script (repo-dev utility; not installed):
-  [misc/reference_mismatch_audit.py](misc/reference_mismatch_audit.py)
 - Plagiarism: `uv run main.py plagiarism -c data/<course>/config.toml --aggregate`
