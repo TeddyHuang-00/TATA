@@ -10,6 +10,7 @@ from src import REPO_ROOT
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import (
     FetchSection,
+    config_root,
     find_root_config,
     load_assignment_file,
     load_root_section,
@@ -20,6 +21,7 @@ from src.shared.canvas_fetch import (
     list_assignments,
     list_courses,
     load_env,
+    make_canvas_client,
     remember_course_fetch,
 )
 from src.shared.cli_options import (
@@ -211,7 +213,7 @@ def _fetch_course(
 def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> None:
     root = _repo_root()
     base_url, token = load_env()
-    canvas = Canvas(base_url, token)
+    canvas = make_canvas_client(base_url, token)
 
     # Primary: course-level configs, each with its own [[fetch.assignments]]
     # list. Three-level layout: data/<course>/config.toml; legacy
@@ -238,7 +240,7 @@ def _retry_fetch(course_filter: int | None, assignment_filter: int | None) -> No
 
 def _pick_interactive() -> None:
     base_url, token = load_env()
-    canvas = Canvas(base_url, token)
+    canvas = make_canvas_client(base_url, token)
 
     courses = list_courses(canvas)
     if not sys.stdin.isatty():
@@ -296,7 +298,7 @@ def _run_fetch(args: FetchCliOptions) -> None:
     ):
         assert cfg_path is not None  # cfg non-None implies a config was found
         base_url, token = load_env()
-        canvas = Canvas(base_url, token)
+        canvas = make_canvas_client(base_url, token)
         _fetch_entries(canvas, cfg.course_id, cfg_path, cfg)
         return
 
@@ -323,7 +325,7 @@ def _run_fetch(args: FetchCliOptions) -> None:
         assignment_id = int(cfg_path.parent.name)
     elif cfg_path is None or is_container:
         base_url, token = load_env()
-        canvas = Canvas(base_url, token)
+        canvas = make_canvas_client(base_url, token)
         assignments = list_assignments(canvas, course_id)
         if not sys.stdin.isatty():
             _print_options("assignments", assignments)
@@ -344,7 +346,7 @@ def _run_fetch(args: FetchCliOptions) -> None:
         out = (cfg_path.parent / "raw").resolve()
 
     base_url, token = load_env()
-    canvas = Canvas(base_url, token)
+    canvas = make_canvas_client(base_url, token)
     fetch_assignment(canvas, course_id, assignment_id, out)
     _remember(cfg_path, course_id, assignment_id)
 
@@ -394,7 +396,7 @@ def _run_validate(args: ValidateCliOptions) -> None:  # ruff: ignore[too-many-br
 
     ok: list[str] = []
     errors: list[str] = []
-    base = cfg_path.parents[2]
+    base = config_root(cfg_path)
 
     rubric_path = (base / cfg.grading.rubric).resolve()
     try:

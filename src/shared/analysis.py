@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from .assignment_config import (
     AssignmentPaths,
+    config_root,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
@@ -127,7 +128,7 @@ def _load_rubric_and_files(
     paths = resolve_assignment_paths(cfg, assignment_config_path.parent)
     ensure_assignment_dirs(paths)
 
-    rubric_file = (assignment_config_path.parents[2] / cfg.grading.rubric).resolve()
+    rubric_file = (config_root(assignment_config_path) / cfg.grading.rubric).resolve()
     if not rubric_file.exists():
         msg = (
             f"Rubric file not found: {rubric_file}\n"

@@ -27,8 +27,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
-from canvasapi import Canvas
-from dotenv import dotenv_values, set_key
+from dotenv import set_key
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -53,9 +52,15 @@ from src.shared.assignment_config import (
     PlagiarismSection,
     load_assignment_file,
 )
-from src.shared.canvas_fetch import list_courses, load_env
+from src.shared.canvas_fetch import (
+    list_courses,
+    load_env,
+    make_canvas_client,
+    read_env_state,
+)
 from src.shared.config_edit import edit_config, read_config, validate_config_edits
 from src.shared.provider import ProviderInfo, get_providers
+from src.tui.css_loader import load_css
 from src.tui.workspace import is_displayed
 
 if TYPE_CHECKING:
@@ -339,7 +344,7 @@ class SettingsScreen(Vertical):
         Binding("4", "tab_paths", "Paths"),
     ]
 
-    DEFAULT_CSS = (Path(__file__).parent / "styles" / "settings.tcss").read_text()
+    DEFAULT_CSS = load_css("settings.tcss")
 
     def __init__(self, state: AppState) -> None:
         super().__init__(id="settings-screen")
@@ -894,30 +899,9 @@ class SettingsScreen(Vertical):
 
     # ---------- .env (Canvas tab) ----------
 
-    def _read_env_state(self) -> dict:
-        """Read ``<root_dir>/.env``; shape mirrors :func:`src.tui.app._env_status`.
-
-        Deliberately not reused from app.py — that module imports this one
-        (settings), so the read lives here (dotenv_values is tolerant).
-        """
-        env_path = self.state.root_dir / ".env"
-        if env_path.is_file():
-            try:
-                vals = dotenv_values(env_path, interpolate=False)
-            except UnicodeDecodeError:
-                vals = {}
-            if "CANVAS_BASE_URL" in vals and "CANVAS_ACCESS_TOKEN" in vals:
-                return {
-                    "has_env": True,
-                    "base_url": vals["CANVAS_BASE_URL"],
-                    "token": vals["CANVAS_ACCESS_TOKEN"],
-                    "token_set": True,
-                }
-        return {"has_env": False, "base_url": None, "token": None, "token_set": False}
-
     def _load_env_fields(self) -> None:
         """Refresh env fields + ``state.env_state`` from disk, re-render statics."""
-        env = self._read_env_state()
+        env = read_env_state(self.state.root_dir, upstream=False)
         self.state.env_state = env
         self.query_one("#canvas-url", Input).value = env.get("base_url") or ""
         self.query_one("#canvas-token", _SecretInput).value = env.get("token") or ""
@@ -1152,7 +1136,7 @@ class SettingsScreen(Vertical):
         def probe() -> None:
             try:
                 base_url, token = load_env()
-                courses = list_courses(Canvas(base_url=base_url, api_key=token))
+                courses = list_courses(make_canvas_client(base_url, token))
                 message = f"Canvas: OK — {len(courses)} course(s)"
                 ok = True
             except BaseException as exc:  # load_env exits via SystemExit

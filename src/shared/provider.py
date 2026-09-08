@@ -4,9 +4,12 @@ import os
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import dotenv
-from instructor import Mode
+import instructor
+from instructor import Instructor, Mode
+from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
 
 from src import REPO_ROOT
@@ -39,6 +42,31 @@ class ProviderInfo(BaseModel):
     )
 
 
+def resolve_env_placeholders(value: str) -> str:
+    """Resolve every ``${VAR}`` placeholder against ``os.environ``.
+
+    A var absent from the environment resolves to an empty string (the
+    pre-existing behavior of both the old shared getitem and the TUI's
+    local resolver — kept identical for the pinned test contract).
+    """
+    return re.sub(r"\$\{(\w+?)\}", lambda m: os.environ.get(m.group(1), ""), value)
+
+
+def build_provider_client(
+    base_url: str,
+    api_key: str,
+    mode: Mode,
+    temperature: float | None = None,
+) -> Instructor:
+    """Instructor-wrapped OpenAI client — the single construction site for
+    every client the pipeline uses (grading + TUI provider probe)."""
+    kwargs: dict[str, Any] = {"base_url": base_url, "api_key": api_key}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    raw_client = OpenAI(**kwargs)
+    return instructor.from_openai(raw_client, mode=mode)
+
+
 class ProviderList(BaseModel):
     providers: dict[str, ProviderInfo] = Field(default_factory=dict)
 
@@ -55,13 +83,8 @@ class ProviderList(BaseModel):
             )
             raise KeyError(msg)
 
-        # Replace the API key placeholder with the actual value from the environment variable
-        key_pattern = r"\$\{(\w+?)\}"
-        if match := re.search(key_pattern, provider.api_key):
-            env_var = match.group(1)
-            provider.api_key = provider.api_key.replace(
-                f"${{{env_var}}}", os.getenv(env_var, "")
-            )
+        # Replace all API key placeholders from the environment.
+        provider.api_key = resolve_env_placeholders(provider.api_key)
         return provider
 
 

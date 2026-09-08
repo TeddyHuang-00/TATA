@@ -7,14 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import instructor
 from markitdown import MarkItDown
 from nbconvert import MarkdownExporter
-from openai import OpenAI
 from pydantic import AliasChoices, BaseModel, Field
 
 from .assignment_config import (
     AssignmentFileConfig,
+    config_root,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
@@ -22,7 +21,7 @@ from .assignment_config import (
 from .caching import CACHE_FMT, content_hash, load_cache, save_cache
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
-from .provider import get_providers
+from .provider import build_provider_client, get_providers
 from .rubric import generate_grading_model, get_rubric_definition
 
 
@@ -63,14 +62,14 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
     logs_dir = paths.logs_dir
     reference_file = paths.reference_file
 
-    rubric_file = (config_path.parents[2] / grading.rubric).resolve()
+    rubric_file = (config_root(config_path) / grading.rubric).resolve()
     if isinstance(grading.system_prompt, str):
         system_prompt_files = [
-            (config_path.parents[2] / grading.system_prompt).resolve()
+            (config_root(config_path) / grading.system_prompt).resolve()
         ]
     else:
         system_prompt_files = [
-            (config_path.parents[2] / prompt_path).resolve()
+            (config_root(config_path) / prompt_path).resolve()
             for prompt_path in grading.system_prompt
         ]
     provider_name = str(grading.provider)
@@ -204,18 +203,14 @@ def cached_grade_count(config_path: Path) -> int:
 
 
 def build_client(provider_name: str) -> tuple[Any, str]:
-    providers = get_providers()
-    provider = providers[provider_name]
-
-    kwargs: dict[str, Any] = {
-        "base_url": provider.base_url,
-        "api_key": provider.api_key,
-    }
-    if provider.temperature is not None:
-        kwargs["temperature"] = provider.temperature
-
-    raw_client = OpenAI(**kwargs)
-    return instructor.from_openai(raw_client, mode=provider.mode), provider.model
+    provider = get_providers()[provider_name]
+    client = build_provider_client(
+        provider.base_url,
+        provider.api_key,
+        provider.mode,
+        provider.temperature,
+    )
+    return client, provider.model
 
 
 def _read_reference_text(reference_file: Path) -> str:

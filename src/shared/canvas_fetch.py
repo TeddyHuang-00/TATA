@@ -32,6 +32,40 @@ def load_env() -> tuple[str, str]:
     sys.exit("No .env with CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN found")
 
 
+def read_env_state(
+    start: Path | None = None, upstream: bool = True
+) -> dict[str, object | None]:
+    """Probe for ``.env`` (CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN) without exiting.
+
+    Same search as :func:`load_env` (walk ``start`` then its ancestors); a
+    .env missing either key is skipped, keeping the walk going (MINOR-7).
+    With ``upstream=False`` only ``start/.env`` is checked (exact mode).
+    """
+    base = start or Path.cwd()
+    dirs: list[Path] = [base, *base.parents] if upstream else [base]
+    for d in dirs:
+        env_path = d / ".env"
+        if not env_path.is_file():
+            continue
+        try:
+            vals = dotenv.dotenv_values(env_path, interpolate=False)
+        except UnicodeDecodeError:
+            continue
+        if "CANVAS_BASE_URL" in vals and "CANVAS_ACCESS_TOKEN" in vals:
+            return {
+                "has_env": True,
+                "base_url": vals["CANVAS_BASE_URL"],
+                "token": vals["CANVAS_ACCESS_TOKEN"],
+                "token_set": True,
+            }
+    return {"has_env": False, "base_url": None, "token": None, "token_set": False}
+
+
+def make_canvas_client(base_url: str, token: str) -> Canvas:
+    """Single Canvas client construction site (CLI + TUI)."""
+    return Canvas(base_url, token)
+
+
 def list_courses(canvas: Canvas) -> list[tuple[int, str]]:
     # Without enrollment_state the API returns slim objects (id only).
     return [(c.id, c.name) for c in canvas.get_courses(enrollment_state="active")]

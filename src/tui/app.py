@@ -19,7 +19,6 @@ from functools import partial
 from pathlib import Path
 from typing import ClassVar, cast, override
 
-import dotenv
 import tomlkit
 from canvasapi import Canvas
 from rich.markup import escape
@@ -54,7 +53,12 @@ from src.shared.aliases import (
     set_alias,
 )
 from src.shared.assignment_config import FetchSection
-from src.shared.canvas_fetch import list_assignments, list_courses
+from src.shared.canvas_fetch import (
+    list_assignments,
+    list_courses,
+    make_canvas_client,
+    read_env_state,
+)
 from src.shared.cli_options import FetchCliOptions
 from src.shared.config_edit import edit_config
 from src.shared.provider import get_providers
@@ -77,30 +81,6 @@ from src.tui.workspace import (
     is_displayed,
     state_key,
 )
-
-
-def _env_status(root_dir: Path) -> dict:
-    """Probe for ``.env`` (CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN) without exiting.
-
-    Mirrors :func:`src.shared.canvas_fetch.load_env`: walk root_dir then its
-    ancestors; a .env missing either key is skipped, keep walking up.
-    """
-    for d in [root_dir, *root_dir.parents]:
-        env_path = d / ".env"
-        if not env_path.is_file():
-            continue
-        try:
-            vals = dotenv.dotenv_values(env_path, interpolate=False)
-        except UnicodeDecodeError:
-            continue
-        if "CANVAS_BASE_URL" in vals and "CANVAS_ACCESS_TOKEN" in vals:
-            return {
-                "has_env": True,
-                "base_url": vals["CANVAS_BASE_URL"],
-                "token": vals["CANVAS_ACCESS_TOKEN"],
-                "token_set": True,
-            }
-    return {"has_env": False, "base_url": None, "token": None, "token_set": False}
 
 
 @dataclass
@@ -1090,7 +1070,9 @@ class _ImportBase(ModalScreen[object | None]):
         self.dismiss(None)
 
     def _canvas(self) -> Canvas:
-        return Canvas(self.state.env_state["base_url"], self.state.env_state["token"])
+        return make_canvas_client(
+            self.state.env_state["base_url"], self.state.env_state["token"]
+        )
 
     def _safe_post(self, fn: Callable[..., None], *args: object) -> None:
         with suppress(Exception):
@@ -1426,7 +1408,7 @@ class TataApp(App[None]):
     def __init__(self, root_dir: Path | None = None) -> None:
         super().__init__()
         self.state = AppState(root_dir=root_dir or AppState().root_dir)
-        self.state.env_state = _env_status(self.state.root_dir)
+        self.state.env_state = read_env_state(self.state.root_dir)
 
     def action_toggle_help(self) -> None:
         """Toggle the native keys panel ('?': built-in show/hide wrapped)."""

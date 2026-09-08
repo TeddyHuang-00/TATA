@@ -870,7 +870,9 @@ def _resolve_template_base(
     nbconvert_template = processing.nbconvert_template
     default_template_dir = REPO_ROOT / "templates"
     if processing.nbconvert_template_dir is not None:
-        template_dir_path = (config_path.parent / processing.nbconvert_template_dir).resolve()
+        template_dir_path = (
+            config_path.parent / processing.nbconvert_template_dir
+        ).resolve()
     elif default_template_dir.exists() and (default_template_dir / "mdoutput").exists():
         template_dir_path = default_template_dir.resolve()
         if nbconvert_template is None:
@@ -916,9 +918,7 @@ def pending_preprocess_items(config_path: Path) -> list[Path]:  # ruff: ignore[t
         },
         sort_keys=True,
     ).encode("utf-8")
-    hook_runtime = HookRuntime.from_config(
-        cfg, assignment_config_path=config_path
-    )
+    hook_runtime = HookRuntime.from_config(cfg, assignment_config_path=config_path)
     hook_parts: list[bytes] = []
     if hook_runtime is not None:
         hook_parts = [

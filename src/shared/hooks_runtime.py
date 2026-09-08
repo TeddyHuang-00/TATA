@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .assignment_config import AssignmentFileConfig
+from .assignment_config import AssignmentFileConfig, config_root
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class HookRuntime:
         if not cfg.hooks.mounts:
             return None
 
-        project_root = assignment_config_path.parents[2].resolve()
+        project_root = config_root(assignment_config_path).resolve()
         hooks_dir = (project_root / cfg.hooks.dir).resolve()
 
         mounts: dict[str, list[Path]] = {}

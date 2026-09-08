@@ -13,7 +13,7 @@ Mounts the full :class:`src.tui.app.TataApp` over a tmp fixture
   written, old removed, Select re-pointed);
 - the Providers pane (over a tmp ``data/providers/`` folder via
   ``providers_dir`` injection — never the real one): add, edit, delete with
-  reference count, and test connection (OpenAI client patched; captures the
+  reference count, and test connection (shared client builder patched; captures the
   resolved base_url/api_key/model; success and failure paths).
 
 Run: uv run tests/tata_library_check.py
@@ -519,15 +519,17 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
             )
         )
 
-        def fake_openai(base_url: str, api_key: str) -> SimpleNamespace:
+        def fake_build_provider_client(
+            base_url: str, api_key: str, mode: object
+        ) -> SimpleNamespace:
             captures["base_url"] = base_url
             captures["api_key"] = api_key
             return client
 
-        original_openai = tui_library.OpenAI
+        original_builder = tui_library.build_provider_client
         original_key = os.environ.get("TEST_API_KEY")
         os.environ["TEST_API_KEY"] = "secret"
-        tui_library.OpenAI = fake_openai
+        tui_library.build_provider_client = fake_build_provider_client
         try:
             await pilot.click("#pv-test")
             await wait_for(pilot, lambda: "Test connection OK" in str(status.content))
@@ -543,7 +545,7 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
                 }
             ]
         finally:
-            tui_library.OpenAI = original_openai
+            tui_library.build_provider_client = original_builder
             if original_key is None:
                 del os.environ["TEST_API_KEY"]
             else:
@@ -551,14 +553,14 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
 
         boom = "boom"
 
-        def failing_openai(*args: object, **kwargs: object) -> None:
+        def failing_builder(*args: object, **kwargs: object) -> None:
             raise RuntimeError(boom)
 
         # the first press's "active" animation blocks a fresh click until it ends
         await wait_for(
             pilot, lambda: not pane.query_one("#pv-test", Button).has_class("-active")
         )
-        tui_library.OpenAI = failing_openai
+        tui_library.build_provider_client = failing_builder
         try:
             await pilot.click("#pv-test")
             await wait_for(
@@ -568,7 +570,7 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
                 ),
             )
         finally:
-            tui_library.OpenAI = original_openai
+            tui_library.build_provider_client = original_builder
 
 
 # ---------- rubric auto-generate ----------
@@ -640,9 +642,7 @@ async def _check_autogen_modal(root: Path) -> None:
                 for name in ("000001", "000003")
             ]
             assert values == configs, values
-            labels = [
-                label for label, value in select._options if value != Select.NULL
-            ]
+            labels = [label for label, value in select._options if value != Select.NULL]
             assert labels == ["000001 (c1/000001)", "000003 (c1/000003)"], labels
             # cancel dismisses the modal without side effects: no generate
             # call, no new .toml

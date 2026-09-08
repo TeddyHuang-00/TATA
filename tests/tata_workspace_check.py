@@ -57,9 +57,7 @@ def _seed_grade_cache(data_root: Path) -> None:
         encoding="utf-8",
     )
     (data_root / "prompt").mkdir(exist_ok=True)
-    (data_root / "prompt" / "system.md").write_text(
-        "You are a TA.\n", encoding="utf-8"
-    )
+    (data_root / "prompt" / "system.md").write_text("You are a TA.\n", encoding="utf-8")
     a1 = data_root / COURSE / "a1"
     cfg = _load_assignment_config(a1 / "config.toml")
     cfg_model = load_assignment_file(a1 / "config.toml")
@@ -69,9 +67,7 @@ def _seed_grade_cache(data_root: Path) -> None:
         for stem, h in hashes.items()
         if stem == "100001"
     }
-    (a1 / "logs" / "grading.cache.json").write_text(
-        json.dumps(cache), encoding="utf-8"
-    )
+    (a1 / "logs" / "grading.cache.json").write_text(json.dumps(cache), encoding="utf-8")
 
 
 def _stage_buttons(app: TataApp) -> dict[str, Button]:

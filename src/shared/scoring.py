@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .assignment_config import (
+    config_root,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
@@ -296,7 +297,7 @@ def score_assignment(assignment_config_path: Path) -> dict | None:  # ruff: igno
     scored_base_dir = (assignment_config_path.parent / "scored").resolve()
     scored_style_dir = scored_base_dir / _summary_subdir_for_style(scoring.output_style)
     scored_style_dir.mkdir(parents=True, exist_ok=True)
-    rubric_file = (assignment_config_path.parents[2] / grading.rubric).resolve()
+    rubric_file = (config_root(assignment_config_path) / grading.rubric).resolve()
 
     if not rubric_file.exists():
         msg = (

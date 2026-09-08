@@ -250,6 +250,19 @@ def ensure_assignment_dirs(paths: AssignmentPaths) -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
+def config_root(config_path: Path) -> Path:
+    """Return the data/ root for a config file (global, course, or assignment level).
+
+    Matches by walking up for a directory named ``data``; if the repository
+    itself sits under a ``data`` directory this resolves to the wrong level
+    (the current project has no such risk).
+    """
+    for parent in config_path.parents:
+        if parent.name == "data":
+            return parent
+    return config_path.parent
+
+
 def find_root_config(assignment_config_path: Path) -> Path | None:
     """Course-level config: ``config.toml`` in the parent of the assignment
     directory (course layout: ``data/<course>/config.toml``; legacy

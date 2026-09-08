@@ -126,20 +126,14 @@ def state_key(a: AssignmentInfo) -> str:
     ):
         return "partial"
     pre_pending = (
-        a.pre_pending
-        if a.pre_pending is not None
-        else _pre_pending(a.config_path)
+        a.pre_pending if a.pre_pending is not None else _pre_pending(a.config_path)
     )
     grade_pending = (
         a.grade_pending
         if a.grade_pending is not None
         else _grade_pending(a.config_path)
     )
-    if (
-        not _is_fetched(a.config_path.parent)
-        or pre_pending > 0
-        or grade_pending > 0
-    ):
+    if not _is_fetched(a.config_path.parent) or pre_pending > 0 or grade_pending > 0:
         return "partial"
     return "done"
 

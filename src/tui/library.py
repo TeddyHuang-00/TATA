@@ -13,8 +13,6 @@ apply to them — lesson c9272e81). All UI copy is English.
 from __future__ import annotations
 
 import logging
-import os
-import re
 from collections.abc import MutableMapping
 from contextlib import suppress
 from pathlib import Path
@@ -22,7 +20,6 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 import tomlkit
 from instructor import Mode
-from openai import OpenAI
 from pydantic import ValidationError
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -43,9 +40,14 @@ from textual.widgets import (
 
 from src import REPO_ROOT
 from src.shared.aliases import assignment_display_name
-from src.shared.provider import ProviderInfo
+from src.shared.provider import (
+    ProviderInfo,
+    build_provider_client,
+    resolve_env_placeholders,
+)
 from src.shared.rubric import Grading, Rating, RubricDefinition, get_rubric_definition
 from src.shared.rubric_gen import generate_rubric
+from src.tui.css_loader import load_css
 from src.tui.scan import scan_assignments, scan_courses
 from src.tui.workspace import ConfirmationModal
 
@@ -189,16 +191,11 @@ def _provider_reference_configs(data_dir: Path, name: str) -> list[Path]:
     return hits
 
 
-def _resolve_env_placeholders(api_key: str) -> str:
-    """Resolve ``${VAR}`` placeholders against os.getenv (same regex as
-    :meth:`src.shared.provider.ProviderList.__getitem__`); unresolvable -> \"\"."""
-    return re.sub(r"\$\{(\w+?)\}", lambda m: os.getenv(m.group(1), ""), api_key)
-
-
-def _ping_provider(base_url: str, api_key: str, model: str) -> None:
-    """Real connectivity probe: one tiny chat completion. Runs on a worker
-    thread; raises on any failure."""
-    client = OpenAI(base_url=base_url, api_key=api_key)
+def _ping_provider(base_url: str, api_key: str, model: str, mode: str) -> None:
+    """Real connectivity probe: one tiny chat completion via the shared
+    instructor-wrapped client (same construction as grading). Runs on a
+    worker thread; raises on any failure."""
+    client = build_provider_client(base_url, api_key, Mode(mode))
     client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": "ping"}],
@@ -294,7 +291,7 @@ class RubricsPane(Vertical):
     tomlkit.
     """
 
-    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
+    DEFAULT_CSS = load_css("library.tcss")
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -766,8 +763,7 @@ class RubricsPane(Vertical):
             ):
                 config = assignment.config_path
                 if not (
-                    config.is_file()
-                    and (config.parent / "assignment.md").is_file()
+                    config.is_file() and (config.parent / "assignment.md").is_file()
                 ):
                     continue
                 name = assignment_display_name(
@@ -811,11 +807,15 @@ class RubricsPane(Vertical):
             return
         self._confirm_autogen("continue", config_path, out)
 
-    def _confirm_autogen(self, choice: str | None, config_path: Path, out: Path) -> None:
+    def _confirm_autogen(
+        self, choice: str | None, config_path: Path, out: Path
+    ) -> None:
         if choice is None:
             return
         tmp = out.parent / f"{out.name}.tmp"
-        with suppress(OSError):  # stale tmp from a crashed run; generator reports real errors
+        with suppress(
+            OSError
+        ):  # stale tmp from a crashed run; generator reports real errors
             tmp.unlink()
         self._autogen_running = True
         self._set_autogen_busy(True)
@@ -886,7 +886,7 @@ class RubricsPane(Vertical):
 class PromptsPane(Vertical):
     """Prompt file editor: Select over ``data/prompt/*.md`` + TextArea + Save."""
 
-    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
+    DEFAULT_CSS = load_css("library.tcss")
 
     def __init__(self, state: AppState) -> None:
         super().__init__()
@@ -1143,7 +1143,7 @@ class ProvidersPane(Vertical):
     isolated tests; the default is the repo's ``data/providers``.
     """
 
-    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
+    DEFAULT_CSS = load_css("library.tcss")
 
     def __init__(self, state: AppState, providers_dir: Path | None = None) -> None:
         super().__init__()
@@ -1490,13 +1490,13 @@ class ProvidersPane(Vertical):
         if values is None:
             return
         base_url = values["base_url"]
-        api_key = _resolve_env_placeholders(values["api_key"])
+        api_key = resolve_env_placeholders(values["api_key"])
         model = values["model"]
         self._set_status("[dim]Testing connection…[/dim]")
 
         def probe() -> None:
             try:
-                _ping_provider(base_url, api_key, model)
+                _ping_provider(base_url, api_key, model, values["mode"])
             except Exception as exc:
                 ok, message = (
                     False,
@@ -1529,7 +1529,7 @@ class ProvidersPane(Vertical):
 class LibraryScreen(Vertical):
     """Library tab container: Rubrics + Prompts + Providers sub-tab panes."""
 
-    DEFAULT_CSS = (Path(__file__).parent / "styles" / "library.tcss").read_text()
+    DEFAULT_CSS = load_css("library.tcss")
 
     def __init__(self, state: AppState) -> None:
         super().__init__(id="library-screen")

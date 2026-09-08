@@ -200,7 +200,7 @@ def test_pending_follows_hash_cache_not_checkpoint(
     assert state_key(full) == "done"
 
     # The scan rides the same rule onto AssignmentInfo for the per-row badge.
-    restored = (a_dir / "processed" / "100001.md")
+    restored = a_dir / "processed" / "100001.md"
     restored.write_text("# student answer\n", encoding="utf-8")
     grade_assignment(config_path)  # cache now matches the restored content
     # A real raw file + a preprocess pass so the scan sees a full pipeline.
@@ -373,8 +373,8 @@ class TestBuildClient:
 
         with (
             patch("src.shared.grading.get_providers") as mock_get,
-            patch("src.shared.grading.OpenAI") as mock_openai,
-            patch("src.shared.grading.instructor.from_openai", mock_instructor),
+            patch("src.shared.provider.OpenAI") as mock_openai,
+            patch("src.shared.provider.instructor.from_openai", mock_instructor),
         ):
             mock_get.return_value = {"test": mock_provider}
 
@@ -396,8 +396,8 @@ class TestBuildClient:
 
         with (
             patch("src.shared.grading.get_providers") as mock_get,
-            patch("src.shared.grading.OpenAI") as mock_openai,
-            patch("src.shared.grading.instructor.from_openai", mock_instructor),
+            patch("src.shared.provider.OpenAI") as mock_openai,
+            patch("src.shared.provider.instructor.from_openai", mock_instructor),
         ):
             mock_get.return_value = {"test": mock_provider}
 

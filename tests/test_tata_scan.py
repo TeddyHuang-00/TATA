@@ -201,7 +201,7 @@ def test_counts_exclude_reference_and_dedupe_graded(tmp_path: Path) -> None:
 
 def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     """MINOR-7: a .env missing either key must not short-circuit the walk."""
-    from src.tui.app import _env_status
+    from src.shared.canvas_fetch import read_env_state
 
     root = tmp_path / "proj"
     root.mkdir()
@@ -213,6 +213,23 @@ def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     sub.mkdir()
     (sub / ".env").write_text("CANVAS_BASE_URL=https://broken\n", encoding="utf-8")
 
-    status = _env_status(sub)
+    status = read_env_state(sub)
     assert status["has_env"] is True
     assert status["base_url"] == "https://canvas.example.com"
+
+
+def test_env_status_exact_mode_reads_own_env_only(tmp_path: Path) -> None:
+    """MINOR-1: upstream=False checks only start/.env, never ancestors."""
+    from src.shared.canvas_fetch import read_env_state
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / ".env").write_text(
+        "CANVAS_BASE_URL=https://canvas.example.com\nCANVAS_ACCESS_TOKEN=abc\n",
+        encoding="utf-8",
+    )
+    sub = root / "data"
+    sub.mkdir()
+
+    status = read_env_state(sub, upstream=False)
+    assert status["has_env"] is False
