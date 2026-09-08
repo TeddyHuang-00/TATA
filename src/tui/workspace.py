@@ -46,7 +46,7 @@ from src.shared.aliases import assignment_display_name
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import load_assignment_file
 from src.shared.cli_options import FetchCliOptions
-from src.shared.grading import grade_assignment
+from src.shared.grading import grade_assignment, pending_grade_submissions
 from src.shared.processing import preprocess_assignment
 from src.shared.scoring import score_assignment
 from src.tui.jobs import JobHost
@@ -141,6 +141,20 @@ def _checkpoint_done(assignment_dir: Path) -> int:
         return 0
 
 
+def _grade_pending(config_path: Path) -> int:
+    """Submissions grading would actually (re)grade right now.
+
+    Same hash-cache rule ``grade_assignment`` applies (pending_grade_submissions
+    in src.shared.grading) — NOT the checkpoint: its done list never shrinks,
+    so after a content change it still says all-done while the cache queues a
+    regrade. Broken config -> 0 (dirty-config tolerance; grade can't run).
+    """
+    try:
+        return len(pending_grade_submissions(config_path))
+    except (OSError, ValueError, KeyError):
+        return 0
+
+
 def _is_fetched(assignment_dir: Path) -> bool:
     """Fetch freshness = ``raw/.fetch-cache.json`` presence (design §5)."""
     return (assignment_dir / "raw" / ".fetch-cache.json").is_file()
@@ -155,16 +169,20 @@ def _incremental_line(info: AssignmentInfo) -> str:
         info.counts.graded,
         info.counts.scored,
     )
-    done = _checkpoint_done(a_dir)
+    grade_pending = _grade_pending(info.config_path)
     to_run = {
         "fetch": 0 if _is_fetched(a_dir) else 1,
         "pre": max(raw - processed, 0),
-        "grade": max(processed - done, 0),
+        "grade": grade_pending,
         "score": max(graded - scored, 0),
     }
     no_change = sum(
         1
-        for current, target in ((processed, raw), (done, processed), (scored, graded))
+        for current, target in (
+            (processed, raw),
+            (processed - grade_pending, processed),
+            (scored, graded),
+        )
         if target > 0 and current == target
     )
     return (
@@ -339,7 +357,7 @@ class AssignmentScreen(JobHost):
             info.counts.scored,
         )
         done = _checkpoint_done(a_dir)
-        self._pending = max(processed - done, 0)
+        self._pending = _grade_pending(info.config_path)
         self._done = done
         self._processed = processed
         fetched = _is_fetched(a_dir)
@@ -351,7 +369,7 @@ class AssignmentScreen(JobHost):
             "grade": (
                 (
                     f"{processed}/{processed} done"
-                    if processed > 0 and done >= processed
+                    if processed > 0 and self._pending == 0
                     else f"{self._pending} pending · {done} done"
                 )
                 if processed > 0

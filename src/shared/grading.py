@@ -14,6 +14,7 @@ from openai import OpenAI
 from pydantic import AliasChoices, BaseModel, Field
 
 from .assignment_config import (
+    AssignmentFileConfig,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
@@ -121,6 +122,73 @@ def _collect_submissions(
         return submission_files
     reference_stem = reference_file.stem
     return [p for p in submission_files if p.stem != reference_stem]
+
+
+def _grading_pending(
+    cfg: AssignmentConfig, cfg_model: AssignmentFileConfig
+) -> tuple[list[Path], dict[str, str]]:
+    """(submissions to (re)grade, stem -> input hash) under the grading cache rule.
+
+    Single source of the rule shared by ``grade_assignment`` and the TUI's
+    display: a submission is pending unless ``logs/grading.cache.json`` holds
+    a fmt/hash match AND its graded JSON exists. Hash covers the processed
+    md, rubric, system prompts, reference, the [grading] section, the
+    provider entry (name/base_url/model/mode/temperature) and the
+    visual_evaluation flag; any change regrades.
+    """
+    submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
+    cache = load_cache(cfg.logs_dir / "grading.cache.json")
+
+    provider = get_providers().providers[cfg_model.grading.provider]
+    grading_payload = json.dumps(
+        {
+            "grading": cfg_model.grading.model_dump_json(),
+            "provider": {
+                "name": cfg_model.grading.provider,
+                "base_url": provider.base_url,
+                "model": provider.model,
+                "mode": getattr(provider.mode, "value", provider.mode),
+                "temperature": provider.temperature,
+            },
+            "visual_evaluation": cfg_model.processing.visual_evaluation,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    rubric_bytes = cfg.rubric_file.read_bytes()
+    prompt_bytes = [p.read_bytes() for p in cfg.system_prompt_files]
+    reference_bytes = (
+        cfg.reference_file.read_bytes() if cfg.reference_file is not None else b""
+    )
+
+    sub_hashes = {
+        s.stem: content_hash([
+            s.read_bytes(),
+            rubric_bytes,
+            *prompt_bytes,
+            reference_bytes,
+            grading_payload,
+        ])
+        for s in submissions
+    }
+
+    def cached_valid(submission: Path) -> bool:
+        entry = cache.get(submission.stem)
+        output_file = cfg.graded_dir / f"{submission.stem}.json"
+        return bool(
+            isinstance(entry, dict)
+            and entry.get("fmt") == CACHE_FMT
+            and entry.get("hash") == sub_hashes[submission.stem]
+            and output_file.is_file()
+        )
+
+    return ([s for s in submissions if not cached_valid(s)], sub_hashes)
+
+
+def pending_grade_submissions(config_path: Path) -> list[Path]:
+    """Submissions ``grade_assignment`` would (re)grade right now (cache rule)."""
+    cfg = _load_assignment_config(config_path)
+    cfg_model = load_assignment_file(config_path)
+    return _grading_pending(cfg, cfg_model)[0]
 
 
 def build_client(provider_name: str) -> tuple[Any, str]:
@@ -356,70 +424,26 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
         }
 
     # Grading cache: a submission is pending unless its input hash matches
-    # logs/grading.cache.json AND the graded JSON exists. Hash covers the
-    # processed md, rubric, system prompts, reference, the [grading] section,
-    # the provider entry (name/base_url/model/mode/temperature) and the
-    # visual_evaluation flag; any change regrades.
+    # logs/grading.cache.json AND the graded JSON exists; any change regrades.
+    # (Rule lives in _grading_pending — shared with the TUI display.)
     cache_path = cfg.logs_dir / "grading.cache.json"
+    pending_submissions, sub_hashes = _grading_pending(cfg, cfg_model)
     cache = load_cache(cache_path)
-    provider = get_providers().providers[cfg_model.grading.provider]
-    grading_payload = json.dumps(
-        {
-            "grading": cfg_model.grading.model_dump_json(),
-            "provider": {
-                "name": cfg_model.grading.provider,
-                "base_url": provider.base_url,
-                "model": provider.model,
-                "mode": getattr(provider.mode, "value", provider.mode),
-                "temperature": provider.temperature,
-            },
-            "visual_evaluation": cfg_model.processing.visual_evaluation,
-        },
-        sort_keys=True,
-    ).encode("utf-8")
-    rubric_bytes = cfg.rubric_file.read_bytes()
-    prompt_bytes = [p.read_bytes() for p in cfg.system_prompt_files]
-    reference_bytes = (
-        cfg.reference_file.read_bytes() if cfg.reference_file is not None else b""
-    )
-
-    def submission_hash(submission: Path) -> str:
-        return content_hash([
-            submission.read_bytes(),
-            rubric_bytes,
-            *prompt_bytes,
-            reference_bytes,
-            grading_payload,
-        ])
-
-    sub_hashes = {s.stem: submission_hash(s) for s in submissions}
-
-    def cached_valid(submission: Path) -> bool:
-        entry = cache.get(submission.stem)
-        output_file = cfg.graded_dir / f"{submission.stem}.json"
-        return bool(
-            isinstance(entry, dict)
-            and entry.get("fmt") == CACHE_FMT
-            and entry.get("hash") == sub_hashes[submission.stem]
-            and output_file.is_file()
-        )
 
     if force:
         pending_submissions = submissions
         print(
             "Force mode enabled: ignoring cache/checkpoint and regrading all submissions."
         )
-    else:
-        pending_submissions = [s for s in submissions if not cached_valid(s)]
-        if not pending_submissions:
-            print("All submissions already graded (cache hit).")
-            return {
-                "stage": "grade",
-                "success": 0,
-                "errors": 0,
-                "total": 0,
-                "success_rate": 0,
-            }
+    elif not pending_submissions:
+        print("All submissions already graded (cache hit).")
+        return {
+            "stage": "grade",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
 
     client, model_name = build_client(cfg.provider_name)
     worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))

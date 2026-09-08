@@ -11,6 +11,7 @@ from src.shared.grading import (
     _build_grading_messages,
     build_client,
     grade_assignment,
+    pending_grade_submissions,
 )
 from src.shared.provider import ProviderInfo, ProviderList
 
@@ -128,6 +129,50 @@ def test_grade_force_reqrades_despite_valid_cache(
     grade_assignment(config_path, force=True)
 
     assert len(calls) == 2
+
+
+def test_pending_follows_hash_cache_not_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item: "needs rerun" count must come from the grading hash cache.
+
+    Regression: the workspace display counted pending from
+    grading.checkpoint.json (a done list that never shrinks), while the run
+    queued tasks by the hash cache. After a processed md changes, the cache
+    says "regrade" (run queues it) although the checkpoint still says all
+    done — the display then under-reported 0 to rerun.
+    """
+    from src.tui.scan import AssignmentInfo, Counts
+    from src.tui.workspace import _incremental_line
+
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+
+    grade_assignment(config_path)
+    a_dir = tmp_path / "data" / "c1" / "a1"
+    checkpoint = json.loads(
+        (a_dir / "logs" / "grading.checkpoint.json").read_text(encoding="utf-8")
+    )
+    assert checkpoint["done"] == ["100001.md"]
+
+    (a_dir / "processed" / "100001.md").write_text(
+        "# changed answer\n", encoding="utf-8"
+    )
+
+    # Checkpoint (the old display source) still says "all done"...
+    assert len(checkpoint["done"]) == 1
+    # ...but the cache rule the run applies says this submission regrades.
+    pending = pending_grade_submissions(config_path)
+    assert [p.stem for p in pending] == ["100001"]
+
+    # The incremental display agrees with the run: grade 1, not grade 0.
+    info = AssignmentInfo(
+        dir_name="a1",
+        config_path=config_path,
+        counts=Counts(raw=1, processed=1, graded=1, scored=0),
+    )
+    assert "grade 1" in _incremental_line(info)
 
 
 def _image_payloads(content: list[dict]) -> list[bytes]:
