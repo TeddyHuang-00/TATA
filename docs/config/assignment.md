@@ -11,8 +11,11 @@ holds defaults shared across courses (`[fetch]` course_id,
 `data/<course>/config.toml` holds course-level fetch state plus the course's
 assignment list; each `data/<course>/<assignment>/config.toml` (this file)
 holds assignment-specific settings. Per key, assignment values win, then
-course, then global. All paths resolve against the assignment directory
-(global/course values are scalars only). The legacy two-level layout
+course, then global. Paths: `rubric` and `system_prompt` resolve against
+the `data/` root (found by walking up from the config), `reference_file`
+and the per-stage dirs against the assignment directory, and `provider`
+against `data/providers/<name>.toml`; global/course values are scalars
+only. The legacy two-level layout
 (`data/config.toml` + assignment configs directly under it, assignment list
 in the global file) still works as an abbreviation.
 
@@ -31,11 +34,11 @@ in the global file) still works as an abbreviation.
   the assignment resolves via `--course`/`--assignment` or interactively.
   Nothing is remembered — fetch memory is written only into a course config.
 
-The course list is the course's source of truth: `main.py fetch -c data/<course>/config.toml` fetches every listed entry in one shot (fetch collects
+The course list is the course's source of truth: `uv run cli fetch -c data/<course>/config.toml` fetches every listed entry in one shot (fetch collects
 the body text and all attachments per student; a multi-file student is
 written to `raw/<uid>/`, a single-file student flat at `raw/<file>`),
-`fetch --retry` replays it, and `main.py plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
-assignments. `main.py fetch` also writes course-level state to the course
+`fetch --retry` replays it, and `uv run cli plagiarism -c data/<course>/config.toml --aggregate` runs and aggregates exactly the listed
+assignments. `uv run cli fetch` also writes course-level state to the course
 config automatically.
 With `-c data/config.toml` (no assignment list) plagiarism falls back to the
 discovered course configs (`data/*/config.toml`).
@@ -54,13 +57,13 @@ id = 2979511
 
 The assignment config is the runtime contract for every stage:
 
-1. `plagiarism`
-2. `preprocess`
+1. `preprocess`
+2. `plagiarism` (optional but recommended)
 3. `grade`
 4. `score`
 5. `analyze`
 
-`main.py` uses this file to decide where input/output files live, how preprocessing behaves, which rubric/prompt/provider to use for grading, and how plagiarism/scoring outputs are produced.
+`uv run cli` uses this file to decide where input/output files live, how preprocessing behaves, which rubric/prompt/provider to use for grading, and how plagiarism/scoring outputs are produced.
 
 ## Minimal valid config
 
@@ -161,7 +164,7 @@ Fields:
 - `processed_dir` (default `processed`): preprocessed markdown outputs consumed by grading.
 - `graded_dir` (default `graded`): grading JSON output location consumed by scoring/analyze.
 - `logs_dir` (default `logs`): stage logs/checkpoint/meta-analysis files.
-- `reference_file` (default `reference.md`, optional): reference answer file for comparison grading. Omit to grade against rubric criteria alone.
+- `reference_file` (optional, default none): reference answer file for comparison grading. Omit to grade against rubric criteria alone.
 
 Accepted value type:
 
@@ -188,7 +191,7 @@ Effect:
 Purpose in workflow:
 
 - Lets you inject custom scripts at stage lifecycle points (preprocess/grade/score/analyze/plagiarism).
-- Full lifecycle and payload reference: [hooks.md](hooks.md)
+- Full lifecycle and payload reference: [hooks.md](../hooks.md)
 
 Fields:
 
@@ -269,7 +272,7 @@ Fields and defaults:
 Notes:
 
 - `full_pairs_file` is used by the cross-assignment aggregate
-  (`main.py plagiarism --aggregate`).
+  (`uv run cli plagiarism --aggregate`).
 - `extensions` are normalized to lower-case, and a missing leading `.` is auto-added.
 
 ## Common mistakes

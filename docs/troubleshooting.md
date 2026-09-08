@@ -1,5 +1,18 @@
 # Troubleshooting
 
+## Symptom index
+
+- Rubric or prompt "not found" right after cloning → your checkout may be
+  outdated; see README "Starter assets" (and section 6 below for the fix).
+- `No .env with CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN found` → README
+  "Get your Canvas API token" + Quick Start step 1 (Settings → Canvas →
+  Save .env).
+- Provider "not found" → check the file name under `data/providers/`, or
+  create one via Library → Providers; see
+  [config/provider.md](config/provider.md).
+- pip or Python version errors → do not use pip for TATA; install with uv
+  (README "Install").
+
 ## 1. Invalid assignment config
 
 Symptom:

@@ -83,7 +83,7 @@ data/
 After individual assignment plagiarism runs, build a single aggregate view:
 
 ```bash
-uv run main.py plagiarism -c data/<course>/config.toml --aggregate \
+uv run cli plagiarism -c data/<course>/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 

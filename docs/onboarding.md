@@ -2,9 +2,20 @@
 
 ## 1. Prerequisites
 
-- Python 3.13+
-- uv installed
-- API credentials configured for your provider
+- A computer with Windows, macOS, or Linux
+- The [uv](https://docs.astral.sh/uv/) tool (install it once, see below)
+- API credentials for your LLM provider (see section 3)
+
+You never install Python yourself: on your first `uv sync`, uv downloads
+Python 3.13 and every dependency automatically.
+
+Install uv (one time only):
+
+- Windows (open PowerShell, paste this):
+  `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+Close and reopen your terminal so the `uv` command is available.
 
 ## 2. Install dependencies
 
@@ -16,16 +27,25 @@ uv sync
 
 ## 3. Configure provider credentials
 
-Create or update `.env` in project root.
+There are two ways to give TATA an LLM API key:
 
-Example for DeepSeek:
+1. **Placeholder plus `.env` (recommended).** Copy
+   [.env.sample](../.env.sample) to `.env` in project root and fill in your
+   key:
 
-```env
-DEEPSEEK_API_KEY=your_key_here
-```
+   ```env
+   DEEPSEEK_API_KEY=your_key_here
+   ```
 
-Provider definitions are one file each in [data/providers](../data/providers)
-(`<name>.toml`, flat top-level keys; the file stem is the provider name).
+   Provider definitions are one file each in
+   [data/providers](../data/providers) (`<name>.toml`; flat top-level keys;
+   the file stem is the provider name). The bundled example provider
+   [deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml)
+   writes `api_key = "${DEEPSEEK_API_KEY}"`, so it picks the key up from
+   `.env` automatically.
+
+2. **Plain-text key in the TUI.** In the TUI, Library → Providers, create
+   or edit a provider and paste the key directly into the `api_key` field.
 
 ## 4. Validate a config (recommended)
 
@@ -35,9 +55,8 @@ Validate before creating a new assignment config:
 uv run cli validate -c data/<course>/<assignment>/config.toml
 ```
 
-The bare `data/example/config.toml` copy source validates only at its
-destination depth (`data/<course>/<assignment>/`), where rubric/prompt
-paths resolve against `data/`.
+The shipped `data/example/config.toml` (with its bundled rubric, prompt,
+and provider files) validates as-is on a fresh clone.
 
 `validate` checks the config with the same pydantic models used at runtime,
 plus the rubric files, prompt files, `[grading].provider` against
@@ -53,6 +72,9 @@ Minimal required fields are in `[grading]` only:
 - rubric
 - system_prompt
 - provider
+
+The example config references the bundled provider `deepseek_chat_tool`
+([deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml)).
 
 Path-related fields under `[assignment]` are optional and default to:
 
@@ -87,37 +109,37 @@ For an assignment folder (for example `data/my-assignment`):
 Preprocess only:
 
 ```bash
-uv run main.py preprocess -c data/my-assignment/config.toml
+uv run cli preprocess -c data/my-assignment/config.toml
 ```
 
 Grade only:
 
 ```bash
-uv run main.py grade -c data/my-assignment/config.toml
+uv run cli grade -c data/my-assignment/config.toml
 ```
 
 Plagiarism only:
 
 ```bash
-uv run main.py plagiarism -c data/my-assignment/config.toml
+uv run cli plagiarism -c data/my-assignment/config.toml
 ```
 
 Score only:
 
 ```bash
-uv run main.py score -c data/my-assignment/config.toml
+uv run cli score -c data/my-assignment/config.toml
 ```
 
 Analyze grading quality (meta analysis):
 
 ```bash
-uv run main.py analyze -c data/my-assignment/config.toml
+uv run cli analyze -c data/my-assignment/config.toml
 ```
 
 Aggregate plagiarism reports across assignments:
 
 ```bash
-uv run main.py plagiarism -c data/config.toml --aggregate \
+uv run cli plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 
@@ -126,11 +148,11 @@ Run every stage — in this order (plagiarism is optional but recommended):
 individually:
 
 ```bash
-uv run main.py preprocess -c data/my-assignment/config.toml
-uv run main.py plagiarism -c data/my-assignment/config.toml
-uv run main.py grade -c data/my-assignment/config.toml
-uv run main.py score -c data/my-assignment/config.toml
-uv run main.py analyze -c data/my-assignment/config.toml
+uv run cli preprocess -c data/my-assignment/config.toml
+uv run cli plagiarism -c data/my-assignment/config.toml
+uv run cli grade -c data/my-assignment/config.toml
+uv run cli score -c data/my-assignment/config.toml
+uv run cli analyze -c data/my-assignment/config.toml
 ```
 
 ## 8. Outputs

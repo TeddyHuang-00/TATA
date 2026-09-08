@@ -5,6 +5,17 @@
 data/*
 !data/example
 
+# Starter example assets shipped with the repo (selected files only)
+!data/rubrics/
+data/rubrics/*
+!data/rubrics/example_rubric.toml
+!data/prompt/
+data/prompt/*
+!data/prompt/system.md
+!data/providers/
+data/providers/*
+!data/providers/deepseek_chat_tool.toml
+
 __pycache__/
 .vscode
 

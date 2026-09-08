@@ -13,7 +13,37 @@ provider = "deepseek_chat_tool"
 
 Use [data/example/config.toml](../data/example/config.toml) as the baseline.
 
-## 2. Which paths are optional?
+## 2. What is uv and why do I need it?
+
+[uv](https://docs.astral.sh/uv/) is a tool that installs Python and every
+dependency TATA needs, so you never manage Python yourself. `uv sync` in the
+project root sets everything up in one command.
+
+Install uv one time only:
+
+- Windows PowerShell: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+See README "Install" for the full walkthrough.
+
+## 3. I lost my Canvas API token. What now?
+
+Go to your Canvas site, open Settings (from your avatar menu), and under
+**API Access Token** click to generate a new one. The token is shown only
+once, so save the new one somewhere private. Then update
+`CANVAS_ACCESS_TOKEN` in the project's `.env` file (in the TUI, Settings →
+Canvas → Save .env does this for you).
+
+## 4. Can I use a different LLM provider?
+
+Yes. TATA is provider-agnostic: create a new provider in Library → Providers
+(or edit `data/providers/<name>.toml` in your editor) and set `base_url`,
+`model`, and `mode` for your provider. The bundled
+[deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml) is a
+working DeepSeek example. See [config/provider.md](config/provider.md) for
+the full format.
+
+## 5. Which paths are optional?
 
 All fields under `[assignment]` are optional.
 
@@ -26,11 +56,11 @@ If omitted, defaults are:
 - reference_file -> none (no reference file; set it to enable
   reference-based grading)
 
-## 3. Do I need to create folders manually?
+## 6. Do I need to create folders manually?
 
 No. The pipeline now auto-creates assignment folders when running stages.
 
-## 4. How do I validate an assignment config?
+## 7. How do I validate an assignment config?
 
 Run:
 
@@ -50,7 +80,7 @@ then checks the chain it would grade against:
 
 It prints one line per check and exits `1` when any check fails.
 
-## 5. How can I speed up grading?
+## 8. How can I speed up grading?
 
 Set `grading.max_parallel_tasks` in config. Valid range is `1` to `10`.
 
@@ -59,12 +89,12 @@ Set `grading.max_parallel_tasks` in config. Valid range is `1` to `10`.
 max_parallel_tasks = 10
 ```
 
-## 6. What is the recommended stage order?
+## 9. What is the recommended stage order?
 
 Use this order:
 
-1. plagiarism (optional but recommended)
 1. preprocess
+1. plagiarism (optional but recommended)
 1. grade
 1. score
 1. analyze (optional)
@@ -72,14 +102,14 @@ Use this order:
 Or run all at once:
 
 ```bash
-uv run main.py preprocess -c data/my-assignment/config.toml
-uv run main.py plagiarism -c data/my-assignment/config.toml
-uv run main.py grade -c data/my-assignment/config.toml
-uv run main.py score -c data/my-assignment/config.toml
-uv run main.py analyze -c data/my-assignment/config.toml
+uv run cli preprocess -c data/my-assignment/config.toml
+uv run cli plagiarism -c data/my-assignment/config.toml
+uv run cli grade -c data/my-assignment/config.toml
+uv run cli score -c data/my-assignment/config.toml
+uv run cli analyze -c data/my-assignment/config.toml
 ```
 
-## 7. Where are outputs written?
+## 10. Where are outputs written?
 
 - Processed markdown: `processed/`
 - Grading JSON: `graded/*.json`
@@ -87,7 +117,7 @@ uv run main.py analyze -c data/my-assignment/config.toml
 - Logs and checkpoint: `logs/`
 - Plagiarism report and extracted files: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
 
-## 8. Why do I get "All submissions already graded (cache hit)"?
+## 11. Why do I get "All submissions already graded (cache hit)"?
 
 The grading cache (`logs/grading.cache.json`, keyed by submission input
 hashes) remembers which submissions were graded with unchanged inputs.
@@ -99,7 +129,7 @@ If you want to regrade from scratch, remove:
 
 or re-run with `--force`. Then run grade again.
 
-## 9. Can preprocessing accept multiple submission formats?
+## 12. Can preprocessing accept multiple submission formats?
 
 Yes. `processing.input_format` supports both a single value and a list.
 
@@ -119,7 +149,7 @@ input_format = ["ipynb", "html", "markdown"]
 
 If omitted, preprocessing auto-detects from the first supported file in `raw/`.
 
-## 10. Does reference answer have to be markdown?
+## 13. Does reference answer have to be markdown?
 
 No. Grade stage accepts reference files in:
 
@@ -131,7 +161,7 @@ Set `[assignment].reference_file` to any of those formats. Non-markdown referenc
 
 Recommended location is assignment root (for example `data/my-assignment/reference.ipynb`) so it is separate from student submissions.
 
-## 11. How does plagiarism detection reduce boilerplate false positives?
+## 14. How does plagiarism detection reduce boilerplate false positives?
 
 Plagiarism stage uses `copydetect` with a template boilerplate source.
 
@@ -153,7 +183,7 @@ And full pairwise comparison data is exported at:
 
 All paths can be customized via `[plagiarism]` config.
 
-## 12. Does a high plagiarism score always mean a student cheated?
+## 15. Does a high plagiarism score always mean a student cheated?
 
 No. A high similarity score is a signal for manual review, not automatic proof of misconduct.
 
@@ -170,12 +200,12 @@ Recommended workflow:
 1. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
 1. Escalate only when evidence is consistent with policy.
 
-## 13. Can I combine plagiarism results across all assignments into one report?
+## 16. Can I combine plagiarism results across all assignments into one report?
 
 Yes. Use the aggregate helper script:
 
 ```bash
-uv run main.py plagiarism -c data/config.toml --aggregate \
+uv run cli plagiarism -c data/config.toml --aggregate \
 	--output misc/plagiarism_summary.md
 ```
 

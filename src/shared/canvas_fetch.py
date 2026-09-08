@@ -29,7 +29,12 @@ def load_env() -> tuple[str, str]:
             vals = dotenv.dotenv_values(env, interpolate=False)
             url, token = vals["CANVAS_BASE_URL"], vals["CANVAS_ACCESS_TOKEN"]
             return url or "", token or ""
-    sys.exit("No .env with CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN found")
+    sys.exit(
+        "No .env with CANVAS_BASE_URL/CANVAS_ACCESS_TOKEN found.\n"
+        "Create one by copying .env.sample, then fill in your Canvas URL and "
+        "API token (see README, Get your Canvas API token); or use the TUI "
+        "Settings -> Canvas tab and Save .env."
+    )
 
 
 def read_env_state(
