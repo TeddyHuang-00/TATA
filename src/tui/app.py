@@ -43,7 +43,7 @@ from textual.widgets import (
 )
 from textual_serve.server import Server
 
-from src import REPO_ROOT, cli as main_mod
+from src import REPO_ROOT
 from src.shared.aliases import (
     assignment_display_name,
     course_display_name,
@@ -61,13 +61,14 @@ from src.shared.canvas_fetch import (
 )
 from src.shared.cli_options import FetchCliOptions
 from src.shared.config_edit import edit_config
+from src.shared.fetch_pipeline import root_fetch, run_fetch
 from src.shared.provider import get_providers
 from src.tui.library import LibraryScreen
 from src.tui.plagiarism import PlagiarismScreen, run_aggregate_job
 from src.tui.scan import (
     AssignmentInfo,
     CourseInfo,
-    _plagiarism_threshold_pct,
+    plagiarism_threshold_pct,
     scan_assignments,
     scan_courses,
 )
@@ -112,7 +113,7 @@ class AppState:
         # dashboard flags must never disagree with the pane. Tolerant helper
         # (M1): malformed course config falls back to the default, never
         # crashes TUI startup.
-        threshold_pct = _plagiarism_threshold_pct(course.config_path)
+        threshold_pct = plagiarism_threshold_pct(course.config_path)
         self.assignments = scan_assignments(
             self.assignments_dir / course.dir_name,
             threshold_pct=threshold_pct,
@@ -720,7 +721,7 @@ class DashboardScreen(Vertical):
 
     @staticmethod
     def _fetch_one(course: CourseInfo, aid: int) -> None:
-        main_mod._run_fetch(
+        run_fetch(
             FetchCliOptions(
                 course=course.course_id,
                 assignment=aid,
@@ -796,7 +797,7 @@ class DashboardScreen(Vertical):
         stored.
         """
         try:
-            cfg = main_mod._root_fetch(course.config_path)
+            cfg = root_fetch(course.config_path)
         except ValueError:
             return None
         if cfg is None or cfg.course_id is None or not cfg.assignments:
@@ -838,7 +839,7 @@ class DashboardScreen(Vertical):
                 self._mark_fetch(i, "running")
                 t0 = time.monotonic()
                 try:
-                    main_mod._run_fetch(
+                    run_fetch(
                         FetchCliOptions(
                             course=course_id,
                             assignment=entry.id,

@@ -70,7 +70,7 @@ def _plain(widget: Static) -> str:
 async def _check_fetch_all(root: Path) -> None:
     """All-ok run: 3 targets, live states, completion summary, no raw paths."""
     calls: list = []
-    tata_app_mod.main_mod._run_fetch = _make_recorder(calls, 0.25)
+    tata_app_mod.run_fetch = _make_recorder(calls, 0.25)
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
         table = app.query_one("#dashboard-table", DataTable)
@@ -122,7 +122,7 @@ async def _check_fetch_all(root: Path) -> None:
 async def _check_fetch_all_failure(root: Path) -> None:
     """One target fails: the run continues and the summary counts failures."""
     calls: list = []
-    tata_app_mod.main_mod._run_fetch = _make_recorder(calls, 0.05, fail_on=1002)
+    tata_app_mod.run_fetch = _make_recorder(calls, 0.05, fail_on=1002)
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
         table = app.query_one("#dashboard-table", DataTable)
@@ -153,7 +153,7 @@ async def _check_fetch_all_failure(root: Path) -> None:
 async def _check_fetch_all_empty(root: Path) -> None:
     """No [[fetch.assignments]] list: warn, no modal, no fetch calls."""
     calls: list = []
-    tata_app_mod.main_mod._run_fetch = _make_recorder(calls, 0.01)
+    tata_app_mod.run_fetch = _make_recorder(calls, 0.01)
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
         table = app.query_one("#dashboard-table", DataTable)

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import json
-import re
 import shlex
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -33,10 +31,11 @@ from textual_serve.server import Server
 
 from src.shared.aliases import student_display_name
 from src.shared.cli_options import ScoreReviewCliOptions
-from src.shared.processing import (
-    convert_docx_to_markdown,
-    convert_html_to_markdown,
-    convert_ipynb_to_markdown,
+from src.shared.plagiarism_display import (
+    base_uid,
+    convert_preview,  # ruff: ignore[unused-import] - re-exported: tests/preview_check.py imports it here
+    find_raw_file,
+    preview_content,
 )
 
 # Layout threshold: stack the panels below this width (Textual has no media
@@ -84,123 +83,12 @@ def _load_students(score_dir: Path) -> list[dict]:
     return students
 
 
-def base_uid(stem: str) -> str:
-    """Canvas user id with a fetch suffix (_LATE_N or _N) stripped.
-
-    File stems carry the suffix (canvas_fetch fetches bodies and
-    attachments as ``<uid>{_LATE_i|_i}``), but alias.toml keys are the
-    unsuffixed uid — so a stem like ``301741_LATE_0`` must resolve to the
-    ``301741`` alias.
-    """
-    return re.sub(r"_(?:LATE_)?\d+$", "", stem)
-
-
-def find_raw_file(score_dir: Path, student_id: str) -> Path | None:
-    """Locate the original submission for a student in a sibling raw/ dir.
-
-    Graded JSON stem and raw file stem match (canvas user id, including
-    _LATE_N suffixes); any extension is acceptable. Multi-file students
-    (auto-collect all) land in raw/<uid>/ folders — when the flat glob
-    finds nothing, fall back to a stem match inside raw/<uid>/ /
-    raw/<stem-without-suffix>/ (the folder name is the unsuffixed uid; a
-    suffixed stem strips the suffix). Single-file behavior is unchanged.
-    """
-    for raw_dir in (score_dir.parent / "raw", score_dir / "raw"):
-        matches = sorted(raw_dir.glob(f"{student_id}.*"))
-        if matches:
-            return matches[0]
-    # Fallback: multi-file student -> raw/<uid>/<name> (folder per student).
-    base = re.sub(r"_(?:LATE_)?\d+$", "", student_id) or student_id
-    for raw_dir in (score_dir.parent / "raw", score_dir / "raw"):
-        folders = (raw_dir / base, raw_dir / student_id)
-        # Exact stem first (body member: <uid>.html / <uid>_LATE_0.html).
-        hits = sorted(
-            p
-            for folder in folders
-            for p in folder.rglob("*")
-            if p.is_file() and not p.name.startswith(".") and p.stem == student_id
-        )
-        if hits:
-            return hits[0]
-        # Then base-uid match (attachment members: <uid>_0.ipynb,
-        # <uid>_1.docx, <uid>_LATE_0.html ...). The folder name is the
-        # unsuffixed uid; the stem is the uid plus the fetch suffix.
-        hits = sorted(
-            p
-            for folder in folders
-            for p in folder.rglob("*")
-            if p.is_file()
-            and not p.name.startswith(".")
-            and re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == base
-        )
-        if hits:
-            return hits[0]
-    return None
-
-
 def _find_processed_file(score_dir: Path, student_id: str) -> Path | None:
     """Locate the preprocess output for a student in a sibling processed/ dir."""
     for md_dir in (score_dir.parent / "processed", score_dir / "processed"):
         candidate = md_dir / f"{student_id}.md"
         if candidate.exists():
             return candidate
-    return None
-
-
-# Raw-file preview: prefer processed/<stem>.md (exactly what the grader saw);
-# fall back to converting the raw file (ipynb -> Markdown widget, documents
-# .docx/.html/.md/.txt -> extracted plain text).
-PREVIEW_MAX_CHARS = 250_000
-
-
-def _truncate(content: str) -> str:
-    # ponytail: hard cap keeps the Markdown widget responsive on huge
-    # notebooks; raise PREVIEW_MAX_CHARS if full content is ever needed.
-    if len(content) <= PREVIEW_MAX_CHARS:
-        return content
-    return (
-        content[:PREVIEW_MAX_CHARS] + f"\n\n_[truncated, {len(content)} chars total]_"
-    )
-
-
-def convert_preview(raw: Path) -> tuple[str, str]:
-    """Convert a raw submission to (kind, content).
-
-    kind is "markdown" (feed the Markdown widget) or "text" (plain Static).
-    Uses the same converters as the preprocess stage so the preview matches
-    what the grader saw.
-    """
-    suffix = raw.suffix.lower()
-    if suffix in {".md", ".txt", ".text"}:
-        return "text", _truncate(raw.read_text(encoding="utf-8", errors="replace"))
-    if suffix == ".ipynb":
-        kind, converter = "markdown", convert_ipynb_to_markdown
-    elif suffix == ".docx":
-        kind, converter = "text", convert_docx_to_markdown
-    elif suffix == ".html":
-        kind, converter = "text", convert_html_to_markdown
-    else:
-        return "text", f"Unsupported raw file type: {raw.name}"
-    with tempfile.TemporaryDirectory() as tmp:
-        output = Path(tmp) / (raw.stem + ".md")
-        converter(raw, output)
-        content = output.read_text(encoding="utf-8", errors="replace")
-    return kind, _truncate(content)
-
-
-def preview_content(raw: Path | None, processed: Path | None) -> tuple[str, str] | None:
-    """(kind, content) for a student's preview, or None if no file is known.
-
-    Prefers the preprocess markdown (already-converted, what the grader saw)
-    over a fresh raw conversion.
-    """
-    if processed is not None:
-        kind = (
-            "markdown" if raw is not None and raw.suffix.lower() == ".ipynb" else "text"
-        )
-        return kind, _truncate(processed.read_text(encoding="utf-8", errors="replace"))
-    if raw is not None:
-        return convert_preview(raw)
     return None
 
 

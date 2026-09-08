@@ -27,7 +27,6 @@ from e2e_common import (  # isort: skip - seeds repo-root sys.path before src im
     write_aliases,
 )
 from rich.text import Text as RichText
-from src import cli as main_mod
 from src.shared.aliases import load_alias_file
 from src.shared.cli_options import FetchCliOptions
 from src.tui import app as tata_app_mod
@@ -156,12 +155,12 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
     (data / "prompt").mkdir()
     (data / "prompt" / "p1.md").write_text("", encoding="utf-8")
     calls: list[FetchCliOptions] = []
-    orig_fetch = main_mod._run_fetch
+    orig_fetch = tata_app_mod.run_fetch
 
     def fake_fetch(args: FetchCliOptions) -> None:
         calls.append(args)
 
-    main_mod._run_fetch = fake_fetch
+    tata_app_mod.run_fetch = fake_fetch
     try:
         with _fake_providers(["gamma", "delta"]):
             await pilot.press("c")
@@ -199,7 +198,7 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
             app.query_one(DashboardScreen)._rescan_course()
             await pilot.pause()
     finally:
-        main_mod._run_fetch = orig_fetch
+        tata_app_mod.run_fetch = orig_fetch
 
 
 async def _check_score_review(pilot: Pilot, app: TataApp) -> None:

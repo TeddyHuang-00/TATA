@@ -41,11 +41,11 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, RichLog, Static
 
-from src import cli as main
 from src.shared.aliases import assignment_display_name
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import load_assignment_file
 from src.shared.cli_options import FetchCliOptions
+from src.shared.fetch_pipeline import run_fetch
 from src.shared.grading import (
     cached_grade_count,
     grade_assignment,
@@ -236,7 +236,7 @@ def _incremental_line(info: AssignmentInfo) -> str:
 
 def _run_fetch_job(config_path: Path) -> None:
     """Fetch through the CLI entry point (single source of truth, main.py)."""
-    main._run_fetch(FetchCliOptions(config=config_path))
+    run_fetch(FetchCliOptions(config=config_path))
 
 
 # ---------- modals ----------

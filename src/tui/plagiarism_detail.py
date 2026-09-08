@@ -22,9 +22,14 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Static, Tree
 
 from src.shared.aliases import assignment_display_name, course_student_display_name
-from src.tui.plagiarism import _overlap_display, compare_content, pair_side_name
-from src.tui.scan import AssignmentInfo, _pair_pct
-from src.tui.score_review import base_uid
+from src.shared.plagiarism_display import (
+    base_uid,
+    compare_content,
+    overlap_display,
+    pair_pct,
+    pair_side_name,
+)
+from src.tui.scan import AssignmentInfo
 
 if TYPE_CHECKING:
     from src.tui.app import AppState
@@ -216,8 +221,8 @@ class AggregatePairDetailScreen(_DetailScreen):
         for index, (info, pair) in enumerate(self._shared_rows):
             table.add_row(
                 self.docs.assignment_name(info),
-                f"{_pair_pct(pair):.1f}",
-                _overlap_display(pair),
+                f"{pair_pct(pair):.1f}",
+                overlap_display(pair),
                 key=str(index),
             )
         table.styles.height = "1fr"
@@ -253,12 +258,12 @@ class AssignmentDetailScreen(_DetailScreen):
         self._rows = sorted(
             pairs,
             key=lambda p: (
-                _pair_pct(p) < docs.threshold_pct,
-                -_pair_pct(p),
+                pair_pct(p) < docs.threshold_pct,
+                -pair_pct(p),
                 str(p.get("test_file") or ""),
             ),
         )[:PAGE_ROWS]
-        sims = [_pair_pct(p) for p in pairs]
+        sims = [pair_pct(p) for p in pairs]
         flagged = sum(1 for sim in sims if sim >= docs.threshold_pct)
         max_sim = max(sims, default=0.0)
         self._histogram = f"Similarity distribution (n={len(sims)})\n" + "\n".join(
@@ -290,7 +295,7 @@ class AssignmentDetailScreen(_DetailScreen):
             return
         table.add_columns("Student A", "Student B", "sim %", "overlap", "Flag")
         for index, pair in enumerate(self._rows):
-            sim = _pair_pct(pair)
+            sim = pair_pct(pair)
             table.add_row(
                 pair_side_name(
                     self.docs.assignments_dir,
@@ -305,7 +310,7 @@ class AssignmentDetailScreen(_DetailScreen):
                     str(pair.get("reference_file")),
                 ),
                 f"{sim:.1f}",
-                _overlap_display(pair),
+                overlap_display(pair),
                 "FLAG" if sim >= self.docs.threshold_pct else "-",
                 key=str(index),
             )
@@ -347,7 +352,7 @@ class StudentDetailScreen(_DetailScreen):
                 shared = shared_pairs(docs, uid, other)
                 if not shared:
                     continue
-                mean_sim = _mean([_pair_pct(p) for _info, p in shared])
+                mean_sim = _mean([pair_pct(p) for _info, p in shared])
                 z = float(row.get("z_score") or 0.0)
                 self._peers.append((other, row, z, mean_sim, shared))
             # rank by aggregate score (z desc), tie by mean sim desc
@@ -365,7 +370,7 @@ class StudentDetailScreen(_DetailScreen):
                     other = next((x for x in uids if x != uid), None)
                     if other is None:
                         continue
-                    per_peer.setdefault(other, []).append(_pair_pct(pair))
+                    per_peer.setdefault(other, []).append(pair_pct(pair))
             for other, sims in per_peer.items():
                 shared = shared_pairs(docs, uid, other)
                 self._peers.append((other, None, 0.0, _mean(sims), shared))
@@ -403,15 +408,15 @@ class StudentDetailScreen(_DetailScreen):
             )
             if row is not None:
                 z = float(row.get("z_score") or 0.0)
-                mean_sim = _mean([_pair_pct(p) for _info, p in shared])
+                mean_sim = _mean([pair_pct(p) for _info, p in shared])
                 label = f"{other_name} (z {z:.2f} / mean sim {mean_sim:.1f}%)"
             else:
-                mean_sim = _mean([_pair_pct(p) for _info, p in shared])
+                mean_sim = _mean([pair_pct(p) for _info, p in shared])
                 label = f"{other_name} (mean sim {mean_sim:.1f}%)"
             peer = tree.root.add(label, data=("peer", other, row))
             for info, pair in shared:
                 peer.add(
-                    f"{self.docs.assignment_name(info)} · sim {_pair_pct(pair):.1f}%",
+                    f"{self.docs.assignment_name(info)} · sim {pair_pct(pair):.1f}%",
                     data=("assign", info, pair),
                 )
         tree.root.expand()
@@ -442,9 +447,9 @@ class AssignmentPairDetailScreen(_DetailScreen):
     ) -> None:
         self.assignment = assignment
         self.pair = pair
-        sim = _pair_pct(pair)
+        sim = pair_pct(pair)
         assignment_pairs = docs.assignment_pairs(assignment)
-        sims = [_pair_pct(p) for p in assignment_pairs]
+        sims = [pair_pct(p) for p in assignment_pairs]
         # ponytail: raw-sim z over this assignment's pairs (the aggregate z
         # from aggregate.json stays the cross-assignment authority)
         z_text = "z —"
@@ -477,7 +482,7 @@ class AssignmentPairDetailScreen(_DetailScreen):
         self._banner = (
             f"[b]{docs.assignment_name(assignment)}[/b] · "
             f"[b]{name_a} ↔ {name_b}[/b]"
-            f"    max sim {sim:.1f}% · overlap {_overlap_display(pair)} · {z_text}"
+            f"    max sim {sim:.1f}% · overlap {overlap_display(pair)} · {z_text}"
             f"    {flag_text}"
         )
         super().__init__(

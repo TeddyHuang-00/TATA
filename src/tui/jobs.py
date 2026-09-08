@@ -35,7 +35,7 @@ from rich.markup import escape
 from textual.containers import Vertical
 from textual.widgets import Button, RichLog, Static
 
-from src import cli as main
+from src.shared.fetch_pipeline import format_job_summary
 
 
 # ---------- log queue writer ----------
@@ -95,11 +95,6 @@ def run_stage_worker(job: dict) -> None:
         job["queue"].put(("done", {"cancelled": True}))
     else:
         job["queue"].put(("done", summary))
-
-
-def format_job_summary(summary: dict) -> str:
-    """Summary line shaped exactly like the CLI's (design 02 §6)."""
-    return main._format_job_summary(summary)
 
 
 # ---------- the mixin ----------

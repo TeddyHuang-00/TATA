@@ -48,25 +48,36 @@ from src.shared.aliases import (
     assignment_display_name,
     course_display_name,
     course_student_display_name,
-    student_display_name,
 )
 from src.shared.plagiarism import detect_plagiarism, root_plagiarism_section
 from src.shared.plagiarism_aggregate import aggregate_pair_rows
+from src.shared.plagiarism_display import (
+    base_uid,
+    compare_content,
+    overlap_display,
+    pair_pct,
+    pair_side_name,
+)
 from src.tui.jobs import JobHost
+from src.tui.plagiarism_detail import (
+    AggregatePairDetailScreen,
+    AssignmentDetailScreen,
+    AssignmentPairDetailScreen,
+    PlagiarismDocs,
+    StudentDetailScreen,
+    parse_uid,
+)
 from src.tui.scan import (
     DISPLAY_THRESHOLD_PCT as DEFAULT_DISPLAY_THRESHOLD_PCT,
     AssignmentInfo,
-    _pair_pct,
-    _plagiarism_threshold_pct,
+    plagiarism_threshold_pct,
 )
-from src.tui.score_review import base_uid, find_raw_file, preview_content
 from src.tui.workspace import is_displayed
 
 if TYPE_CHECKING:
     from src.tui.app import AppState
 
 PAGE_ROWS = 20
-SIDE_MAX_LINES = 300
 AGG_ALPHA_FALLBACK = 0.01
 AGG_JSON_NAME = "aggregate.json"
 Z_WATCH_THRESHOLD = 3.0
@@ -153,32 +164,6 @@ def load_aggregate(course_dir: Path) -> tuple[dict | None, str | None]:
     return data, None
 
 
-def _overlap_display(pair: dict) -> str:
-    """token_overlap cell text (int count, or line-set length when a list)."""
-    overlap = pair.get("token_overlap")
-    if isinstance(overlap, list):
-        return str(len(overlap))
-    if isinstance(overlap, float):
-        return str(int(overlap))
-    return str(overlap)  # int or missing
-
-
-def pair_side_name(
-    assignments_dir: Path,
-    course_dir_name: str,
-    assignment_info: AssignmentInfo,
-    file_name: str | None,
-) -> str:
-    """Display name for one pair side: the file stem is the student uid."""
-    stem = Path(str(file_name)).stem
-    return student_display_name(
-        assignments_dir,
-        course_dir_name,
-        assignment_info.dir_name,
-        base_uid(stem),
-    )
-
-
 # ---------- aggregate JSON writer (used by the [a] job) ----------
 
 
@@ -240,55 +225,7 @@ def run_aggregate_job(config_path: Path) -> dict | None:
     return summary
 
 
-# ---------- side resolution (shared by the compare pane) ----------
-
-
-def _resolve_side(
-    assignment_dir: Path, file_name: str
-) -> tuple[Path | None, Path | None]:
-    """(raw, processed) for one compare side; code submissions carry a
-    ``<assignment>__<stem>`` prefix handled by stripping segments."""
-    stem = Path(file_name).stem
-    candidates = [stem, *(part for part in stem.split("__") if part)]
-    processed_dir = assignment_dir / "processed"
-    for candidate in candidates:
-        processed = processed_dir / f"{candidate}.md"
-        raw = find_raw_file(processed_dir, candidate)
-        if raw is not None or processed.is_file():
-            return raw, processed if processed.is_file() else None
-    return None, None
-
-
-def _side_lines(assignment_dir: Path, file_name: str, overlap_lines: set[int]) -> str:
-    """Numbered file lines; lines in ``overlap_lines`` rendered red."""
-    raw, processed = _resolve_side(assignment_dir, file_name)
-    result = preview_content(raw, processed)
-    if result is None:
-        return f"[dim]{escape(file_name)}: file not found[/dim]"
-    lines = result[1].splitlines()[:SIDE_MAX_LINES]
-    out: list[str] = []
-    for number, line in enumerate(lines, 1):
-        escaped = f"{number:>4}  {escape(line)}"
-        if number in overlap_lines:
-            out.append(f"[red]{escaped}[/red]")
-        else:
-            out.append(escaped)
-    return "\n".join(out)
-
-
 # ---------- embedded compare pane ----------
-
-
-def compare_content(assignment_dir: Path, pair: dict) -> tuple[str, str]:
-    """(left, right) compare text for one pair (shared with detail screens)."""
-    overlap = pair.get("token_overlap")
-    overlap_lines = (
-        {int(line) for line in overlap} if isinstance(overlap, list) else set()
-    )
-    return (
-        _side_lines(assignment_dir, str(pair.get("test_file")), overlap_lines),
-        _side_lines(assignment_dir, str(pair.get("reference_file")), overlap_lines),
-    )
 
 
 def _cmp_pane() -> ComposeResult:
@@ -463,7 +400,7 @@ class PlagiarismScreen(JobHost):
         # the panes are course-scoped: the knob is the course-level threshold
         # (shared tolerant helper with scan_courses — malformed configs
         # fall back to the default instead of blanking the pane)
-        self._threshold_pct = _plagiarism_threshold_pct(course.config_path)
+        self._threshold_pct = plagiarism_threshold_pct(course.config_path)
         self._course_pairs, self._course_errors = load_course_pairs(state)
         self._agg, self._agg_error = load_aggregate(course.config_path.parent)
         self._notify_load_errors()
@@ -520,8 +457,8 @@ class PlagiarismScreen(JobHost):
         rows: list[tuple[AssignmentInfo, int, int, float]] = []
         for a in state.assignments:
             pairs = by_assignment.get(a.dir_name, [])
-            max_sim = max((_pair_pct(p) for p in pairs), default=0.0)
-            flagged = sum(1 for p in pairs if _pair_pct(p) >= self._threshold_pct)
+            max_sim = max((pair_pct(p) for p in pairs), default=0.0)
+            flagged = sum(1 for p in pairs if pair_pct(p) >= self._threshold_pct)
             rows.append((a, len(pairs), flagged, max_sim))
         rows.sort(key=lambda r: (-r[3], r[0].dir_name))
         self._assign_rows = [row[0] for row in rows]  # row index -> AssignmentInfo
@@ -568,7 +505,7 @@ class PlagiarismScreen(JobHost):
         # per-student, so the choice is cosmetic but deterministic.
         students: dict[str, list] = {}
         for a, pair in self._course_pairs:
-            sim = _pair_pct(pair)
+            sim = pair_pct(pair)
             flagged = sim >= self._threshold_pct
             seen: set[str] = set()
             for key in ("test_file", "reference_file"):
@@ -634,7 +571,7 @@ class PlagiarismScreen(JobHost):
         rows = sorted(
             self._course_pairs,
             key=lambda r: (
-                -_pair_pct(r[1]),
+                -pair_pct(r[1]),
                 r[0].dir_name,
                 str(r[1].get("test_file") or ""),
             ),
@@ -644,7 +581,7 @@ class PlagiarismScreen(JobHost):
             "Assignment", "Student A", "Student B", "sim %", "overlap", "Flag"
         )
         for index, (a, pair) in enumerate(rows):
-            sim = _pair_pct(pair)
+            sim = pair_pct(pair)
             table.add_row(
                 escape(
                     assignment_display_name(
@@ -671,7 +608,7 @@ class PlagiarismScreen(JobHost):
                     )
                 ),
                 f"{sim:.1f}",
-                _overlap_display(pair),
+                overlap_display(pair),
                 _FLAG_TEXT if sim >= self._threshold_pct else _DASH_TEXT,
                 key=str(index),
             )
@@ -743,7 +680,7 @@ class PlagiarismScreen(JobHost):
         flagged = sum(
             1
             for _a, pair in self._course_pairs
-            if _pair_pct(pair) >= self._threshold_pct
+            if pair_pct(pair) >= self._threshold_pct
         )
         self.query_one("#plag-status", Static).update(
             f"{len(self._course_pairs)} pairs total · {flagged} flagged"
@@ -790,7 +727,7 @@ class PlagiarismScreen(JobHost):
             return
         course_dir_name = state.current_course.dir_name
         a, pair = self._visible_rows[cursor]
-        sim = _pair_pct(pair)
+        sim = pair_pct(pair)
         flag_note = "  [red]FLAG[/red]" if sim >= self._threshold_pct else ""
         test_name = pair_side_name(
             state.assignments_dir,
@@ -807,7 +744,7 @@ class PlagiarismScreen(JobHost):
         self.query_one("#cmp-title", Static).update(
             f"[b]Compare: {escape(test_name)} ↔ "
             f"{escape(ref_name)}   max_sim {sim:.1f}%"
-            f"   token_overlap {_overlap_display(pair)}{flag_note}[/b]"
+            f"   token_overlap {overlap_display(pair)}{flag_note}[/b]"
         )
         left, right = compare_content(a.config_path.parent, pair)
         self.query_one("#cmp-left", Static).update(left)
@@ -832,15 +769,6 @@ class PlagiarismScreen(JobHost):
         table_id = event.data_table.id
         if course is None:
             return
-        # local import: plagiarism_detail imports plagiarism (compare helpers)
-        from src.tui.plagiarism_detail import (  # ruff: ignore[import-outside-top-level]
-            AggregatePairDetailScreen,
-            AssignmentDetailScreen,
-            AssignmentPairDetailScreen,
-            PlagiarismDocs,
-            StudentDetailScreen,
-            parse_uid,
-        )
 
         docs = PlagiarismDocs(
             state=self.state,

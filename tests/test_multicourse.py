@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from src.cli import _classify_config, _fetch_course, _load_config, _remember
 from src.shared.assignment_config import (
     FetchSection,
     find_global_config,
@@ -16,6 +15,12 @@ from src.shared.assignment_config import (
     load_assignment_file,
 )
 from src.shared.canvas_fetch import remember_course_fetch
+from src.shared.fetch_pipeline import (
+    classify_config,
+    fetch_course,
+    load_config,
+    remember,
+)
 
 
 def _write_three_level(
@@ -171,7 +176,7 @@ def test_remember_container_writes_own_config(
     out = tmp_path / "data" / "111111" / "hw1" / "raw"
     out.mkdir(parents=True)
 
-    _remember(course_cfg, 111111, 42)
+    remember(course_cfg, 111111, 42)
 
     course_fetch = tomllib.loads(course_cfg.read_text())["fetch"]
     assert course_fetch["course_id"] == 111111
@@ -232,11 +237,11 @@ def test_nested_config_does_not_break_container_detection(
 
     # _load_config must classify both as containers (fetch-only state), never
     # fall through to load_assignment_file and fail on missing [grading].
-    path, fetch = _load_config(global_cfg)
+    path, fetch = load_config(global_cfg)
     assert path == global_cfg
     assert fetch is not None
     assert fetch.course_id == 111111
-    path, fetch = _load_config(course_cfg)
+    path, fetch = load_config(course_cfg)
     assert path == course_cfg
     assert fetch is not None
     assert fetch.course_id == 111111
@@ -263,7 +268,7 @@ def test_load_config_fresh_course_self_evidence(
     for detect in (is_root_config, is_course_config, is_global_config):
         assert not detect(course_cfg)
 
-    path, fetch = _load_config(str(course_cfg))  # must not raise
+    path, fetch = load_config(str(course_cfg))  # must not raise
     assert path == course_cfg
     assert fetch is not None
     assert fetch.course_id == 111111
@@ -293,7 +298,7 @@ def test_remember_nested_assignment_no_container_pollution(
     out = tmp_path / "data" / "111111" / "a" / "raw"
     out.mkdir(parents=True)
 
-    _remember(assignment_cfg, 111111, 42)
+    remember(assignment_cfg, 111111, 42)
 
     assignment_data = tomllib.loads(assignment_cfg.read_text())
     assert "fetch" not in assignment_data  # assignment config never written
@@ -323,9 +328,9 @@ def test_retry_fetch_dedups_shared_assignment(
         "[fetch]\ncourse_id = 111111\n\n[[fetch.assignments]]\nid = 9901\n",
     )
     seen: set[tuple[int, int]] = set()
-    with mock.patch("src.cli.main.fetch_assignment") as mock_fetch:
-        assert _fetch_course(None, global_cfg, None, None, seen) is True
-        assert _fetch_course(None, course_cfg, None, None, seen) is True
+    with mock.patch("src.shared.fetch_pipeline.fetch_assignment") as mock_fetch:
+        assert fetch_course(None, global_cfg, None, None, seen) is True
+        assert fetch_course(None, course_cfg, None, None, seen) is True
     assert mock_fetch.call_count == 1
     assert "skip 9901" in capsys.readouterr().out
 
@@ -340,7 +345,7 @@ def test_container_bad_toml_raises_guidance_not_bare_decode(
     write_tree(tmp_path, "cont/child/config.toml", grading_config)
 
     with pytest.raises(ValueError, match="Invalid TOML") as excinfo:
-        _classify_config(cont)
+        classify_config(cont)
     assert not isinstance(excinfo.value, tomllib.TOMLDecodeError)
     assert "Tip: start from data/example/config.toml" in str(excinfo.value)
 
@@ -404,7 +409,7 @@ def test_fetch_course_without_list_returns_false(
         "data/111111/config.toml",
         "[fetch]\ncourse_id = 111111\n",
     )
-    assert _fetch_course(None, course_cfg, None, None) is False
+    assert fetch_course(None, course_cfg, None, None) is False
 
 
 def test_remember_fresh_course_container(
@@ -424,7 +429,7 @@ def test_remember_fresh_course_container(
     out = tmp_path / "data" / "111111" / "hw1" / "raw"
     out.mkdir(parents=True)
 
-    _remember(course_cfg, 111111, 42)
+    remember(course_cfg, 111111, 42)
 
     course_fetch = tomllib.loads(course_cfg.read_text())["fetch"]
     assert course_fetch["course_id"] == 111111
@@ -442,7 +447,7 @@ def test_fetch_course_missing_config_returns_false(tmp_path: Path) -> None:
     not exist (fresh three-level layout has no data/config.toml);
     the existence guard makes a missing file return False, not raise."""
     missing = tmp_path / "data" / "config.toml"
-    assert _fetch_course(None, missing, None, None) is False
+    assert fetch_course(None, missing, None, None) is False
 
 
 def test_load_config_container_without_fetch(
@@ -457,7 +462,7 @@ def test_load_config_container_without_fetch(
         "data/111111/config.toml",
         "[plagiarism]\ncopydetect_weight = 0.1\n",
     )
-    path, fetch = _load_config(cont)
+    path, fetch = load_config(cont)
     assert path == cont.resolve()
     assert fetch is None
 
@@ -466,7 +471,7 @@ def test_load_config_container_without_fetch(
         "data/111111/hw1/config.toml",
         grading_config,
     )
-    path2, fetch2 = _load_config(assignment)
+    path2, fetch2 = load_config(assignment)
     assert path2 == assignment.resolve()
     # Assignment configs carry no [fetch] anymore; without a course config
     # there is no fetch state.
@@ -478,4 +483,4 @@ def test_load_config_container_without_fetch(
         '[plagiarism]\ncopydetect_weight = "0.1\n',
     )
     with pytest.raises(ValueError, match="Invalid TOML"):
-        _load_config(bad)
+        load_config(bad)

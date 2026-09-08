@@ -152,7 +152,7 @@ def test_fetch_entries_uses_list_ids(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    main_mod = __import__("src.cli.main", fromlist=["_"])
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
     from src.shared.assignment_config import FetchSection
 
     cfg = FetchSection.model_validate({
@@ -169,7 +169,7 @@ def test_fetch_entries_uses_list_ids(
         lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
     cfg_path = tmp_path / "data" / "config.toml"
-    main_mod._fetch_entries(object(), 111111, cfg_path, cfg)
+    main_mod.fetch_entries(object(), 111111, cfg_path, cfg)
     assert calls == [
         (111111, 11, str((tmp_path / "data/11/raw").resolve())),
         (111111, 12, str((tmp_path / "data/12/raw").resolve())),
@@ -185,7 +185,7 @@ def test_retry_finds_course_config_list(
     The retry scan is repo-root-relative (data/<course>/config.toml); with
     cli.py in src/ the old ``Path(__file__).parent`` resolved to src/ and the
     scan always reported 'no assignment configs...'."""
-    main_mod = __import__("src.cli.main", fromlist=["_"])
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "222222").mkdir(parents=True)
@@ -202,7 +202,7 @@ def test_retry_finds_course_config_list(
     )
 
     calls: list[tuple[int, int, str]] = []
-    monkeypatch.setattr(main_mod, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(main_mod, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(main_mod, "load_env", lambda: ("https://x", "t"))
     monkeypatch.setattr(main_mod, "Canvas", lambda *a, **k: object())
     monkeypatch.setattr(
@@ -210,7 +210,7 @@ def test_retry_finds_course_config_list(
         "fetch_assignment",
         lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
-    main_mod._retry_fetch(None, None)  # no SystemExit: configs were found
+    main_mod.retry_fetch(None, None)  # no SystemExit: configs were found
     assert calls == [(111111, 222222, str((course / "222222" / "raw").resolve()))]
 
 
@@ -220,7 +220,7 @@ def test_run_fetch_course_config_positional_derives_aid_raw_out(
 ) -> None:
     """A course config + positional course/assignment derive the fetch out
     dir as <course dir>/<aid>/raw (no stored out dir anymore)."""
-    main_mod = __import__("src.cli.main", fromlist=["_"])
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     course.mkdir(parents=True)
@@ -235,7 +235,7 @@ def test_run_fetch_course_config_positional_derives_aid_raw_out(
         "fetch_assignment",
         lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
-    main_mod._run_fetch(
+    main_mod.run_fetch(
         FetchCliOptions(course=111111, assignment=222333, config=cfg_path)
     )
     assert calls == [(111111, 222333, str((course / "222333" / "raw").resolve()))]
@@ -252,7 +252,7 @@ def test_run_fetch_assignment_config_uses_course_fetch_state(
 ) -> None:
     """A standalone fetch -c <assignment config> uses the course config
     above it for course_id; the entry is remembered there (id only)."""
-    main_mod = __import__("src.cli.main", fromlist=["_"])
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "222333").mkdir(parents=True)
@@ -275,7 +275,7 @@ def test_run_fetch_assignment_config_uses_course_fetch_state(
         "fetch_assignment",
         lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
-    main_mod._run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
+    main_mod.run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
     assert calls == [(111111, 222333, str((course / "222333" / "raw").resolve()))]
     fetch = tomllib.loads((course / "config.toml").read_text())["fetch"]
     assert fetch["course_id"] == 111111
@@ -289,7 +289,7 @@ def test_run_fetch_non_numeric_assignment_dir_exits(
 ) -> None:
     """An assignment config in a non-numeric dir with no --assignment exits
     instead of falling into the interactive picker (TUI raw-mode trap)."""
-    main_mod = __import__("src.cli.main", fromlist=["_"])
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "alpha").mkdir(parents=True)
@@ -304,7 +304,7 @@ def test_run_fetch_non_numeric_assignment_dir_exits(
         encoding="utf-8",
     )
     with pytest.raises(SystemExit) as exc:
-        main_mod._run_fetch(FetchCliOptions(config=course / "alpha" / "config.toml"))
+        main_mod.run_fetch(FetchCliOptions(config=course / "alpha" / "config.toml"))
     assert "not a numeric id" in str(exc.value)
 
 
@@ -314,7 +314,7 @@ def test_remember_never_writes_mode_key(
 ) -> None:
     """An entry fetched under the course config records no mode key — the
     [[fetch.assignments]] entry is id-only."""
-    main_mod = __import__("src.cli.main", fromlist=["_"])
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
 
     course = tmp_path / "data" / "111111"
     (course / "222333").mkdir(parents=True)
@@ -337,7 +337,7 @@ def test_remember_never_writes_mode_key(
         "fetch_assignment",
         lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
     )
-    main_mod._run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
+    main_mod.run_fetch(FetchCliOptions(config=course / "222333" / "config.toml"))
     assert calls == [(111111, 222333, str((course / "222333" / "raw").resolve()))]
     fetch = tomllib.loads((course / "config.toml").read_text())["fetch"]
     assert "mode" not in fetch

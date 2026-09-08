@@ -78,7 +78,7 @@ def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> No
     default 80.0 (dirty-data tolerance doctrine)."""
     from src.tui.scan import (
         DISPLAY_THRESHOLD_PCT,
-        _plagiarism_threshold_pct,
+        plagiarism_threshold_pct,
         scan_courses,
     )
 
@@ -93,7 +93,7 @@ def test_malformed_plagiarism_config_falls_back_to_default(tmp_path: Path) -> No
     _write_pairs(
         a1, [{"test_file": "a", "reference_file": "b", "max_similarity_pct": 90.0}]
     )
-    assert _plagiarism_threshold_pct(course / "config.toml") == DISPLAY_THRESHOLD_PCT
+    assert plagiarism_threshold_pct(course / "config.toml") == DISPLAY_THRESHOLD_PCT
     courses = scan_courses(tmp_path / "data")  # must not raise
     assert len(courses) == 1
     assert courses[0].flagged_pairs == 1  # flags use the 80.0 default

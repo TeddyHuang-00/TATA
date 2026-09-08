@@ -28,8 +28,8 @@ from src.shared.assignment_config import (
     root_plagiarism_section,
 )
 from src.shared.grading import pending_grade_submissions
+from src.shared.plagiarism_display import base_uid, pair_pct
 from src.shared.processing import pending_preprocess_items
-from src.tui.score_review import base_uid
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
 # `display_threshold = 0.8`); NOT the aggregate z-score alpha — z-level flags
@@ -176,12 +176,12 @@ def _fetch_id(config_path: Path, key: str) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _plagiarism_threshold_pct(config_path: Path | None) -> float:
+def plagiarism_threshold_pct(config_path: Path | None) -> float:
     """Course display threshold, tolerant of missing/malformed configs.
 
     A dirty course config (bad TOML -> ValueError; wrong-type [plagiarism]
     value -> ValidationError) must not crash scan_courses/load_assignments —
-    the scan layer's doctrine is dirty-data tolerance (see ``_pair_pct``).
+    the scan layer's doctrine is dirty-data tolerance (see ``pair_pct``).
     """
     try:
         if config_path is not None:
@@ -208,20 +208,6 @@ def _score_summary(scored_dir: Path) -> float | None:
     return sum(totals) / len(totals)
 
 
-def _pair_pct(pair: dict) -> float:
-    """max_similarity_pct as float (0.0 on missing/malformed values).
-
-    Real data writes floats, but dirty JSON (strings, nulls, non-dict
-    entries) must not crash the TUI's on_mount scan.
-    """
-    if not isinstance(pair, dict):
-        return 0.0
-    try:
-        return float(pair.get("max_similarity_pct", 0.0))
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _flagged_pairs(
     assignment_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT
 ) -> int:
@@ -234,7 +220,7 @@ def _flagged_pairs(
         data = json.loads(pairs_file.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return 0
-    return sum(1 for pair in data.get("pairs", []) if _pair_pct(pair) >= threshold_pct)
+    return sum(1 for pair in data.get("pairs", []) if pair_pct(pair) >= threshold_pct)
 
 
 def scan_assignments(  # ruff: ignore[too-many-branches]
@@ -328,7 +314,7 @@ def scan_courses(assignments_dir: Path) -> list[CourseInfo]:
             continue
         assignments = scan_assignments(
             entry,
-            threshold_pct=_plagiarism_threshold_pct(cfg),
+            threshold_pct=plagiarism_threshold_pct(cfg),
         )
         counts = Counts()
         score_parts: list[float] = []
