@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-> 旧决策为历史快照，现状以 README/HERMES.md 与代码为准；部分早期决策已被
-> 后续批次取代（如 schema 机制已移除、fetch mode/out 已删除），追溯历史请
-> 按时间线阅读。
+> Old decisions are historical snapshots; the current state is README/HERMES.md and the code. Some early decisions were
+> superseded by later batches (e.g. the schema mechanism was removed, fetch mode/out was deleted); when tracing history, read
+> in chronological order.
 
 ## TUI module renames + TCSS consolidation
 
@@ -44,7 +44,7 @@ we decided for folding all three into `main.py plagiarism` (auto-detect code vs 
 and neglected keeping the scripts with config defaults read from the root,
 to achieve one command for the whole plagiarism workflow with tunables in config,
 accepting that the embedding model now runs inline (skipped when `all_pairs.embedding.json` is fresher than all `processed/*.md`),
-because the user chose "全部折进 main.py plagiarism 子命令 + 根 config 驱动" and the aggregate output (6 files, 54 pairs, 2 students) matches the old script's numbers exactly.
+because the user chose "fold everything into a main.py plagiarism subcommand + root-config driven" and the aggregate output (6 files, 54 pairs, 2 students) matches the old script's numbers exactly.
 
 ## Deletions of stale scripts and artifacts
 
@@ -55,7 +55,7 @@ because the user chose "全部折进 main.py plagiarism 子命令 + 根 config �
 In the context of a stale batch script referencing non-existent assignment dirs and an unrelated repo, orphaned Canvas API dumps, and generated artifacts from the deleted aggregate script,
 facing dead weight confusing future agents,
 we decided for deleting `scripts/run_module1_grading.sh` and `docs/module1/*` (user-confirmed), keeping `misc/plagiarism_summary.{json,md}` and the dormant hooks (user kept them),
-and neglected adding a built-in batch grade/score loop ("两条命令的事"),
+and neglected adding a built-in batch grade/score loop ("a two-command job"),
 to achieve a leaner repo,
 accepting that the batch loop is now two shell commands per assignment,
 because the user's cleanup checklist confirmed exactly these deletions.
@@ -88,11 +88,11 @@ to achieve behavior-equivalent CLI view and a safe platform push,
 accepting that T5 landed with the verifier's M1 fix folded in and committed as a single T5 commit with both the extraction and the esc/markup fixes,
 because the M1 fix required touching the same file and a split would double review cost; T6 is then split into T6a (PlagiarismScreen, new file) and T6b (SettingsScreen, new file) running in parallel with no shared files, followed by T6c (Dashboard key wiring), because a single T6 subagent would have an oversized context and cross-file write conflicts; cross-course plagiarism Tab is explicitly NOT built (user 2026-08-29 correction, docs 04/01 still carry stale cross-course sections).
 
-## TUI plagiarism 交互改造 + 作业面板精简（Batch T1/T2/T3）
+## TUI plagiarism interaction rework + assignment panel slimming (Batch T1/T2/T3)
 
 **Date:** 2026-08-30
 **Status:** Accepted
-**Files:** `src/tata_jobs.py`（新）, `src/tata_app.py`, `src/tata_workspace.py`, `src/tata_plagiarism.py`, `src/tata_scan.py`, `src/assignment_config.py`, `src/plagiarism.py`, `src/score_review.py`, `src/aliases.py`
+**Files:** `src/tata_jobs.py` (new), `src/tata_app.py`, `src/tata_workspace.py`, `src/tata_plagiarism.py`, `src/tata_scan.py`, `src/assignment_config.py`, `src/plagiarism.py`, `src/score_review.py`, `src/aliases.py`
 
 In the context of the plagiarism tab popping a real browser window (copydetect autoopen=True) conflicting with Textual, the assignment panel still exposing a per-assignment plagiarism stage, the score viewer having no workspace entry, and the job protocol being duplicated ~100 lines across the two job screens,
 facing multiple maintainability findings (2 MAJOR + 10 MINOR + 4 COSMETIC, independent review),
@@ -102,11 +102,11 @@ to achieve one consistent interactive plagiarism view with no terminal-side wind
 accepting that the aggregate pane needs a prior [a]/course-p run to populate (no aggregate.json until then), that the real-data token_overlap int form never triggers red overlap highlighting (fixture list form only), that the JobHost drain timer is widget-bound (no current unmount trigger — documented), and that hand-edited alias.toml changes are visible only after restart or an in-process write,
 because the user asked for interactive tab-based plagiarism views without windows, assigned the extra scope decision on tab set (aggregate first) and compare pane retention (Textual-compatible embedded instead of built-in diff widget, which Textual 8.2.8 lacks), and the review's fixes were all low-risk deletions/extractions with byte-identical behavior verification per round. Local dev only (5 commits); remote main untouched per policy.
 
-## Fetch 配置单层化（course config only）+ 0-submission 修复
+## Fetch config single-layered (course config only) + 0-submission fix
 
 **Date:** 2026-08-30
 **Status:** Accepted
-**Files:** `src/assignment_config.py`, `src/canvas_fetch.py`, `src/cli.py`, `src/cli_options.py`, `src/plagiarism.py`, `src/aliases.py`, `src/tata_scan.py`, `src/tata_workspace.py`, `src/tata_app.py`, `src/tata_settings.py`，数据迁移 `data/271218/`（gitignored），docs/README 同步
+**Files:** `src/assignment_config.py`, `src/canvas_fetch.py`, `src/cli.py`, `src/cli_options.py`, `src/plagiarism.py`, `src/aliases.py`, `src/tata_scan.py`, `src/tata_workspace.py`, `src/tata_app.py`, `src/tata_settings.py`, data migration `data/271218/` (gitignored), docs/README sync
 
 In the context of re-fetching Module 1-7 printing `text: 0 submissions` for upload-based modules (course `[fetch] mode="text"` forced text mode onto ipynb/docx submissions whose `sub.body` is empty — verified live and via Canvas API; text-entry modules were fine), the `[[fetch.assignments]]` list still carrying `assignment_id`+`out`, fetch settings split across global/course/assignment configs, and the TUI import modal asking for an output dir,
 facing a config format that had grown three layers without a single source of truth for fetch, and a silent "0 submissions" failure with no warning,
@@ -116,11 +116,11 @@ to achieve one obvious fetch configuration, per-module modes without cross-conta
 accepting that un-migrated legacy course configs must run `python -m src.aliases migrate <course_dir>` once (otherwise entries resolve to ghost id dirs) and that the course `[fetch] mode` remains a default whose stale overwrite risk we removed by never writing it programmatically,
 because the user asked for the cleanup ("assignments list no longer accepts out; assignment_id -> id; move fetch settings to course dir") and the 0-submission bug was a direct consequence of the old mode-baking design. Verified: pytest 125, 8/8 headless checks, ruff clean (3 pre-existing errors untouched), live re-fetch non-zero; local dev only (commit 000a4ad7, remote main untouched per policy).
 
-## Fetch 全类型自动收集 + mode 移除 + 多文件学生文件夹化
+## Fetch full-type auto-collection + mode removal + multi-file per-student dirs
 
 **Date:** 2026-08-31
 **Status:** Accepted
-**Files:** `src/canvas_fetch.py`, `src/processing.py`, `src/assignment_config.py`, `src/cli_options.py`, `src/cli.py`, `src/score_review.py`, `src/tata_scan.py`, `src/tata_app.py`, `src/tata_settings.py`, tests/（+10），README/docs/data 同步，plan `plans/2026-08-31-fetch-all-types.md`
+**Files:** `src/canvas_fetch.py`, `src/processing.py`, `src/assignment_config.py`, `src/cli_options.py`, `src/cli.py`, `src/score_review.py`, `src/tata_scan.py`, `src/tata_app.py`, `src/tata_settings.py`, tests/ (+10), README/docs/data sync, plan `plans/2026-08-31-fetch-all-types.md`
 
 In the context of fetch having an exclusive attach|text|auto mode (canvas submissions may mix body text and attachments), per-submission collection dropping one of the two, and mode config leaking course-level defaults into every assignment (the 0-submission bug class),
 facing a requirement to auto-collect everything per submission, remove mode entirely, and merge multi-file students into one graded document,
@@ -130,11 +130,11 @@ to achieve a mode-less fetch that never drops a student's content, a determinist
 accepting that the prune is one-directional sync (absent students' stale folders are removed with their cache keys; a re-fetch is always a full declarative state), that folder member ordering is (body-first, then by name) rather than submission-time order, and that folder→folder resubmits with changed files keep only current names,
 because the user asked for automatic per-type collection with folder-per-student layout and header-annotated concatenation. Verified: pytest 141 (131→141), 8/8 headless checks, real fetch auto 56/55/54/56/53/54 students, folder 2979482/415019/ -> two-section processed md with cache-stamped headers; local dev only (commit 967683f8 on dev, remote main untouched).
 
-## 导入快速配置 + Settings v2 内置编辑 + 布局修复
+## Import quick-setup + built-in Settings v2 editing + layout fixes
 
 **Date:** 2026-09-01
 **Status:** Accepted
-**Files:** `src/tata_app.py`, `src/tata_settings.py`, `src/tata_rubric.py`（新）, `src/aliases.py`, `tests/tata_dash_check.py`, `tests/tata_modal_check.py`, `tests/tata_rubric_check.py`（新）, `tests/tata_settings_check.py`, `tests/test_aliases.py`, `plans/2026-09-01-import-setup-and-settings-v2.md`
+**Files:** `src/tata_app.py`, `src/tata_settings.py`, `src/tata_rubric.py` (new), `src/aliases.py`, `tests/tata_dash_check.py`, `tests/tata_modal_check.py`, `tests/tata_rubric_check.py` (new), `tests/tata_settings_check.py`, `tests/test_aliases.py`, `plans/2026-09-01-import-setup-and-settings-v2.md`
 
 In the context of assignment import ending at an empty config that still needed manual `e` = $EDITOR editing, settings slots `grading.rubric`/`system_prompt` being free-text inputs with no enumeration of the local libraries, rubric content creation requiring a text editor, and SettingsScreen's context Select invisible with uncontrolled row heights,
 facing a post-import manual-config gap, a settings form that could silently typo library paths, and a layout blocker whose root cause looked like a large CSS problem,
@@ -144,11 +144,11 @@ to achieve import-to-configured in one panel with file enums instead of typo-pro
 accepting that `(inherited)` badges reflect only the local-config layer (the merged view could still differ at course/global level), that RubricBuilderScreen is a separate Screen rather than inline editing in Settings, and that the quick-setup defaults (first rubric / all prompts / first provider) may need manual adjustment on the first real import,
 because the user confirmed the quick-setup panel with defaults, the RubricBuilderScreen as a separate Screen parallel to Settings, the `(inherited)` badge semantics, and the one-shot 3-phase execution (setup → write config + aliases → fetch). Verified: pytest 145 (141→145), 8/8 headless checks (settings / rubric / dash / modal / app / workspace / plagiarism / fetchall), ruff clean; lesson captured: when a flow changes, update ALL related headless checks in the same batch — the dash-check drift was only caught after P1 because the modal check had been updated alone (the batch fixed both: `tata_dash_check.py` + `tata_modal_check.py`, 4c94338c). Local dev only (commits a1642fe6, 87c3a7e1, 4c94338c, c9272e81), remote main untouched per policy.
 
-## assignment.md + CLI rubric generate（feedback v5, 2026-09-04）
+## assignment.md + CLI rubric generate (feedback v5, 2026-09-04)
 
 **Date:** 2026-09-04
 **Status:** Accepted
-**Files:** `src/shared/canvas_fetch.py`, `tests/test_canvas_fetch.py`; `src/shared/rubric_gen.py`（新）, `src/shared/cli_options.py`, `src/cli/main.py`, `src/shared/grading.py`（`_build_client` → `build_client`）, `tests/test_rubric_gen.py`, `tests/test_grading.py`, `README.md`
+**Files:** `src/shared/canvas_fetch.py`, `tests/test_canvas_fetch.py`; `src/shared/rubric_gen.py` (new), `src/shared/cli_options.py`, `src/cli/main.py`, `src/shared/grading.py` (`_build_client` → `build_client`), `tests/test_rubric_gen.py`, `tests/test_grading.py`, `README.md`
 
 In the context of rubric authoring being manual (TUI RubricsPane or a text editor), the assignment description existing only inside Canvas (no local copy next to the fetched submissions), and grading's client builder being the private `_build_client` that sibling modules would have to import cross-module under a private name,
 facing a need to keep assignment requirements offline and to bootstrap a grading rubric from that description with the same LLM provider used for grading,
@@ -158,11 +158,11 @@ to achieve assignment requirements available offline next to the processed data 
 accepting that rubric generation requires a prior fetch (missing assignment.md raises with a "run fetch first" hint; the provider-existence check runs after the assignment.md check so the message points at the real missing input), that the default output name comes from the assignment dir name (-o renames), that a conversion failure leaves HTML in a `.md` file (documented fallback), that CLI-side `except (ValueError, FileNotFoundError)` catches only those classes (anything else propagates), and that the content check catches structural violations only — grading-judgment quality stays with the LLM,
 because the user asked for saving the assignment description and automatic rubric generation in the feedback v5 batch; output-refusal, hint-after-success (`config set grading.rubric rubrics/<name>.toml`) and README Quick Start step 10 make the workflow self-servicing. Verified: pytest 197 passed, ruff check/format clean, 10/11 headless checks PASS — `tata_workspace_check.py` FAIL is pre-existing (reproduced identically on parent `0535b079` via /tmp/tata-parent, AssertionError line 52, unrelated to this batch); local dev only (commits c4fc3ff5, b833dc4c), remote main untouched per policy.
 
-## RubricsPane Auto-generate + 外部编辑器 suspend（feedback v6, 2026-09-04）
+## RubricsPane Auto-generate + external-editor suspend (feedback v6, 2026-09-04)
 
 **Date:** 2026-09-04
 **Status:** Accepted
-**Files:** `src/tui/library.py`（RubricsPane Auto-generate → `AutoGenModal`）, `src/tui/settings.py`（`action_edit_config` suspend）, `src/tui/workspace.py`（`action_edit_config` suspend）, `tests/tata_library_check.py`（headless 验收追加）
+**Files:** `src/tui/library.py` (RubricsPane Auto-generate → `AutoGenModal`), `src/tui/settings.py` (`action_edit_config` suspend), `src/tui/workspace.py` (`action_edit_config` suspend), `tests/tata_library_check.py` (headless acceptance added)
 
 In the context of the rubric library being usable in the TUI (RubricsPane) while bootstrap-generation lived only in the CLI (`rubric generate`), and both external-editor launchers (`subprocess.run(f"{editor} {shlex.quote(path)}", shell=True, check=False)` in `SettingsScreen.action_edit_config` / `AssignmentScreen.action_edit_config`) panicking the Textual input thread with `BlockingIOError` right as a full-screen editor exits,
 facing a RubricsPane that would otherwise duplicate the generation pipeline, the risk of calling through CLI main (a `SystemExit` side effect from `src/cli/main.py`), and a panic whose root cause looked like a driver bug,
