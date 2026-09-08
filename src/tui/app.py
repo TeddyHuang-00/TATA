@@ -1453,10 +1453,17 @@ class TataApp(App[None]):
         # SettingsScreen.on_mount focuses its ctx-select, which makes the
         # TabbedContent activate the hidden settings pane (and drop focus).
         # After mount settles, re-activate the Dashboard tab and give the
-        # table focus so the dashboard keys work immediately.
+        # table focus so the dashboard keys work immediately. Only switch
+        # when needed: switch_tab blurs first (set_focus(None)) to dodge
+        # Textual's TabPane.Focused re-activation, and an unconditional
+        # blur mid-startup would eat keys a user/tests press right after
+        # mount (settings seed is now display-guarded, so normally the
+        # dashboard tab never left).
         def _restore() -> None:
             with suppress(Exception):
-                self.switch_tab("tab-dashboard")
+                tabs = self.query_one("#shell-tabs", TabbedContent)
+                if tabs.active != "tab-dashboard":
+                    self.switch_tab("tab-dashboard")
                 self.query_one(DashboardScreen)._refocus()
 
         self.call_after_refresh(_restore)

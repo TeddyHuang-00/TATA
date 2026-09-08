@@ -6,7 +6,9 @@ with a ``config.toml``).  :func:`src.shared.assignment_config.is_course_config`
 implements exactly that rule (it also rejects ``example/`` and stray leaf
 legacy dirs); we keep the literal ``example`` name filter as belt-and-braces.
 
-Scan cost: a handful of dirs + small files — well under 100 ms, no caching.
+Scan cost: a handful of dirs + small files, plus for fully-processed
+assignments the shared hash-cache pending reads (once per scan, so the
+per-row state badge stays cheap) — no caching; well under a second per course.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from src.shared.assignment_config import (
     load_root_section,
     root_plagiarism_section,
 )
+from src.shared.grading import pending_grade_submissions
+from src.shared.processing import pending_preprocess_items
 from src.tui.score_review import base_uid
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
@@ -57,6 +61,12 @@ class AssignmentInfo:
     # Display-level pairs (max_similarity_pct >= DISPLAY_THRESHOLD_PCT);
     # aggregate z-level flags live in the aggregate report (S4).
     flagged_pairs: int = 0
+    # Hash-cache pending counts (items the stage would process right now per
+    # the shared cache rules; None when the scan couldn't compute them, e.g.
+    # dirty config or counts lagging). Computed once per scan so the
+    # per-row state badge does not re-read files per render.
+    pre_pending: int | None = None
+    grade_pending: int | None = None
 
 
 @dataclass
@@ -227,7 +237,7 @@ def _flagged_pairs(
     return sum(1 for pair in data.get("pairs", []) if _pair_pct(pair) >= threshold_pct)
 
 
-def scan_assignments(
+def scan_assignments(  # ruff: ignore[too-many-branches]
     course_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT
 ) -> list[AssignmentInfo]:
     """Scan the leaf assignment dirs of ``course_dir`` (each holds config.toml).
@@ -260,6 +270,23 @@ def scan_assignments(
             graded=count_students(entry / "graded", ".json"),
             scored=count_recursive(entry / "scored"),
         )
+        # Hash-cache pending counts for the state badge: it must agree with
+        # what a run would do under the shared cache rules, and the dashboard
+        # re-renders per row — so the expensive rule runs once per scan, only
+        # when the counts are full enough for state_key to consult it.
+        pre_pending: int | None = None
+        grade_pending: int | None = None
+        if loaded is not None:
+            if counts.processed >= counts.raw > 0:
+                try:
+                    pre_pending = len(pending_preprocess_items(cfg_path))
+                except (OSError, ValueError, KeyError):
+                    pre_pending = None
+            if counts.graded >= counts.processed > 0:
+                try:
+                    grade_pending = len(pending_grade_submissions(cfg_path))
+                except (OSError, ValueError, KeyError):
+                    grade_pending = None
         mtimes: dict[str, float] = {}
         for stage in ("raw", "processed", "graded", "scored"):
             t = _max_file_mtime(entry / stage)
@@ -278,6 +305,8 @@ def scan_assignments(
                 last_run=max(mtimes.values()) if mtimes else None,
                 score_summary=_score_summary(entry / "scored"),
                 flagged_pairs=_flagged_pairs(entry, threshold_pct),
+                pre_pending=pre_pending,
+                grade_pending=grade_pending,
             )
         )
     return infos

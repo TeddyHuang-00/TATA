@@ -143,14 +143,14 @@ def test_pending_follows_hash_cache_not_checkpoint(
     done — the display then under-reported 0 to rerun.
     """
     from src.tui.scan import AssignmentInfo, Counts
-    from src.tui.workspace import _incremental_line
+    from src.tui.workspace import AssignmentScreen, _incremental_line, state_key
 
     config_path = _setup_grade_env(tmp_path)
     calls: list[MagicMock] = []
     _patch_grade_deps(monkeypatch, calls)
+    a_dir = tmp_path / "data" / "c1" / "a1"
 
     grade_assignment(config_path)
-    a_dir = tmp_path / "data" / "c1" / "a1"
     checkpoint = json.loads(
         (a_dir / "logs" / "grading.checkpoint.json").read_text(encoding="utf-8")
     )
@@ -173,6 +173,47 @@ def test_pending_follows_hash_cache_not_checkpoint(
         counts=Counts(raw=1, processed=1, graded=1, scored=0),
     )
     assert "grade 1" in _incremental_line(info)
+
+    # The state badge must agree too: counts are full but the cache says
+    # regrade -> Partial (with raw actually fetched and pre cached-valid).
+    (a_dir / "raw").mkdir(exist_ok=True)
+    (a_dir / "raw" / ".fetch-cache.json").write_text("{}", encoding="utf-8")
+    (a_dir / "scored").mkdir(exist_ok=True)
+    (a_dir / "scored" / "100001.txt").write_text(
+        "Total Score: 90/100", encoding="utf-8"
+    )
+    full = AssignmentInfo(
+        dir_name="a1",
+        config_path=config_path,
+        counts=Counts(raw=1, processed=1, graded=1, scored=1),
+    )
+    assert state_key(full) == "partial"
+
+    # The grade progress bar polls the cache rule, not the checkpoint: while
+    # the checkpoint still lists the submission, the cache says 0 done and
+    # goes back to 1 once the regrade lands.
+    ws = AssignmentScreen.__new__(AssignmentScreen)
+    ws._info = full
+    assert ws._stage_done("grade") == 0
+    grade_assignment(config_path)
+    assert ws._stage_done("grade") == 1
+    assert state_key(full) == "done"
+
+    # The scan rides the same rule onto AssignmentInfo for the per-row badge.
+    restored = (a_dir / "processed" / "100001.md")
+    restored.write_text("# student answer\n", encoding="utf-8")
+    grade_assignment(config_path)  # cache now matches the restored content
+    # A real raw file + a preprocess pass so the scan sees a full pipeline.
+    (a_dir / "raw" / "100001.md").write_text("# student answer\n", encoding="utf-8")
+    from src.shared.processing import preprocess_assignment
+
+    preprocess_assignment(config_path)
+    from src.tui.scan import scan_assignments
+
+    scanned = scan_assignments(tmp_path / "data" / "c1")
+    assert scanned[0].grade_pending == 0
+    assert scanned[0].pre_pending == 0
+    assert state_key(scanned[0]) == "done"
 
 
 def _image_payloads(content: list[dict]) -> list[bytes]:

@@ -21,6 +21,7 @@ from src import REPO_ROOT
 
 from .assignment_config import (
     InputFormat,
+    ProcessingSection,
     ensure_assignment_dirs,
     load_assignment_file,
     resolve_assignment_paths,
@@ -755,6 +756,192 @@ def _normalize_input_formats(
     return [input_format_config]
 
 
+def _item_files(
+    item: Path, configured_formats: list[InputFormat] | None
+) -> list[tuple[Path, InputFormat]]:
+    """Supported files of one raw item: a top-level file itself, or the
+    files inside a folder (sorted by name), filtered by the configured
+    formats when set. Unsupported files inside a folder are logged as
+    skips instead of being dropped silently."""
+    files = (
+        [item]
+        if item.is_file()
+        else sorted(
+            (p for p in item.iterdir() if p.is_file()),
+            key=lambda p: (
+                # unsuffixed-uid member (the body: <uid>.html) first,
+                # then _N/_LATE_N members; stable by name within a group.
+                0 if re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == p.stem else 1,
+                p.name,
+            ),
+        )
+    )
+    found: list[tuple[Path, InputFormat]] = []
+    for f in files:
+        fmt = _format_for_suffix(f.suffix)
+        if fmt is None:
+            if item.is_dir():
+                print(f"[skip] {f.name} (unsupported format)")
+            continue
+        if configured_formats is not None and fmt not in configured_formats:
+            continue
+        found.append((f, fmt))
+    return found
+
+
+def _output_stem(
+    item: Path,
+    item_files_by: dict[Path, list[tuple[Path, InputFormat]]],
+    strip_canvas_suffix: bool,
+    clean_filenames: bool,
+) -> str:
+    """Output md stem of a raw item (file: cleaned filename; dir: folder name)."""
+    if item.is_dir():
+        return item.name
+    output_name = item_files_by[item][0][0].name
+    if strip_canvas_suffix:
+        output_name = _strip_canvas_suffix(output_name)
+    if clean_filenames:
+        output_name = _clean_filename(output_name)
+    return Path(output_name).stem
+
+
+def _item_hash_and_src(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
+    item: Path,
+    item_files_by: dict[Path, list[tuple[Path, InputFormat]]],
+    raw_dir: Path,
+    fetch_cache: dict[str, str],
+    cfg_payload: bytes,
+    hook_parts: list[bytes],
+) -> tuple[list[str], str]:
+    """(sorted raw relpaths, content hash) for one raw item."""
+    files = item_files_by[item]
+    rels = sorted(
+        f"{item.name}/{f.name}" if item.is_dir() else f.name for f, _ in files
+    )
+    parts: list[bytes] = [file_hash(raw_dir, rels).encode("utf-8")]
+    if item.is_dir():
+        parts.append(json.dumps(fetch_cache, sort_keys=True).encode("utf-8"))
+    parts.append(cfg_payload)
+    parts.extend(hook_parts)
+    return rels, content_hash(parts)
+
+
+def _preprocess_pending(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
+    items: list[Path],
+    item_files_by: dict[Path, list[tuple[Path, InputFormat]]],
+    raw_dir: Path,
+    processed_dir: Path,
+    cache: dict,
+    fetch_cache: dict[str, str],
+    cfg_payload: bytes,
+    hook_parts: list[bytes],
+    *,
+    strip_canvas_suffix: bool,
+    clean_filenames: bool,
+) -> dict[Path, tuple[list[str], str]]:
+    """Raw item -> (src relpaths, content hash) that ``preprocess_assignment``
+    would reconvert under the preprocess cache rule.
+
+    Single source of the rule shared by ``preprocess_assignment`` and the
+    TUI display: an item is pending unless ``processed/.preprocess.cache.json``
+    holds a fmt/hash match AND its output md exists. Hash covers the raw file
+    contents, fetch stamps for folders, the [processing] config, template
+    selection and the hook scripts; any change reconverts.
+    """
+    pending: dict[Path, tuple[list[str], str]] = {}
+    for item in items:
+        if not item_files_by[item]:
+            continue
+        stem = _output_stem(item, item_files_by, strip_canvas_suffix, clean_filenames)
+        output_file = processed_dir / f"{stem}.md"
+        src, item_hash = _item_hash_and_src(
+            item, item_files_by, raw_dir, fetch_cache, cfg_payload, hook_parts
+        )
+        if not _cached(cache, stem, item_hash, output_file):
+            pending[item] = (src, item_hash)
+    return pending
+
+
+def _resolve_template_base(
+    config_path: Path, processing: ProcessingSection
+) -> tuple[str | None, Path | None]:
+    """(nbconvert_template, template_dir_path) per [processing] settings."""
+    nbconvert_template = processing.nbconvert_template
+    default_template_dir = REPO_ROOT / "templates"
+    if processing.nbconvert_template_dir is not None:
+        template_dir_path = (config_path.parent / processing.nbconvert_template_dir).resolve()
+    elif default_template_dir.exists() and (default_template_dir / "mdoutput").exists():
+        template_dir_path = default_template_dir.resolve()
+        if nbconvert_template is None:
+            nbconvert_template = "mdoutput"
+    else:
+        template_dir_path = None
+    return nbconvert_template, template_dir_path
+
+
+def pending_preprocess_items(config_path: Path) -> list[Path]:  # ruff: ignore[too-many-locals]
+    """Raw items ``preprocess_assignment`` would reconvert right now (cache rule).
+
+    Same rule the run applies (``_preprocess_pending``) — NOT raw-vs-processed
+    file counts: raw content can change while the count stays the same, and
+    the run reconverts on the hash mismatch.
+    """
+    cfg = load_assignment_file(config_path)
+    processing = cfg.processing
+    paths = resolve_assignment_paths(cfg, config_path.parent)
+    raw_dir = paths.raw_dir
+    processed_dir = paths.processed_dir
+    configured_formats = _normalize_input_formats(processing.input_format)
+    items = _iter_raw_items(raw_dir)
+    item_files_by = {item: _item_files(item, configured_formats) for item in items}
+    fetch_cache: dict[str, str] = {}
+    fetch_cache_path = raw_dir / ".fetch-cache.json"
+    if fetch_cache_path.exists():
+        try:
+            fetch_cache = json.loads(fetch_cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            fetch_cache = {}
+    cache = load_cache(processed_dir / ".preprocess.cache.json")
+    nbconvert_template, template_dir_path = _resolve_template_base(
+        config_path, processing
+    )
+    cfg_payload = json.dumps(
+        {
+            "processing": processing.model_dump_json(),
+            "template_name": nbconvert_template,
+            "template_dir": (
+                str(template_dir_path) if template_dir_path is not None else None
+            ),
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    hook_runtime = HookRuntime.from_config(
+        cfg, assignment_config_path=config_path
+    )
+    hook_parts: list[bytes] = []
+    if hook_runtime is not None:
+        hook_parts = [
+            script.read_bytes()
+            for script_paths in hook_runtime.mounts.values()
+            for script in script_paths
+        ]
+    return list(
+        _preprocess_pending(
+            items,
+            item_files_by,
+            raw_dir,
+            processed_dir,
+            cache,
+            fetch_cache,
+            cfg_payload,
+            hook_parts,
+            strip_canvas_suffix=processing.strip_canvas_suffix,
+            clean_filenames=processing.clean_filenames,
+        )
+    )
+
+
 def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
     """Preprocess all raw files for an assignment into processed markdown.
 
@@ -785,37 +972,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
 
     items = _iter_raw_items(raw_dir)
 
-    def item_files(item: Path) -> list[tuple[Path, InputFormat]]:
-        """Supported files of one raw item: a top-level file itself, or the
-        files inside a folder (sorted by name), filtered by the configured
-        formats when set. Unsupported files inside a folder are logged as
-        skips instead of being dropped silently."""
-        files = (
-            [item]
-            if item.is_file()
-            else sorted(
-                (p for p in item.iterdir() if p.is_file()),
-                key=lambda p: (
-                    # unsuffixed-uid member (the body: <uid>.html) first,
-                    # then _N/_LATE_N members; stable by name within a group.
-                    0 if re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == p.stem else 1,
-                    p.name,
-                ),
-            )
-        )
-        found: list[tuple[Path, InputFormat]] = []
-        for f in files:
-            fmt = _format_for_suffix(f.suffix)
-            if fmt is None:
-                if item.is_dir():
-                    print(f"[skip] {f.name} (unsupported format)")
-                continue
-            if configured_formats is not None and fmt not in configured_formats:
-                continue
-            found.append((f, fmt))
-        return found
-
-    item_files_by = {item: item_files(item) for item in items}
+    item_files_by = {item: _item_files(item, configured_formats) for item in items}
     if not any(item_files_by.values()):
         if configured_formats is None:
             print(
@@ -864,20 +1021,9 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
     strip_html_svg_tags = processing.strip_html_svg_tags
     normalize_dtype_label_html = processing.normalize_dtype_label_html
     remove_nbconvert_assets = processing.remove_nbconvert_assets
-    nbconvert_template = processing.nbconvert_template
-
-    default_template_dir = REPO_ROOT / "templates"
-    nbconvert_template_dir = processing.nbconvert_template_dir
-    if nbconvert_template_dir is not None:
-        template_dir_path = (
-            assignment_config_path.parent / nbconvert_template_dir
-        ).resolve()
-    elif default_template_dir.exists() and (default_template_dir / "mdoutput").exists():
-        template_dir_path = default_template_dir.resolve()
-        if nbconvert_template is None:
-            nbconvert_template = "mdoutput"
-    else:
-        template_dir_path = None
+    nbconvert_template, template_dir_path = _resolve_template_base(
+        assignment_config_path, processing
+    )
 
     # Process each raw item (per-student): a file (single submission) or a
     # folder (multi-file student, concatenated into one per-student md).
@@ -913,18 +1059,21 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             for script in script_paths
         ]
 
-    def item_hash_and_src(item: Path) -> tuple[list[str], str]:
-        """(sorted raw relpaths, content hash) for one raw item."""
-        files = item_files_by[item]
-        rels = sorted(
-            f"{item.name}/{f.name}" if item.is_dir() else f.name for f, _ in files
-        )
-        parts: list[bytes] = [file_hash(raw_dir, rels).encode("utf-8")]
-        if item.is_dir():
-            parts.append(json.dumps(fetch_cache, sort_keys=True).encode("utf-8"))
-        parts.append(cfg_payload)
-        parts.extend(hook_parts)
-        return rels, content_hash(parts)
+    # Rule for "would reconvert" (shared with the TUI display via
+    # _preprocess_pending): an item is pending unless .preprocess.cache.json
+    # holds a fmt/hash match AND its output md exists; any change reconverts.
+    pending = _preprocess_pending(
+        items,
+        item_files_by,
+        raw_dir,
+        processed_dir,
+        cache,
+        fetch_cache,
+        cfg_payload,
+        hook_parts,
+        strip_canvas_suffix=strip_canvas_suffix,
+        clean_filenames=clean_filenames,
+    )
 
     processed_count = 0
     failed_count = 0
@@ -937,19 +1086,14 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             continue
         if item.is_file():
             raw_file, file_format = files[0]
-            # Determine output filename
-            output_name = raw_file.name
-            if strip_canvas_suffix:
-                output_name = _strip_canvas_suffix(output_name)
-            if clean_filenames:
-                output_name = _clean_filename(output_name)
-
-            # Ensure .md extension
-            output_stem = Path(output_name).stem
+            # Output md stem (cleaned filename; shared with the cache rule).
+            output_stem = _output_stem(
+                item, item_files_by, strip_canvas_suffix, clean_filenames
+            )
             output_file = processed_dir / f"{output_stem}.md"
 
-            src, item_hash = item_hash_and_src(item)
-            if _cached(cache, output_stem, item_hash, output_file):
+            entry = pending.get(item)
+            if entry is None:
                 print(f"[cached] {output_file.name} (unchanged)")
                 if processing.visual_evaluation and _screenshots_missing(
                     processed_dir / "screenshots", output_stem
@@ -962,6 +1106,8 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                         template_dir_path,
                     )
                 continue
+
+            src, item_hash = entry
 
             if hook_runtime is not None:
                 before_payload = hook_runtime.run(
@@ -1047,8 +1193,8 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
             # per input file but always report the final concatenated file as
             # output_file.
             output_file = processed_dir / f"{item.name}.md"
-            src, item_hash = item_hash_and_src(item)
-            if _cached(cache, item.name, item_hash, output_file):
+            entry = pending.get(item)
+            if entry is None:
                 print(f"[cached] {output_file.name} (unchanged)")
                 if processing.visual_evaluation and _screenshots_missing(
                     processed_dir / "screenshots", item.name
@@ -1061,6 +1207,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                         template_dir_path,
                     )
                 continue
+            src, item_hash = entry
             parts: list[str] = []
             converted = 0
             # R2: one render pass per stem with continuous numbering across

@@ -13,9 +13,10 @@ Worker threads never touch widgets.
 
 Honesty notes over the design (design 99 accepted trade-offs):
 - The stage functions are not modified and print no done/total events, so
-  determinate progress comes from polling the same counters the incremental
-  scan uses (processed/checkpoint/scored file counts) once per tick. When the
-  count is unknown (fetch/analyze) the bar is indeterminate.
+  determinate progress comes from polling the same rules the incremental
+  scan uses once per tick: file counts (processed/scored) and the shared
+  hash-cache rule for grade (the cache updates per submission during a run).
+  When the count is unknown (fetch/analyze) the bar is indeterminate.
 - Synchronous stage functions cannot be killed: ``cancel_event.set()`` puts
   the UI in "Stopping…" and the job's result is dropped when the function
   returns (checkpoint/mtime semantics make the next run incremental). No new
@@ -24,7 +25,6 @@ Honesty notes over the design (design 99 accepted trade-offs):
 
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import shutil
@@ -46,8 +46,12 @@ from src.shared.aliases import assignment_display_name
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import load_assignment_file
 from src.shared.cli_options import FetchCliOptions
-from src.shared.grading import grade_assignment, pending_grade_submissions
-from src.shared.processing import preprocess_assignment
+from src.shared.grading import (
+    cached_grade_count,
+    grade_assignment,
+    pending_grade_submissions,
+)
+from src.shared.processing import pending_preprocess_items, preprocess_assignment
 from src.shared.scoring import score_assignment
 from src.tui.jobs import JobHost
 from src.tui.scan import AssignmentInfo, count_files, count_recursive
@@ -104,13 +108,37 @@ _STAGE_KEYS = (
 
 
 def state_key(a: AssignmentInfo) -> str:
-    """Map an AssignmentInfo to a ``_STATE_LABELS`` key."""
+    """Map an AssignmentInfo to a ``_STATE_LABELS`` key.
+
+    Counts are the cheap fast path; when every count is full the only way
+    content changed (file edits that keep counts equal) is the hash cache,
+    so consult the same pending rules the stages apply (pre/grade) plus the
+    fetch marker. The numbers ride on the scan (``AssignmentInfo.pre_pending``
+    / ``grade_pending``) so the per-row dashboard badge does not re-read files
+    per render; the live rules are the fallback for manually built infos.
+    """
     if a.counts.raw == 0:
         return "not_run"
     if (
         a.counts.processed < a.counts.raw
         or a.counts.graded < a.counts.processed
-        or a.counts.scored == 0
+        or a.counts.scored < a.counts.graded
+    ):
+        return "partial"
+    pre_pending = (
+        a.pre_pending
+        if a.pre_pending is not None
+        else _pre_pending(a.config_path)
+    )
+    grade_pending = (
+        a.grade_pending
+        if a.grade_pending is not None
+        else _grade_pending(a.config_path)
+    )
+    if (
+        not _is_fetched(a.config_path.parent)
+        or pre_pending > 0
+        or grade_pending > 0
     ):
         return "partial"
     return "done"
@@ -131,16 +159,6 @@ def fmt_last_run(ts: float | None) -> str:
     return f"{dt:%Y-%m-%d %H:%M}"
 
 
-def _checkpoint_done(assignment_dir: Path) -> int:
-    """Entries in ``logs/grading.checkpoint.json`` (0 on missing/garbage)."""
-    cp = assignment_dir / "logs" / "grading.checkpoint.json"
-    try:
-        done = json.loads(cp.read_text(encoding="utf-8")).get("done", [])
-        return len(done) if isinstance(done, list) else 0
-    except (ValueError, OSError):
-        return 0
-
-
 def _grade_pending(config_path: Path) -> int:
     """Submissions grading would actually (re)grade right now.
 
@@ -151,6 +169,34 @@ def _grade_pending(config_path: Path) -> int:
     """
     try:
         return len(pending_grade_submissions(config_path))
+    except (OSError, ValueError, KeyError):
+        return 0
+
+
+def _pre_pending(config_path: Path) -> int:
+    """Raw items preprocess would actually reconvert right now.
+
+    Same hash-cache rule ``preprocess_assignment`` applies
+    (pending_preprocess_items in src.shared.processing) — NOT raw-vs-processed
+    file counts: raw content can change while the count stays the same.
+    Broken config -> 0 (dirty-config tolerance; preprocess can't run).
+    """
+    try:
+        return len(pending_preprocess_items(config_path))
+    except (OSError, ValueError, KeyError):
+        return 0
+
+
+def _cached_grade(config_path: Path) -> int:
+    """Submissions currently valid under the grading hash cache.
+
+    Inverse of ``_grade_pending`` under the same shared rule — used for the
+    grade progress bar (the cache is updated per submission during a run)
+    and the grade subtitle's done count (NOT the checkpoint: its done list
+    never shrinks, so it over-reports after a content change).
+    """
+    try:
+        return cached_grade_count(config_path)
     except (OSError, ValueError, KeyError):
         return 0
 
@@ -169,21 +215,23 @@ def _incremental_line(info: AssignmentInfo) -> str:
         info.counts.graded,
         info.counts.scored,
     )
+    pre_pending = _pre_pending(info.config_path)
     grade_pending = _grade_pending(info.config_path)
+    score_pending = max(graded - scored, 0)
     to_run = {
         "fetch": 0 if _is_fetched(a_dir) else 1,
-        "pre": max(raw - processed, 0),
+        "pre": pre_pending,
         "grade": grade_pending,
-        "score": max(graded - scored, 0),
+        "score": score_pending,
     }
     no_change = sum(
         1
-        for current, target in (
-            (processed, raw),
-            (processed - grade_pending, processed),
-            (scored, graded),
+        for source, pending in (
+            (raw, pre_pending),
+            (processed, grade_pending),
+            (graded, score_pending),
         )
-        if target > 0 and current == target
+        if source > 0 and pending == 0
     )
     return (
         f"To run: fetch {to_run['fetch']} · pre {to_run['pre']}"
@@ -284,6 +332,7 @@ class AssignmentScreen(JobHost):
         self._total: dict[str, int | None] = {}
         self._pending = 0
         self._done = 0
+        self._pre = 0
         self._processed = 0
 
     # ---------- composition ----------
@@ -356,21 +405,27 @@ class AssignmentScreen(JobHost):
             info.counts.graded,
             info.counts.scored,
         )
-        done = _checkpoint_done(a_dir)
         self._pending = _grade_pending(info.config_path)
-        self._done = done
+        self._done = _cached_grade(info.config_path)
+        self._pre = _pre_pending(info.config_path)
         self._processed = processed
         fetched = _is_fetched(a_dir)
         self._sub = {
             "fetch": f"raw {raw}" if fetched else "Not fetched",
             "preprocess": (
-                f"{processed}/{raw} done" if raw > 0 else "Needs fetch first"
+                (
+                    f"{processed}/{raw} done"
+                    if raw > 0 and self._pre == 0
+                    else f"{self._pre} pending · {processed}/{raw} done"
+                )
+                if raw > 0
+                else "Needs fetch first"
             ),
             "grade": (
                 (
                     f"{processed}/{processed} done"
                     if processed > 0 and self._pending == 0
-                    else f"{self._pending} pending · {done} done"
+                    else f"{self._pending} pending · {self._done} done"
                 )
                 if processed > 0
                 else ("Needs preprocess" if raw > 0 else "Needs fetch first")
@@ -524,9 +579,9 @@ class AssignmentScreen(JobHost):
             ConfirmationModal(
                 "Grade",
                 f"Will grade {self._pending} of {self._processed} submissions"
-                f" (checkpoint {self._done}/{self._processed} done).\n"
-                "Normal resumes from the checkpoint; --force regrades all"
-                f" {self._processed}.",
+                f" (cache {self._done}/{self._processed} valid).\n"
+                "Normal resumes from the cache; --force ignores the cache"
+                f" and regrades all {self._processed}.",
                 [("Normal", "normal"), ("--force regrade all", "force")],
             ),
             self._confirm_grade,
@@ -675,7 +730,11 @@ class AssignmentScreen(JobHost):
         if stage == "preprocess":
             return count_files(a_dir / "processed", ".md")
         if stage == "grade":
-            return _checkpoint_done(a_dir)
+            # Count under the grading hash-cache rule (cache is updated per
+            # submission during a run, so the bar moves); NOT the checkpoint
+            # whose done list never shrinks — that shows N/N while a regrade
+            # is queueing.
+            return _cached_grade(info.config_path)
         if stage == "score":
             return count_recursive(a_dir / "scored")
         return 0

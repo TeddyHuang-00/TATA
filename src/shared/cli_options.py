@@ -103,7 +103,7 @@ class GradeCliOptions(ConfigFileOptions):
 
     force: bool = Field(
         default=False,
-        description="Ignore checkpoint and regrade all submissions.",
+        description="Ignore the grading hash cache and regrade all submissions.",
     )
 
 

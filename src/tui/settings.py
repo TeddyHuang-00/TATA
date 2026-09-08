@@ -56,6 +56,7 @@ from src.shared.assignment_config import (
 from src.shared.canvas_fetch import list_courses, load_env
 from src.shared.config_edit import edit_config, read_config, validate_config_edits
 from src.shared.provider import ProviderInfo, get_providers
+from src.tui.workspace import is_displayed
 
 if TYPE_CHECKING:
     from src.tui.app import AppState
@@ -534,7 +535,19 @@ class SettingsScreen(Vertical):
         self._registry = _read_registry()
         self._load_env_fields()
         self.set_context(self._initial_ctx())
-        self.query_one("#ctx-select", Select).focus()
+
+        # Seed ctx-select focus only when the settings pane is the visible
+        # one. Textual's TabbedContent activates any pane that receives a
+        # Focus event, so an unconditional seed at startup activates the
+        # HIDDEN settings pane and drops the dashboard tab/focus (the
+        # deferred check is needed because all panes are still displayed
+        # during mount; the app's own switch_tab focuses ctx-select when
+        # the user actually opens the settings tab).
+        def _seed() -> None:
+            if is_displayed(self):
+                self.query_one("#ctx-select", Select).focus()
+
+        self.call_after_refresh(_seed)
 
     # ---------- context API ----------
 

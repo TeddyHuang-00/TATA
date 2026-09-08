@@ -47,7 +47,7 @@ class GradingCliOptions(ConfigFileCliOptions):
     force: bool = Field(
         default=False,
         validation_alias=AliasChoices("force", "f"),
-        description="Ignore the grading cache/checkpoint and regrade all submissions.",
+        description="Ignore the grading hash cache and regrade all submissions.",
     )
 
 
@@ -189,6 +189,18 @@ def pending_grade_submissions(config_path: Path) -> list[Path]:
     cfg = _load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     return _grading_pending(cfg, cfg_model)[0]
+
+
+def cached_grade_count(config_path: Path) -> int:
+    """Submissions currently valid under the grading cache (inverse of pending).
+
+    Same rule ``grade_assignment`` applies; the TUI progress bar polls this
+    per tick because the cache is updated per submission during a run.
+    """
+    cfg = _load_assignment_config(config_path)
+    cfg_model = load_assignment_file(config_path)
+    pending, sub_hashes = _grading_pending(cfg, cfg_model)
+    return len(sub_hashes) - len(pending)
 
 
 def build_client(provider_name: str) -> tuple[Any, str]:

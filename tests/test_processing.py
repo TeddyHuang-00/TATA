@@ -168,6 +168,51 @@ def test_preprocess_broken_cache_treated_as_empty(tmp_path: Path) -> None:
     assert "100" in cache
 
 
+def test_pending_preprocess_follows_hash_cache_not_filecount(
+    tmp_path: Path,
+) -> None:
+    """Item: display 'pre' count must come from the preprocess hash cache.
+
+    raw content changes while the file count stays the same: the old
+    counts-based display said pre 0 (and counted "no change") while the run
+    reconverts (run side covered by test_preprocess_cache_reconverts_on_raw_change).
+    """
+    from src.shared.processing import pending_preprocess_items
+    from src.tui.scan import AssignmentInfo, Counts
+    from src.tui.workspace import _incremental_line, state_key
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100.md").write_text("v1\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+    config_path = tmp_path / "config.toml"
+
+    preprocess_assignment(config_path)
+    assert pending_preprocess_items(config_path) == []
+
+    # Content changed, file count unchanged -> the run queues a reconvert and
+    # the display must say pre 1, not 0.
+    (raw / "100.md").write_text("v2 changed\n", encoding="utf-8")
+    assert [p.name for p in pending_preprocess_items(config_path)] == ["100.md"]
+
+    info = AssignmentInfo(
+        dir_name="a1",
+        config_path=config_path,
+        counts=Counts(raw=1, processed=1, graded=1, scored=1),
+    )
+    line = _incremental_line(info)
+    assert "pre 1" in line
+    assert "No change: 2" in line  # only grade+score are no-change; pre is pending
+    assert state_key(info) == "partial"
+
+    # Reconvert (the run) -> cache updated -> display agrees: pre 0.
+    preprocess_assignment(config_path)
+    assert pending_preprocess_items(config_path) == []
+    line = _incremental_line(info)
+    assert "pre 0" in line
+    assert "No change: 3" in line
+
+
 def test_folder_concat_html_and_ipynb(tmp_path: Path) -> None:
     """A multi-file student folder becomes ONE md: each file converted and
     concatenated with a per-file header (file:/submitted:), html section
