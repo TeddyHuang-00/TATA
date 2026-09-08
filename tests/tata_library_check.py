@@ -35,16 +35,15 @@ try:
     from e2e_common import spy_notify, wait_for  # isort: skip - script run puts tests/ on sys.path
 except ModuleNotFoundError:
     from tests.e2e_common import spy_notify, wait_for  # isort: skip - pytest package import mode
-from src.tui import library as tui_library
-from src.tui.app import AppState, TataApp
-from src.tui.library import (
-    AutoGenModal,
-    FileNameModal,
-    LibraryScreen,
-    PromptsPane,
-    ProvidersPane,
-    RubricsPane,
+from src.tui import (
+    providers_pane as tui_providers_pane,
+    rubrics_pane as tui_rubrics_pane,
 )
+from src.tui.app import AppState, TataApp
+from src.tui.library import LibraryScreen
+from src.tui.prompts_pane import PromptsPane
+from src.tui.providers_pane import ProvidersPane
+from src.tui.rubrics_pane import AutoGenModal, FileNameModal, RubricsPane
 from src.tui.workspace import ConfirmationModal
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
@@ -526,10 +525,10 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
             captures["api_key"] = api_key
             return client
 
-        original_builder = tui_library.build_provider_client
+        original_builder = tui_providers_pane.build_provider_client
         original_key = os.environ.get("TEST_API_KEY")
         os.environ["TEST_API_KEY"] = "secret"
-        tui_library.build_provider_client = fake_build_provider_client
+        tui_providers_pane.build_provider_client = fake_build_provider_client
         try:
             await pilot.click("#pv-test")
             await wait_for(pilot, lambda: "Test connection OK" in str(status.content))
@@ -545,7 +544,7 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
                 }
             ]
         finally:
-            tui_library.build_provider_client = original_builder
+            tui_providers_pane.build_provider_client = original_builder
             if original_key is None:
                 del os.environ["TEST_API_KEY"]
             else:
@@ -560,7 +559,7 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
         await wait_for(
             pilot, lambda: not pane.query_one("#pv-test", Button).has_class("-active")
         )
-        tui_library.build_provider_client = failing_builder
+        tui_providers_pane.build_provider_client = failing_builder
         try:
             await pilot.click("#pv-test")
             await wait_for(
@@ -570,7 +569,7 @@ async def _check_provider_test(root: Path, provider_dir: Path) -> None:
                 ),
             )
         finally:
-            tui_library.build_provider_client = original_builder
+            tui_providers_pane.build_provider_client = original_builder
 
 
 # ---------- rubric auto-generate ----------
@@ -628,8 +627,8 @@ async def _check_autogen_modal(root: Path) -> None:
     def spy_generate(config_path: Path, out: Path) -> None:
         calls.append((str(config_path), str(out)))
 
-    original = tui_library.generate_rubric
-    tui_library.generate_rubric = spy_generate
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = spy_generate
     try:
         async with app.run_test(size=(160, 100)) as pilot:
             await wait_for(pilot, lambda: _autogen_meta(pane).display)
@@ -651,7 +650,7 @@ async def _check_autogen_modal(root: Path) -> None:
             assert calls == [], calls
             assert list(rubrics_dir.glob("*.toml")) == []
     finally:
-        tui_library.generate_rubric = original
+        tui_rubrics_pane.generate_rubric = original
 
 
 async def _check_autogen_generate(root: Path) -> None:
@@ -667,8 +666,8 @@ async def _check_autogen_generate(root: Path) -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(SAMPLE_TOML, encoding="utf-8")
 
-    original = tui_library.generate_rubric
-    tui_library.generate_rubric = fake_generate
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = fake_generate
     try:
         async with app.run_test(size=(160, 100)) as pilot:
             await wait_for(pilot, lambda: _autogen_meta(pane).display)
@@ -701,7 +700,7 @@ async def _check_autogen_generate(root: Path) -> None:
             assert _autogen_meta(pane).value == "000001.toml"
             assert pane.query_one("#rb-criteria").row_count == 1
     finally:
-        tui_library.generate_rubric = original
+        tui_rubrics_pane.generate_rubric = original
 
 
 async def _check_autogen_overwrite(root: Path) -> None:
@@ -718,8 +717,8 @@ async def _check_autogen_overwrite(root: Path) -> None:
         calls.append((str(config_path), str(out_path), out_path.exists()))
         out_path.write_text(NEW_TOML, encoding="utf-8")
 
-    original = tui_library.generate_rubric
-    tui_library.generate_rubric = fake_generate
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = fake_generate
     try:
         async with app.run_test(size=(160, 100)) as pilot:
             await wait_for(pilot, lambda: _autogen_meta(pane).display)
@@ -756,7 +755,7 @@ async def _check_autogen_overwrite(root: Path) -> None:
             assert not expected_tmp.exists()
             assert _autogen_meta(pane).value == "000001.toml"
     finally:
-        tui_library.generate_rubric = original
+        tui_rubrics_pane.generate_rubric = original
 
 
 async def _check_autogen_empty(root: Path) -> None:
@@ -790,8 +789,8 @@ async def _check_autogen_failure(root: Path) -> None:
         message = "boom"
         raise ValueError(message)
 
-    original = tui_library.generate_rubric
-    tui_library.generate_rubric = failing_generate
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = failing_generate
     try:
         async with app.run_test(size=(160, 100)) as pilot:
             await wait_for(pilot, lambda: _autogen_meta(pane).display)
@@ -817,7 +816,7 @@ async def _check_autogen_failure(root: Path) -> None:
             await pilot.click("#rb-autogen")
             await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
     finally:
-        tui_library.generate_rubric = original
+        tui_rubrics_pane.generate_rubric = original
 
 
 async def _check_autogen_reentrancy(root: Path) -> None:
@@ -835,8 +834,8 @@ async def _check_autogen_reentrancy(root: Path) -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(SAMPLE_TOML, encoding="utf-8")
 
-    original = tui_library.generate_rubric
-    tui_library.generate_rubric = blocking_generate
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = blocking_generate
     try:
         async with app.run_test(size=(160, 100)) as pilot:
             await wait_for(pilot, lambda: _autogen_meta(pane).display)
@@ -895,7 +894,7 @@ async def _check_autogen_reentrancy(root: Path) -> None:
             await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
     finally:
         release.set()
-        tui_library.generate_rubric = original
+        tui_rubrics_pane.generate_rubric = original
 
 
 async def main() -> None:

@@ -75,9 +75,9 @@ class _FakeProviders:
 
 @contextmanager
 def _fake_providers(names: list[str]) -> Iterator[None]:
-    """Patch ``src.tui.app.get_providers`` (the repo provider.toml is not a
+    """Patch ``src.tui.modals.get_providers`` (the repo provider.toml is not a
     fixture); restores on exit."""
-    import src.tui.app as ta
+    import src.tui.modals as ta
 
     orig = ta.get_providers
     ta.get_providers = lambda: _FakeProviders(names)

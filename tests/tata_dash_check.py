@@ -29,7 +29,7 @@ from e2e_common import (  # isort: skip - seeds repo-root sys.path before src im
 from rich.text import Text as RichText
 from src.shared.aliases import load_alias_file
 from src.shared.cli_options import FetchCliOptions
-from src.tui import app as tata_app_mod
+from src.tui import app as tata_app_mod, modals as tata_modal_mod
 from src.tui.app import (
     AliasEditorModal,
     AssignmentSetupModal,
@@ -95,9 +95,9 @@ async def _check_import_course_modal_with_env(
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _fix(root, env=True)
-        orig_list_courses = tata_app_mod.list_courses
+        orig_list_courses = tata_modal_mod.list_courses
         monkeypatch(
-            tata_app_mod,
+            tata_modal_mod,
             "list_courses",
             lambda _canvas: [(111111, "c1-first"), (777, "hw-course")],
         )
@@ -122,7 +122,7 @@ async def _check_import_course_modal_with_env(
                 assert dirs == [COURSE], dirs
                 assert app.state.dashboard_level == "global"
         finally:
-            monkeypatch(tata_app_mod, "list_courses", orig_list_courses)
+            monkeypatch(tata_modal_mod, "list_courses", orig_list_courses)
 
 
 class _FakeProviders:
@@ -134,9 +134,9 @@ class _FakeProviders:
 
 @contextmanager
 def _fake_providers(names: list[str]) -> Iterator[None]:
-    """Patch ``src.tui.app.get_providers`` (repo provider.toml is not a
+    """Patch ``src.tui.modals.get_providers`` (repo provider.toml is not a
     fixture); restores on exit."""
-    import src.tui.app as ta
+    import src.tui.modals as ta
 
     orig = ta.get_providers
     ta.get_providers = lambda: _FakeProviders(names)
@@ -658,8 +658,8 @@ async def main() -> None:
         ) -> list[tuple[int, str]]:
             return [(777, "HW1")]
 
-        orig_la = tata_app_mod.list_assignments
-        tata_app_mod.list_assignments = main_mod_assignment
+        orig_la = tata_modal_mod.list_assignments
+        tata_modal_mod.list_assignments = main_mod_assignment
         try:
             app = TataApp(root_dir=root)
             async with app.run_test(size=(120, 40)) as pilot:
@@ -680,7 +680,7 @@ async def main() -> None:
                 await _check_search_keystroke(pilot, app)
                 await _check_aliases(pilot, app)
         finally:
-            tata_app_mod.list_assignments = orig_la
+            tata_modal_mod.list_assignments = orig_la
 
     await _check_alias_brackets()
     await _check_alias_editor_course()

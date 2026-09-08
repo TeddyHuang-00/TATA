@@ -29,7 +29,7 @@ from pathlib import Path
 from e2e_common import wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.rubric import RubricDefinition, get_rubric_definition
 from src.tui.app import TataApp
-from src.tui.library import FileNameModal, RubricsPane
+from src.tui.rubrics_pane import FileNameModal, RubricsPane
 from src.tui.workspace import ConfirmationModal
 from textual.containers import ScrollableContainer
 from textual.pilot import Pilot

@@ -109,7 +109,7 @@ def test_preprocess_cache_skips_unchanged_second_run(
         calls.append(src)
         shutil.copy2(src, dst)
 
-    monkeypatch.setattr("src.shared.processing._convert_markdown", spy)
+    monkeypatch.setattr("src.shared.pipeline._convert_markdown", spy)
 
     preprocess_assignment(tmp_path / "config.toml")
     preprocess_assignment(tmp_path / "config.toml")
@@ -135,7 +135,7 @@ def test_preprocess_cache_reconverts_on_raw_change(
         calls.append(src)
         shutil.copy2(src, dst)
 
-    monkeypatch.setattr("src.shared.processing._convert_markdown", spy)
+    monkeypatch.setattr("src.shared.pipeline._convert_markdown", spy)
 
     preprocess_assignment(tmp_path / "config.toml")
     (raw / "100.md").write_text("v2\n", encoding="utf-8")
@@ -630,8 +630,8 @@ def _fake_tools(
 
     if which is None:
         which = {"soffice": "/usr/bin/soffice", "pdftoppm": "/usr/bin/pdftoppm"}
-    monkeypatch.setattr("src.shared.processing.shutil.which", fake_which)
-    monkeypatch.setattr("src.shared.processing.subprocess.run", fake_run)
+    monkeypatch.setattr("src.shared.screenshots.shutil.which", fake_which)
+    monkeypatch.setattr("src.shared.screenshots.subprocess.run", fake_run)
 
 
 def test_visual_eval_docx_renders_all_pages_without_page_limit(
@@ -890,7 +890,7 @@ def test_render_screenshots_ipynb_passes_template_config(
         def from_filename(self, path: str) -> tuple[str, dict]:
             return "# nb\n", {}
 
-    monkeypatch.setattr("src.shared.processing.MarkdownExporter", FakeExporter)
+    monkeypatch.setattr("src.shared.screenshots.MarkdownExporter", FakeExporter)
     nb = tmp_path / "nb.ipynb"
     nb.write_text("{}", encoding="utf-8")
 
