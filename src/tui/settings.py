@@ -59,7 +59,7 @@ from src.shared.canvas_fetch import (
     read_env_state,
 )
 from src.shared.config_edit import edit_config, read_config, validate_config_edits
-from src.shared.provider import ProviderInfo, get_providers
+from src.shared.provider import get_providers
 from src.tui.css_loader import load_css
 from src.tui.workspace import is_displayed
 
@@ -115,14 +115,6 @@ _EDITABLE: dict[str, frozenset[str]] = {
 
 def _field_widget_id(fqid: str) -> str:
     return f"f-{fqid.replace('.', '-')}"
-
-
-def _read_registry() -> dict[str, ProviderInfo]:
-    """Provider registry from ``data/providers/*.toml`` ({} on any failure)."""
-    try:
-        return get_providers().providers
-    except Exception:  # display-only; the screen must not crash
-        return {}
 
 
 def mask_secret(value: str) -> str:
@@ -350,13 +342,13 @@ class SettingsScreen(Vertical):
         super().__init__(id="settings-screen")
         self.state = state
         self._ctx: str = ""  # unset until on_mount sets the initial context
+        self._ctx_manual = False  # True until a programmatic set_context clears it
         self._widgets: dict[str, Input | Select | Checkbox | _PromptCheckList] = {}
         self._reset_buttons: dict[str, Button] = {}
         self._reset_fqids: dict[str, str] = {}
         self._loaded: dict[str, str] = {}
         self._base_labels: dict[str, str] = {}
         self._result = ""
-        self._registry: dict[str, ProviderInfo] = {}
         self._global_exists = False
         self._specs: dict[str, tuple[str, str, str]] = {}
         spec_list = list(_FIELD_SPECS)
@@ -537,7 +529,6 @@ class SettingsScreen(Vertical):
 
     @override
     def on_mount(self) -> None:
-        self._registry = _read_registry()
         self._load_env_fields()
         self.set_context(self._initial_ctx())
 
@@ -599,9 +590,12 @@ class SettingsScreen(Vertical):
             ))
         return options
 
-    def set_context(self, ctx: str) -> None:
-        if ctx == self._ctx or ctx not in self.available_contexts():
+    def set_context(self, ctx: str, force: bool = False, manual: bool = False) -> None:
+        if ctx not in self.available_contexts():
             return
+        if not force and ctx == self._ctx:
+            return
+        self._ctx_manual = manual
         self._ctx = ctx
         self._load_context()
 
@@ -793,7 +787,12 @@ class SettingsScreen(Vertical):
 
     def _set_select_options(self, widget: Select, fqid: str, current: str) -> None:
         if fqid == "grading.provider":
-            names = sorted(self._registry)
+            # No mount-time snapshot: re-read the registry each time so
+            # Library provider edits appear on tab activation.
+            try:
+                names = sorted(get_providers().providers)
+            except Exception:  # missing/garbled providers dir -> empty list
+                names = []
             options = [(name, name) for name in names]
             empty_label = "(no available provider)"
         elif fqid == "grading.rubric":
@@ -1185,7 +1184,7 @@ class SettingsScreen(Vertical):
             return
         if str(event.select.value) != new_ctx:
             return  # stale programmatic message — ignore
-        self.set_context(new_ctx)
+        self.set_context(new_ctx, manual=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

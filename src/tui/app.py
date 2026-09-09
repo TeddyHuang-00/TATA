@@ -1141,12 +1141,43 @@ class TataApp(App[None]):
         self, event: TabbedContent.TabActivated
     ) -> None:
         """Refresh the pane that just became visible. Fires on mount too —
-        guard so the initial activation of tab-dashboard is a no-op."""
+        the dashboard branch is idempotent (DashboardScreen.on_mount renders
+        again after mount); the settings/library branches are guarded against
+        pre-mount exceptions."""
         pane_id = event.pane.id
-        if pane_id == "tab-settings":
+        if pane_id == "tab-dashboard":
+            dashboard = self.query_one(DashboardScreen)
+            with suppress(Exception):
+                state = self.state
+                if state.current_course is not None:
+                    state.load_assignments(state.current_course)
+                    # load_assignments replaces the list: keep
+                    # current_assignment pointing at the fresh object (same
+                    # pattern as workspace._rescan_after_job) so the
+                    # workspace renders current counts/config.
+                    current = state.current_assignment
+                    if current is not None:
+                        fresh = {a.dir_name: a for a in state.assignments}
+                        state.current_assignment = fresh.get(current.dir_name, current)
+                dashboard.render_level()
+        elif pane_id == "tab-settings":
             settings = self.query_one(SettingsScreen)
             with suppress(Exception):
-                settings.set_context(self._derive_ctx())  # may fire before mount
+                # ponytail: force reload on tab activation; unsaved Settings
+                # edits are dropped (matches Ctrl+S workflow)
+                if (
+                    settings._ctx_manual
+                    and settings._ctx in settings.available_contexts()
+                ):
+                    # keep the user's manual context pick (re-armed so it
+                    # survives repeated switch-away-and-back)
+                    settings.set_context(settings._ctx, force=True, manual=True)
+                else:
+                    # manual pick went stale (e.g. assignment level left for
+                    # course): clear the flag so set_context won't swallow it
+                    # again, then fall back to the dashboard-derived context
+                    settings._ctx_manual = False
+                    settings.set_context(self._derive_ctx(), force=True)
         elif pane_id == "tab-library":
             library = self.query_one(LibraryScreen)
             with suppress(Exception):
