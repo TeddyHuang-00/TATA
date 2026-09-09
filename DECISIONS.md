@@ -24,7 +24,7 @@ because class names (`TataApp`, screens, panes) and test-file names (`tata_*_che
 **Status:** Accepted
 **Files:** `src/assignment_config.py`, `data/config.toml`, `main.py`
 
-In the context of six assignments all duplicating `course_id = 271218`, `mode = "attach"`, `out_dir = "raw"` in their own configs, and fetch/plagiarism state living ad hoc in scripts and caches,
+In the context of six assignments all duplicating `course_id = 111111`, `mode = "attach"`, `out_dir = "raw"` in their own configs, and fetch/plagiarism state living ad hoc in scripts and caches,
 facing config drift and repeated state,
 we decided for a two-layer config: `data/config.toml` (course-level root: `[fetch]` course_id/mode, `[plagiarism]` weights/alphas) merged under each `data/<name>/config.toml` (per-key assignment wins; all paths resolve against the assignment dir),
 and neglected a single global config, per-course config dirs, or keeping the duplicated state,
@@ -44,7 +44,7 @@ we decided for folding all three into `main.py plagiarism` (auto-detect code vs 
 and neglected keeping the scripts with config defaults read from the root,
 to achieve one command for the whole plagiarism workflow with tunables in config,
 accepting that the embedding model now runs inline (skipped when `all_pairs.embedding.json` is fresher than all `processed/*.md`),
-because the user chose "fold everything into a main.py plagiarism subcommand + root-config driven" and the aggregate output (6 files, 54 pairs, 2 students) matches the old script's numbers exactly.
+because the user chose "fold everything into a main.py plagiarism subcommand + root-config driven" and the aggregate output (6 files, N pairs, N students) matches the old script's numbers exactly.
 
 ## Deletions of stale scripts and artifacts
 
@@ -72,7 +72,7 @@ we decided for an explicit `[[fetch.assignments]]` list in the root config (each
 and neglected writing back to per-assignment [fetch] blocks from the list, per-assignment out_dir overrides for listed entries, or listing assignments anywhere but the root,
 to achieve one config file that defines the course for both fetch and plagiarism aggregation,
 accepting that the list is duplicated state alongside the per-assignment [fetch] blocks (the blocks keep single-assignment fetch working) and that a listed entry without a config.toml is skipped by plagiarism,
-because the user explicitly asked for course ID + list of (assignment ID, mode, output path) in the total config usable by both fetch and plagiarism aggregate, and the real fetch run fetched all 6 assignments (318 submissions) with per-entry modes, while the aggregate reported exactly the 6 listed pair files.
+because the user explicitly asked for course ID + list of (assignment ID, mode, output path) in the total config usable by both fetch and plagiarism aggregate, and the real fetch run fetched all 6 assignments (N submissions) with per-entry modes, while the aggregate reported exactly the 6 listed pair files.
 
 ## T5 review reuse + T6 split into T6a/T6b/T6c
 
@@ -106,13 +106,13 @@ because the user asked for interactive tab-based plagiarism views without window
 
 **Date:** 2026-08-30
 **Status:** Accepted
-**Files:** `src/assignment_config.py`, `src/canvas_fetch.py`, `src/cli.py`, `src/cli_options.py`, `src/plagiarism.py`, `src/aliases.py`, `src/tata_scan.py`, `src/tata_workspace.py`, `src/tata_app.py`, `src/tata_settings.py`, data migration `data/271218/` (gitignored), docs/README sync
+**Files:** `src/assignment_config.py`, `src/canvas_fetch.py`, `src/cli.py`, `src/cli_options.py`, `src/plagiarism.py`, `src/aliases.py`, `src/tata_scan.py`, `src/tata_workspace.py`, `src/tata_app.py`, `src/tata_settings.py`, data migration `data/111111/` (gitignored), docs/README sync
 
 In the context of re-fetching Module 1-7 printing `text: 0 submissions` for upload-based modules (course `[fetch] mode="text"` forced text mode onto ipynb/docx submissions whose `sub.body` is empty — verified live and via Canvas API; text-entry modules were fine), the `[[fetch.assignments]]` list still carrying `assignment_id`+`out`, fetch settings split across global/course/assignment configs, and the TUI import modal asking for an output dir,
 facing a config format that had grown three layers without a single source of truth for fetch, and a silent "0 submissions" failure with no warning,
 we decided to make the course config the single fetch source: list entries become `{id, mode?}` with no `out` (output always derived `<course>/<id>/raw`), assignment configs drop `[fetch]` (assignment identity = numeric dir name), `remember_fetch` is replaced by `remember_course_fetch` (writes course config only, never `[fetch].mode` — per-assignment modes live on list entries and `_remember` refuses to bake a course-default mode into them), the legacy per-assignment fallback in `--retry` is deleted, standalone fetches look up per-entry mode from the course list, non-numeric assignment dirs exit with a migrate hint instead of falling into `input()` inside the Textual worker, and `FetchAssignmentEntry.id` tolerates legacy `assignment_id` via `AliasChoices`,
 and neglected honoring legacy `out` values on un-migrated list entries (out is dropped silently; covered by one-time `migrate_course_to_ids`, no legacy trees remain) and keeping `out`/`--out` anywhere in the config surface,
-to achieve one obvious fetch configuration, per-module modes without cross-contamination, and a re-fetch that reports real counts (attach 56/55/55, text 56/53/54),
+to achieve one obvious fetch configuration, per-module modes without cross-contamination, and a re-fetch that reports real counts (attach N/N/N, text N/N/N),
 accepting that un-migrated legacy course configs must run `python -m src.aliases migrate <course_dir>` once (otherwise entries resolve to ghost id dirs) and that the course `[fetch] mode` remains a default whose stale overwrite risk we removed by never writing it programmatically,
 because the user asked for the cleanup ("assignments list no longer accepts out; assignment_id -> id; move fetch settings to course dir") and the 0-submission bug was a direct consequence of the old mode-baking design. Verified: pytest 125, 8/8 headless checks, ruff clean (3 pre-existing errors untouched), live re-fetch non-zero; local dev only (commit 000a4ad7, remote main untouched per policy).
 
@@ -128,7 +128,7 @@ we decided to make fetch layout-syncing: body + all attachments per submission; 
 and neglected a `fetch --mode`-free interactive override and any upload-storage dedup beyond name-based cache,
 to achieve a mode-less fetch that never drops a student's content, a deterministic per-student processed document with provenance headers, and no silent stale-submission grading,
 accepting that the prune is one-directional sync (absent students' stale folders are removed with their cache keys; a re-fetch is always a full declarative state), that folder member ordering is (body-first, then by name) rather than submission-time order, and that folder→folder resubmits with changed files keep only current names,
-because the user asked for automatic per-type collection with folder-per-student layout and header-annotated concatenation. Verified: pytest 141 (131→141), 8/8 headless checks, real fetch auto 56/55/54/56/53/54 students, folder 2979482/415019/ -> two-section processed md with cache-stamped headers; local dev only (commit 967683f8 on dev, remote main untouched).
+because the user asked for automatic per-type collection with folder-per-student layout and header-annotated concatenation. Verified: pytest 141 (131→141), 8/8 headless checks, real fetch auto N students, folder <uid>/ -> two-section processed md with cache-stamped headers; local dev only (commit 967683f8 on dev, remote main untouched).
 
 ## Import quick-setup + built-in Settings v2 editing + layout fixes
 

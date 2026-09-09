@@ -162,7 +162,7 @@ Run `uv run cli --help` any time to see what is available.
 
 ## Concepts in one line each
 
-- **Course**: one Canvas course (for example "ITCS 5153"), stored as a
+- **Course**: one Canvas course (for example "CSCI 101"), stored as a
   folder under `data/<course>/`.
 - **Assignment**: one graded activity inside a course, stored as
   `data/<course>/<assignment>/`, named by its Canvas id.

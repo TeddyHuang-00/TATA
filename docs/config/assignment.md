@@ -47,10 +47,10 @@ Example course config:
 
 ```toml
 [fetch]
-course_id = 271218
+course_id = 111111
 
 [[fetch.assignments]]
-id = 2979511
+id = 43
 ```
 
 ## Where this file sits in the workflow

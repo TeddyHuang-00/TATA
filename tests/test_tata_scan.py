@@ -164,10 +164,10 @@ def test_raw_count_skips_stale_flat_leftovers(tmp_path: Path) -> None:
     (course / "config.toml").write_text("", encoding="utf-8")
     (a1 / "config.toml").write_text("", encoding="utf-8")
     raw = a1 / "raw"
-    (raw / "415019").mkdir(parents=True)
-    (raw / "415019" / "415019.html").write_text("<p>a</p>", encoding="utf-8")
-    (raw / "415019.docx").write_bytes(b"stale flat")
-    (raw / "415019_1.docx").write_bytes(b"stale flat")
+    (raw / "990019").mkdir(parents=True)
+    (raw / "990019" / "990019.html").write_text("<p>a</p>", encoding="utf-8")
+    (raw / "990019.docx").write_bytes(b"stale flat")
+    (raw / "990019_1.docx").write_bytes(b"stale flat")
     infos = scan_assignments(course)
     assert infos[0].counts.raw == 1
 

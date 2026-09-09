@@ -466,28 +466,28 @@ def test_folder_skip_messages_for_unsupported_files(
 
 
 def test_mixed_layout_skips_stale_flat_duplicates(tmp_path: Path) -> None:
-    """Regression: raw/ with BOTH a folderized student (415019/) and stale
-    flat leftovers of the previous flat fetch (415019.docx, 415019_1.docx)
-    must produce ONE 415019.md (folder concat, both headers) and no stray
-    415019_1.md."""
+    """Regression: raw/ with BOTH a folderized student (990019/) and stale
+    flat leftovers of the previous flat fetch (990019.docx, 990019_1.docx)
+    must produce ONE 990019.md (folder concat, both headers) and no stray
+    990019_1.md."""
     raw = tmp_path / "raw"
-    (raw / "415019").mkdir(parents=True)
-    _write_docx(raw / "415019" / "415019.docx", "part one")
-    _write_docx(raw / "415019" / "415019_1.docx", "part two")
-    (raw / "415019.docx").write_bytes(b"stale flat")
-    (raw / "415019_1.docx").write_bytes(b"stale flat")
+    (raw / "990019").mkdir(parents=True)
+    _write_docx(raw / "990019" / "990019.docx", "part one")
+    _write_docx(raw / "990019" / "990019_1.docx", "part two")
+    (raw / "990019.docx").write_bytes(b"stale flat")
+    (raw / "990019_1.docx").write_bytes(b"stale flat")
     _write_grading_config(tmp_path)
 
     result = preprocess_assignment(tmp_path / "config.toml")
 
-    md = tmp_path / "processed" / "415019.md"
+    md = tmp_path / "processed" / "990019.md"
     assert md.exists()
     content = md.read_text(encoding="utf-8")
-    assert "file: 415019.docx" in content
-    assert "file: 415019_1.docx" in content
+    assert "file: 990019.docx" in content
+    assert "file: 990019_1.docx" in content
     assert "part one" in content
     assert "part two" in content
-    assert not (tmp_path / "processed" / "415019_1.md").exists()
+    assert not (tmp_path / "processed" / "990019_1.md").exists()
     assert len(list((tmp_path / "processed").glob("*.md"))) == 1
     assert result is not None
     assert result["success"] == 1
@@ -720,29 +720,29 @@ def test_visual_eval_folder_docx_triggers_render(
     across members (R2: 3+3 pages -> _p1.._p6, no per-member overwrite,
     each page's bytes coming from the right member)."""
     raw = tmp_path / "raw"
-    (raw / "415019").mkdir(parents=True)
-    _write_docx(raw / "415019" / "415019.docx", "part one")
-    _write_docx(raw / "415019" / "415019_1.docx", "part two")
+    (raw / "990019").mkdir(parents=True)
+    _write_docx(raw / "990019" / "990019.docx", "part one")
+    _write_docx(raw / "990019" / "990019_1.docx", "part two")
     _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
     calls: list[list[str]] = []
 
     _fake_tools(monkeypatch, calls, pages=3)
     preprocess_assignment(tmp_path / "config.toml")
 
-    md = tmp_path / "processed" / "415019.md"
+    md = tmp_path / "processed" / "990019.md"
     assert md.exists()
     shots = tmp_path / "processed" / "screenshots"
-    page_shots = sorted(shots.glob("415019_p*.png"))
+    page_shots = sorted(shots.glob("990019_p*.png"))
     assert [f.name for f in page_shots] == [
-        "415019_p1.png",
-        "415019_p2.png",
-        "415019_p3.png",
-        "415019_p4.png",
-        "415019_p5.png",
-        "415019_p6.png",
+        "990019_p1.png",
+        "990019_p2.png",
+        "990019_p3.png",
+        "990019_p4.png",
+        "990019_p5.png",
+        "990019_p6.png",
     ]
     for i, shot in enumerate(page_shots, 1):
-        member = "415019.docx" if i <= 3 else "415019_1.docx"
+        member = "990019.docx" if i <= 3 else "990019_1.docx"
         page_in_member = i if i <= 3 else i - 3
         assert shot.read_bytes() == f"pdf:{member} page {page_in_member}".encode()
     assert all("-l" not in c and "-f" not in c for c in calls if c[0] == "pdftoppm")

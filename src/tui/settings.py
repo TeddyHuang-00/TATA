@@ -563,7 +563,7 @@ class SettingsScreen(Vertical):
         """(value, label) pairs for ``#ctx-select``.
 
         Labels show the alias + id when an alias.toml entry exists (e.g.
-        ``Data Structures (271218)``); plain ``dir_name`` otherwise. Values
+        ``Sample Course (111111)``); plain ``dir_name`` otherwise. Values
         stay ``global``/``course``/``assignment`` — display only.
         """
         options: list[tuple[str, str]] = [("global", "Global")]

@@ -4,10 +4,10 @@
 # fill missing keys (manual edits here are preserved).
 
 [course]
-"271218" = "ITCS 5153"
+"111111" = "Example Course"
 
 [assignment]
-"2978557" = "First Colab"
+"222222" = "First Assignment"
 
 [student]
-"412607" = "Aalla, Movin Reddy"
+"990001" = "Student A"

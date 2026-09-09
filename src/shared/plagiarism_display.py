@@ -38,8 +38,8 @@ def base_uid(stem: str) -> str:
 
     File stems carry the suffix (canvas_fetch fetches bodies and
     attachments as ``<uid>{_LATE_i|_i}``), but alias.toml keys are the
-    unsuffixed uid — so a stem like ``301741_LATE_0`` must resolve to the
-    ``301741`` alias.
+    unsuffixed uid — so a stem like ``301999_LATE_0`` must resolve to the
+    ``301999`` alias.
     """
     return re.sub(r"_(?:LATE_)?\d+$", "", stem)
 

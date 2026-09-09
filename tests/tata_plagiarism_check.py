@@ -122,15 +122,15 @@ D_PAIRS_A1 = {
     "pair_count": 4,
     "pairs": [
         {
-            "test_file": "415019.md",
-            "reference_file": "415020.md",
+            "test_file": "990019.md",
+            "reference_file": "990020.md",
             "test_similarity_pct": 91.0,
             "reference_similarity_pct": 92.0,
             "max_similarity_pct": 92.0,
             "token_overlap": [1, 2],
         },
         {
-            "test_file": "415019.md",
+            "test_file": "990019.md",
             "reference_file": "1001.md",
             "max_similarity_pct": 62.0,
             "token_overlap": 4,
@@ -155,8 +155,8 @@ D_PAIRS_A2 = {
     "pair_count": 2,
     "pairs": [
         {
-            "test_file": "415019.md",
-            "reference_file": "415020.md",
+            "test_file": "990019.md",
+            "reference_file": "990020.md",
             "max_similarity_pct": 70.0,
             "token_overlap": 1,
         },
@@ -175,8 +175,8 @@ D_AGGREGATE_JSON = {
     "flagged_pairs": 1,
     "pairs": [
         {
-            "student_a": "Mia(415019)",  # Name(uid) label shape (parse_uid)
-            "student_b": "Leo(415020)",
+            "student_a": "Pat(990019)",  # Name(uid) label shape (parse_uid)
+            "student_b": "Quinn(990020)",
             "raw_similarity_pct": 88.0,
             "z_score": 5.21,
             "one_sided_p_value": 0.0002,
@@ -280,11 +280,11 @@ def _make_detail_fixture(assignments_dir: Path) -> None:
         (a_dir / "config.toml").write_text("", encoding="utf-8")
     _write_pairs(course_dir / "a1", D_PAIRS_A1)
     _write_pairs(course_dir / "a2", D_PAIRS_A2)
-    for name in ("415019", "415020", "1001", "1002", "1003", "1004"):
+    for name in ("990019", "990020", "1001", "1002", "1003", "1004"):
         (course_dir / "a1" / "processed" / f"{name}.md").write_text(
             f"# {name}\nline two\nline three\n", encoding="utf-8"
         )
-    for name in ("415019", "415020", "1001", "1002"):
+    for name in ("990019", "990020", "1001", "1002"):
         (course_dir / "a2" / "processed" / f"{name}.md").write_text(
             f"# {name}\nline two\nline three\n", encoding="utf-8"
         )
@@ -297,8 +297,8 @@ def _make_detail_fixture(assignments_dir: Path) -> None:
         course_alias="Detail Course",
         assignment_alias={"a1": "Assignment One", "a2": "Assignment Two"},
         students={
-            "415019": "Mia M",
-            "415020": "Leo L",
+            "990019": "Pat P",
+            "990020": "Quinn Q",
             "1001": "Alice A",
             "1002": "Bob B",
             "1003": "Carol C",
@@ -734,8 +734,8 @@ async def _check_agg_enter(app: TataApp, pilot: Pilot) -> None:
     agg = app.screen
     assert isinstance(agg, AggregatePairDetailScreen)
     banner = text(agg.query_one("#detail-banner", Static))
-    assert "Mia(415019)" in banner, banner
-    assert "Leo(415020)" in banner, banner
+    assert "Pat(990019)" in banner, banner
+    assert "Quinn(990020)" in banner, banner
     assert "aggregate z 5.21" in banner, banner
     shared = agg.query_one("#detail-shared-table", DataTable)
     assert shared.row_count == 2, shared.row_count  # a1 + a2 both shared
@@ -768,8 +768,8 @@ async def _check_agg_drill(app: TataApp, pilot: Pilot) -> None:
     assert isinstance(pair_screen, AssignmentPairDetailScreen)
     banner = text(pair_screen.query_one("#detail-banner", Static))
     assert "Assignment One" in banner, banner
-    assert "Mia M" in banner, banner
-    assert "Leo L" in banner, banner
+    assert "Pat P" in banner, banner
+    assert "Quinn Q" in banner, banner
     assert "max sim 92.0%" in banner, banner
     assert "z " in banner, banner
     hist = text(pair_screen.query_one("#detail-histogram", Static))
@@ -799,7 +799,7 @@ async def _check_assignment_detail(app: TataApp, pilot: Pilot) -> None:
     assert "90-100%" in hist, hist
     pairs_table = assign.query_one("#detail-pairs-table", DataTable)
     assert pairs_table.row_count == 4, pairs_table.row_count
-    assert cell(pairs_table, 0, 0) == "Mia M", cell(pairs_table, 0, 0)
+    assert cell(pairs_table, 0, 0) == "Pat P", cell(pairs_table, 0, 0)
     await pilot.press("escape")
     await wait_for(pilot, lambda: not isinstance(app.screen, AssignmentDetailScreen))
 
@@ -815,7 +815,7 @@ async def _check_pair_detail(app: TataApp, pilot: Pilot) -> None:
     pair_screen = app.screen
     assert isinstance(pair_screen, AssignmentPairDetailScreen)
     banner = text(pair_screen.query_one("#detail-banner", Static))
-    assert "Mia M" in banner, banner
+    assert "Pat P" in banner, banner
     assert "max sim 92.0%" in banner, banner
     assert "z " in banner, banner
     await pilot.press("escape")
@@ -833,11 +833,11 @@ async def _check_student_detail(app: TataApp, pilot: Pilot) -> None:
     student = app.screen
     assert isinstance(student, StudentDetailScreen)
     tree = student.query_one("#detail-tree", Tree)
-    assert tree.root.label.plain == "Leo L", tree.root.label
+    assert tree.root.label.plain == "Pat P", tree.root.label
     assert tree.root.is_expanded, "tree root collapsed — children must be visible"
     peer = tree.root.children[0]
     assert peer is not None
-    assert peer.label.plain == "Mia M (z 5.21 / mean sim 81.0%)", peer.label
+    assert peer.label.plain == "Quinn Q (z 5.21 / mean sim 81.0%)", peer.label
     assert len(peer.children) == 2, len(peer.children)  # both assignments
     tree.move_cursor(peer)
     await pilot.pause()
@@ -846,7 +846,7 @@ async def _check_student_detail(app: TataApp, pilot: Pilot) -> None:
     agg = app.screen
     assert isinstance(agg, AggregatePairDetailScreen)
     banner = text(agg.query_one("#detail-banner", Static))
-    assert "Mia(415019)" in banner, banner
+    assert "Pat(990019)" in banner, banner
     assert "aggregate z 5.21" in banner, banner
     await pilot.press("escape")
     await wait_for(pilot, lambda: isinstance(app.screen, StudentDetailScreen))

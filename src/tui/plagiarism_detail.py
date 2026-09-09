@@ -44,7 +44,7 @@ _UID_PAREN_RE = re.compile(r"\(([^()]+)\)$")
 
 
 def parse_uid(label: str) -> str:
-    """Aggregate student label -> uid: 'Mia(415019)' -> '415019', else label."""
+    """Aggregate student label -> uid: 'Pat(990019)' -> '990019', else label."""
     match = _UID_PAREN_RE.search(str(label))
     return match.group(1) if match else str(label)
 

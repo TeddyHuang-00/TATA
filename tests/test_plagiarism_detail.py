@@ -13,18 +13,18 @@ from src.tui.plagiarism_detail import (
 
 
 def test_parse_uid_label_and_uid() -> None:
-    assert parse_uid("Mia(415019)") == "415019"
-    assert parse_uid("415019") == "415019"
+    assert parse_uid("Pat(990019)") == "990019"
+    assert parse_uid("990019") == "990019"
     assert parse_uid("mia") == "mia"
     assert parse_uid("name:mia") == "name:mia"
 
 
 def test_pair_uids_and_find(tmp_path: Path) -> None:
-    absolute = tmp_path / "data" / "c1" / "a1" / "processed" / "415019.md"
+    absolute = tmp_path / "data" / "c1" / "a1" / "processed" / "990019.md"
     pairs = [
         {
             "test_file": str(absolute),
-            "reference_file": "415020_LATE_1.md",
+            "reference_file": "990020_LATE_1.md",
             "max_similarity_pct": 91.2,
         },
         {
@@ -34,9 +34,9 @@ def test_pair_uids_and_find(tmp_path: Path) -> None:
         },
     ]
     # absolute path + _LATE_N suffix stripped to the base uid
-    assert pair_uids(pairs[0]) == frozenset({"415019", "415020"})
+    assert pair_uids(pairs[0]) == frozenset({"990019", "990020"})
     assert pair_uids(pairs[1]) == frozenset({"1001", "1002"})
-    assert find_pair_for_uids(pairs, frozenset({"415019", "415020"})) is pairs[0]
+    assert find_pair_for_uids(pairs, frozenset({"990019", "990020"})) is pairs[0]
     assert find_pair_for_uids(pairs, frozenset({"1002", "1001"})) is pairs[1]
     assert find_pair_for_uids(pairs, frozenset({"999", "1002"})) is None
 

@@ -808,7 +808,7 @@ class DashboardScreen(Vertical):
         targets: list[dict] = []
         for entry in cfg.assignments:
             # Alias-aware label; the assignment id names the dir (e.g.
-            # '2978557') — raw paths are never shown.
+            # '987654') — raw paths are never shown.
             label = assignment_display_name(
                 self.state.assignments_dir,
                 course.dir_name,
