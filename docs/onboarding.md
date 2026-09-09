@@ -53,7 +53,7 @@ DEEPSEEK_API_KEY=your_key_here
 ```
 
 The bundled example
-[deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml)
+[deepseek-v4-flash.toml](../data/providers/deepseek-v4-flash.toml)
 writes `api_key = "${DEEPSEEK_API_KEY}"`, so it picks the key up from
 `.env` automatically.
 
@@ -89,7 +89,7 @@ Minimal required fields are in `[grading]` only:
 
 The example config references the bundled provider `ollama`
 ([ollama.toml](../data/providers/ollama.toml)); swap in a different
-provider name (e.g. `deepseek_chat_tool`) if you have API keys instead of
+provider name (e.g. `deepseek-v4-flash`) if you have API keys instead of
 a local Ollama server.
 
 Path-related fields under `[assignment]` are optional and default to:

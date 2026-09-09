@@ -14,7 +14,7 @@ data/prompt/*
 !data/prompt/system.md
 !data/providers/
 data/providers/*
-!data/providers/deepseek_chat_tool.toml
+!data/providers/deepseek-v4-flash.toml
 !data/providers/ollama.toml
 
 __pycache__/

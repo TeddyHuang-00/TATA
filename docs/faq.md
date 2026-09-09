@@ -42,7 +42,7 @@ Yes. TATA is provider-agnostic: create a new provider in Library → Providers
 [ollama.toml](../data/providers/ollama.toml) is the recommended first
 provider — a local Qwen3.8-27B with no API key needed (`ollama serve` +
 `ollama pull qwen3.8:latest`). The bundled
-[deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml) is a
+[deepseek-v4-flash.toml](../data/providers/deepseek-v4-flash.toml) is a
 working DeepSeek example (needs `DEEPSEEK_API_KEY`). See
 [config/provider.md](config/provider.md) for the full format.
 

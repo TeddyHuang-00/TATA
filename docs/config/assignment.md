@@ -129,7 +129,7 @@ dir = "hooks"
 [grading]
 rubric = "rubrics/example_rubric.toml"
 system_prompt = ["prompt/system.md"]
-provider = "deepseek_chat_tool"
+provider = "deepseek-v4-flash"
 max_parallel_tasks = 10
 
 [scoring]

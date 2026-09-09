@@ -29,7 +29,7 @@ mode = "..."
 
 ## Example
 
-`data/providers/deepseek_chat_tool.toml`:
+`data/providers/deepseek-v4-flash.toml`:
 
 ```toml
 base_url = "https://api.deepseek.com"
@@ -45,7 +45,7 @@ mode = "tool_call"
 base_url = "http://localhost:11434/v1"
 api_key = "ollama"
 model = "qwen3.8:latest"
-mode = "markdown_json_mode"
+mode = "tool_call"
 ```
 
 `qwen3.8:latest` is the Qwen3.8-27B model (27.3B parameters); `qwen3.8`
@@ -84,8 +84,8 @@ If env var is missing, placeholder resolves to empty string, which usually cause
 
 Example:
 
-- Assignment config uses `provider = "deepseek_chat_tool"`
-- Then `data/providers/deepseek_chat_tool.toml` must exist.
+- Assignment config uses `provider = "deepseek-v4-flash"`
+- Then `data/providers/deepseek-v4-flash.toml` must exist.
 
 ## Common mistakes
 

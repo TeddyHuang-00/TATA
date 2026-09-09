@@ -35,7 +35,7 @@ ASSIGNMENT_CFG = (
     "[grading]\n"
     "rubric = 'rubrics/exam.toml'\n"
     "system_prompt = 'prompt/system.md'\n"
-    "provider = 'deepseek_chat_tool'\n"
+    "provider = 'deepseek-v4-flash'\n"
     "max_parallel_tasks = 4\n"
 )
 
