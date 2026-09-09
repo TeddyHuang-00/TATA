@@ -4,7 +4,8 @@
 
 - A computer with Windows, macOS, or Linux
 - The [uv](https://docs.astral.sh/uv/) tool (install it once, see below)
-- API credentials for your LLM provider (see section 3)
+- A local LLM server (Ollama, no API key needed) or API credentials for
+  your cloud LLM provider (see section 3)
 
 You never install Python yourself: on your first `uv sync`, uv downloads
 Python 3.13 and every dependency automatically.
@@ -27,25 +28,38 @@ uv sync
 
 ## 3. Configure provider credentials
 
-There are two ways to give TATA an LLM API key:
+**Ollama (recommended, no API key needed).** Install
+[Ollama](https://ollama.com), then:
 
-1. **Placeholder plus `.env` (recommended).** Copy
-   [.env.sample](../.env.sample) to `.env` in project root and fill in your
-   key:
+```bash
+ollama serve
+ollama pull qwen3.8:latest
+```
 
-   ```env
-   DEEPSEEK_API_KEY=your_key_here
-   ```
+Provider definitions are one file each under
+[data/providers](../data/providers) (`<name>.toml`; flat top-level keys;
+the file stem is the provider name). The bundled
+[ollama.toml](../data/providers/ollama.toml) already points at
+`http://localhost:11434/v1` with model `qwen3.8:latest` (the `latest` tag
+of Qwen3.8-27B, 27.3B params), so the shipped example
+configs work out of the box.
 
-   Provider definitions are one file each in
-   [data/providers](../data/providers) (`<name>.toml`; flat top-level keys;
-   the file stem is the provider name). The bundled example provider
-   [deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml)
-   writes `api_key = "${DEEPSEEK_API_KEY}"`, so it picks the key up from
-   `.env` automatically.
+**Cloud alternative: DeepSeek (needs an API key).** Copy
+[.env.sample](../.env.sample) to `.env` in project root and fill in your
+key:
 
-2. **Plain-text key in the TUI.** In the TUI, Library → Providers, create
-   or edit a provider and paste the key directly into the `api_key` field.
+```env
+DEEPSEEK_API_KEY=your_key_here
+```
+
+The bundled example
+[deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml)
+writes `api_key = "${DEEPSEEK_API_KEY}"`, so it picks the key up from
+`.env` automatically.
+
+Either way, you can also manage providers in the TUI: Library → Providers,
+create or edit a provider and paste the key directly into the `api_key`
+field.
 
 ## 4. Validate a config (recommended)
 
@@ -73,8 +87,10 @@ Minimal required fields are in `[grading]` only:
 - system_prompt
 - provider
 
-The example config references the bundled provider `deepseek_chat_tool`
-([deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml)).
+The example config references the bundled provider `ollama`
+([ollama.toml](../data/providers/ollama.toml)); swap in a different
+provider name (e.g. `deepseek_chat_tool`) if you have API keys instead of
+a local Ollama server.
 
 Path-related fields under `[assignment]` are optional and default to:
 

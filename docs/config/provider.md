@@ -34,18 +34,22 @@ mode = "..."
 ```toml
 base_url = "https://api.deepseek.com"
 api_key = "${DEEPSEEK_API_KEY}"
-model = "deepseek-chat"
+model = "deepseek-v4-flash-vision-exp"
 mode = "tool_call"
 ```
 
-`data/providers/ollama.toml`:
+`data/providers/ollama.toml` (recommended first provider — no API key; run
+`ollama serve` locally and `ollama pull qwen3.8:latest` before grading):
 
 ```toml
 base_url = "http://localhost:11434/v1"
 api_key = "ollama"
-model = "qwen3.5:35b-a3b"
+model = "qwen3.8:latest"
 mode = "markdown_json_mode"
 ```
+
+`qwen3.8:latest` is the Qwen3.8-27B model (27.3B parameters); `qwen3.8`
+supports vision and tools, so it can be used for `visual_evaluation` mode.
 
 ## Field behavior
 

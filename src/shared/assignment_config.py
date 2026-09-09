@@ -446,8 +446,8 @@ def load_assignment_file(config_path: Path) -> AssignmentFileConfig:
             "Example:\n"
             "[grading]\n"
             'rubric = "rubrics/example_rubric.toml"\n'
-            'system_prompt = ["prompt/system.md", "prompt/lab.md"]\n'
-            'provider = "deepseek_chat_tool"'
+            'system_prompt = ["prompt/system.md"]\n'
+            'provider = "ollama"'
         )
 
         msg = (

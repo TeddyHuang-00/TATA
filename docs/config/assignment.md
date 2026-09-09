@@ -72,8 +72,8 @@ Only `[grading]` is required.
 ```toml
 [grading]
 rubric = "rubrics/example_rubric.toml"
-system_prompt = ["prompt/system.md", "prompt/lab.md"]
-provider = "deepseek_chat_tool"
+system_prompt = ["prompt/system.md"]
+provider = "ollama"
 
 # [assignment]
 # reference_file = "reference.md"  # optional — omit for rubric-only grading
@@ -128,7 +128,7 @@ dir = "hooks"
 
 [grading]
 rubric = "rubrics/example_rubric.toml"
-system_prompt = ["prompt/system.md", "prompt/lab.md"]
+system_prompt = ["prompt/system.md"]
 provider = "deepseek_chat_tool"
 max_parallel_tasks = 10
 

@@ -15,6 +15,7 @@ data/prompt/*
 !data/providers/
 data/providers/*
 !data/providers/deepseek_chat_tool.toml
+!data/providers/ollama.toml
 
 __pycache__/
 .vscode

@@ -8,7 +8,7 @@ At minimum, your config must include:
 [grading]
 rubric = "rubrics/example_rubric.toml"
 system_prompt = "prompt/system.md"
-provider = "deepseek_chat_tool"
+provider = "ollama"
 ```
 
 Use [data/example/config.toml](../data/example/config.toml) as the baseline.
@@ -39,9 +39,12 @@ Canvas → Save .env does this for you).
 Yes. TATA is provider-agnostic: create a new provider in Library → Providers
 (or edit `data/providers/<name>.toml` in your editor) and set `base_url`,
 `model`, and `mode` for your provider. The bundled
+[ollama.toml](../data/providers/ollama.toml) is the recommended first
+provider — a local Qwen3.8-27B with no API key needed (`ollama serve` +
+`ollama pull qwen3.8:latest`). The bundled
 [deepseek_chat_tool.toml](../data/providers/deepseek_chat_tool.toml) is a
-working DeepSeek example. See [config/provider.md](config/provider.md) for
-the full format.
+working DeepSeek example (needs `DEEPSEEK_API_KEY`). See
+[config/provider.md](config/provider.md) for the full format.
 
 ## 5. Which paths are optional?
 
