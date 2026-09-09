@@ -138,7 +138,7 @@ def _grading_pending(
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
     cache = load_cache(cfg.logs_dir / "grading.cache.json")
 
-    provider = get_providers().providers[cfg_model.grading.provider]
+    provider = get_providers()[cfg_model.grading.provider]
     grading_payload = json.dumps(
         {
             "grading": cfg_model.grading.model_dump_json(),
