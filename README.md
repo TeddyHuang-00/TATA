@@ -15,12 +15,14 @@ two commands into a terminal, you are ready.
    student submissions with your own login, so use the same account you use
    to view student work.
 
-2. **An API key for a language model (LLM) provider.** TATA sends each
-   submission to an LLM to grade it. The walkthrough below uses DeepSeek as
-   the provider: sign up at <https://platform.deepseek.com>, open the
-   API Keys page, and copy a new key. DeepSeek is reasonably priced and new
-   accounts often come with free credit. Other providers work too (see
-   [docs/config/provider.md](docs/config/provider.md)).
+2. **A language model (LLM) provider.** TATA sends each submission to an
+   LLM to grade it. Ollama is the recommended choice: a free local LLM
+   server, no account or API key needed. Install it once (`brew install ollama` on macOS, or the installer from the Ollama website), start it
+   with `ollama serve`, and pull the bundled model with
+   `ollama pull qwen3.8:latest`. Prefer a cloud provider? Any
+   OpenAI-compatible service works (DeepSeek, for example), but then you
+   also need an API key. See [docs/config/provider.md](docs/config/provider.md)
+   for other options.
 
 3. **A Windows, macOS, or Linux computer.** Nothing else, no special
    hardware or accounts.
@@ -48,7 +50,10 @@ yourself.
    Restart your terminal (close and reopen it) so the `uv` command becomes
    available.
 
-2. Get the TATA project files and go into the project folder:
+2. Get the TATA project files and go into the project folder. The
+   repository reaches you through your course's internal channel: clone it
+   from your internal source, or download the project files and extract
+   them. Then open a terminal in the project folder:
 
    ```bash
    cd path/where/you/saved/TATA
@@ -102,12 +107,15 @@ Click a tab to switch (or press Tab / Shift+Tab). Follow these six steps:
    Plagiarism, and Paths / Advanced.)
 
 2. **Tell TATA which LLM to use.** Go to the Library tab, then the Providers
-   sub-tab. Create a new provider: give it a name (for example `deepseek`),
-   set base_url to `https://api.deepseek.com`, model to `deepseek-chat`,
-   mode to `tool_call`, and paste your DeepSeek key into api_key. Save.
-   Alternatively, write `${DEEPSEEK_API_KEY}` in the api_key field and put
-   the real key into the project's `.env` file; the bundled example
-   provider `deepseek_chat_tool` does exactly that.
+   sub-tab. The bundled `ollama` provider is already listed and works as
+   is: base_url `http://localhost:11434/v1`, model `qwen3.8:latest`, no
+   API key needed (start Ollama with `ollama serve` first). Using a cloud
+   provider instead? Create a new provider: give it a name, set base_url
+   and model to match the service, pick a mode (for example `tool_call`),
+   and paste your key into api_key. Alternatively, write
+   `${DEEPSEEK_API_KEY}` in the api_key field and put the real key into the
+   project's `.env` file; the bundled example provider `deepseek_chat_tool`
+   does exactly that.
 
 3. **Pick a rubric.** In the Library tab, Rubrics sub-tab, create a new
    rubric, or start from the bundled `example_rubric` to experiment. A
@@ -131,8 +139,9 @@ Click a tab to switch (or press Tab / Shift+Tab). Follow these six steps:
    press `s` to open the score review for the assignment.
 
 That is the whole loop. Every assignment you import gets its own folder and
-config, and TATA keeps checkpoints: rerunning a stage resumes where it
-stopped.
+config. `preprocess` and `grade` keep checkpoints, so rerunning either one
+resumes where it stopped. The other stages keep no checkpoints: they simply
+recompute when rerun, which is safe.
 
 ## Command line (optional)
 
@@ -141,7 +150,7 @@ The stage order is always: `preprocess` then (optionally) `plagiarism`,
 then `grade`, then `score`, then `analyze`.
 
 ```bash
-uv run cli fetch -c data/<course>/<assignment>/config.toml
+uv run cli fetch -c data/<course>/config.toml
 uv run cli validate -c data/<course>/<assignment>/config.toml
 uv run cli preprocess -c data/<course>/<assignment>/config.toml
 uv run cli plagiarism -c data/<course>/<assignment>/config.toml
@@ -150,9 +159,19 @@ uv run cli score -c data/<course>/<assignment>/config.toml
 uv run cli analyze -c data/<course>/<assignment>/config.toml
 ```
 
+`fetch` is the odd one out: it reads the course config instead of an
+assignment config, and pulls every assignment the course config lists. To
+fetch a single assignment, append its Canvas ids:
+`uv run cli fetch -c data/<course>/config.toml <course_id> <assignment_id>`.
+Fetch talks to Canvas, so it needs the token from `.env` (see Get your
+Canvas API token above).
+
 Other useful subcommands:
 
-- `view`: open the score review (TUI viewer; add `--web` for a browser view).
+- `view`: open the score review for a graded assignment. The argument is
+  the assignment's `graded` folder, which holds one JSON file per student:
+  `uv run cli view data/<course>/<assignment>/graded`. Add `--web` after
+  the path to open the same view in a browser instead of the TUI.
 - `config set`: change one value of a config, for example
   `uv run cli config set -c data/my-assignment/config.toml grading.max_parallel_tasks 4`.
 - `rubric generate`: write a draft rubric from the fetched assignment
@@ -202,8 +221,12 @@ keys:
 [grading]
 rubric = "rubrics/example_rubric.toml"
 system_prompt = "prompt/system.md"
-provider = "deepseek_chat_tool"
+provider = "ollama"
 ```
+
+The repository bundles two providers: `ollama` (local, recommended, no
+key) and `deepseek_chat_tool` (a cloud alternative that reads
+`DEEPSEEK_API_KEY` from `.env`).
 
 How paths resolve: `rubric` and `system_prompt` are relative to the
 `data/` folder (for example `data/rubrics/example_rubric.toml`);
@@ -219,8 +242,10 @@ CANVAS_BASE_URL=https://your-school.instructure.com
 CANVAS_ACCESS_TOKEN=your-canvas-token
 ```
 
-`FIRECRAWL_API_KEY` is optional: add it only if your submissions include
-scanned images that need OCR.
+`DEEPSEEK_API_KEY` is optional: add it only if you use a key-based provider
+such as DeepSeek (the bundled Ollama provider needs no key).
+`FIRECRAWL_API_KEY` is optional too: add it only if your submissions
+include scanned images that need OCR.
 
 ## Documentation
 
@@ -231,6 +256,41 @@ scanned images that need OCR.
 - Provider config format: [docs/config/provider.md](docs/config/provider.md)
 - Rubric config format: [docs/config/rubric.md](docs/config/rubric.md)
 
+## One-sentence prompt for coding agents
+
+The block below sums up TATA for a coding agent. Paste it as the first
+message and the agent can drive the whole workflow for you: run the CLI,
+run every stage, and report back instead of reading the code.
+
+```markdown
+You are working on TATA, a grading helper for teaching assistants that pulls
+student submissions from Canvas and grades each against a rubric with an
+LLM; the repository organizes everything under data/, with config.toml in
+three layers: global data/config.toml, course data/<course>/config.toml
+([fetch] course id and assignment list), and assignment
+data/<course>/<assignment>/config.toml ([grading]: rubric, system_prompt,
+provider); a fresh checkout ships only data/example until you configure a
+course. All operations go through the CLI, so start with `uv run cli
+--help`. Set up `.env` with `cp .env.sample .env`, filling
+CANVAS_BASE_URL and CANVAS_ACCESS_TOKEN (add an API key only if you use a
+cloud provider; the bundled local Ollama provider needs none, but run
+`ollama pull qwen3.8:latest` and keep `ollama serve` running, since validate
+does not check LLM connectivity). Pull
+submissions with `uv run cli fetch -c data/<course>/config.toml` (append
+course and assignment ids to fetch one assignment), then run each stage with
+`uv run cli <stage> -c data/<course>/<assignment>/config.toml` in this
+order: validate, preprocess, plagiarism (optional), grade, score, analyze.
+Validation, preprocessing, plagiarism, scoring, and analysis can run
+offline, except scanned pages (preprocess uses hosted OCR) and plagiarism's
+first run (downloads its embedding model); grade needs the LLM (local Ollama
+or a keyed cloud provider); fetch needs Canvas. Help me drive this CLI end to
+end: run each stage, summarize
+what it printed, and when a choice is ambiguous (course, assignment,
+provider, rubric, or any config value), ask me and wait for my answer
+instead of guessing; never take an irreversible decision without confirming
+with me.
+```
+
 ## Starter assets
 
 The repository ships with working example files:
@@ -240,8 +300,10 @@ The repository ships with working example files:
   and students
 - `data/rubrics/example_rubric.toml`: an example rubric
 - `data/prompt/system.md`: a generic grading prompt
-- `data/providers/deepseek_chat_tool.toml`: a DeepSeek provider that reads
-  `DEEPSEEK_API_KEY` from your `.env` file
+- `data/providers/ollama.toml`: the bundled local LLM provider, the
+  recommended default (no key needed)
+- `data/providers/deepseek_chat_tool.toml`: an optional cloud provider that
+  reads `DEEPSEEK_API_KEY` from your `.env` file
 
 Once you are set up, confirm everything is ready with:
 
