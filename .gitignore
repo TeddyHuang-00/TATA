@@ -12,6 +12,7 @@ data/rubrics/*
 !data/prompt/
 data/prompt/*
 !data/prompt/system.md
+!data/prompt/lab.md
 !data/providers/
 data/providers/*
 !data/providers/deepseek-v4-flash.toml

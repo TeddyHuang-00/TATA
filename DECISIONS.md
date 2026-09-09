@@ -171,3 +171,23 @@ and neglected routing the TUI through CLI main, adding a second generator, touch
 to achieve one generation path shared by CLI and TUI with atomic overwrite, and a panic-free editor round-trip,
 accepting that the overwrite-confirmation naming, the pure-local `AutoGenModal` list, and the suspend fix rely on documented behavior (0/6 vs 2/3 is this batch's scope, not a full soak; upstream textual has no fix so none is pinned),
 because the user asked for the auto-generate entry (①) and the panic fix (②) in the feedback v6 batch; reusing the shared generator keeps CLI/TUI output format-compatible, and `App.suspend` is the documented remedy for exactly this tty race. Verified: per plan acceptance — pytest full-run as defensive regression (no new tests beyond `tests/tata_library_check.py` headless addition, which cannot exercise the real suspend path; noted), ruff clean; local dev only, remote main untouched per policy.
+
+## Publish self-contained provider examples and public prompt addendum (feedback v7, 2026-09-09)
+
+**Date:** 2026-09-09
+**Status:** Accepted
+**Files:** `data/providers/` (ollama.toml, deepseek-v4-flash.toml), `README.md`, `docs/` (onboarding, config, faq), `src/shared/grading.py`, `data/prompt/` (system.md, lab.md), `.gitignore`
+
+In the context of the repo not being usable from a fresh clone: the README assumed coding-agent fluency (stage-driven flow, starter-asset list missing some shipped examples), the provider examples were not reusable as shipped (the bundled sample used `markdown_json_mode` while grading always builds the client with a `response_model`, i.e. tool-call mode, and the cloud example was still named after its original `deepseek_chat_tool` role), public prompt examples were one generic file while a lab-specific addendum existed only as gitignored local state, and real course/assignment/student identifiers were scattered across public files,
+
+facing a non-technical user who cannot infer provider config or prompt combination from the repo, and a repo that cannot be published as an example without leaking local identities,
+
+we decided for self-contained provider examples (ollama.toml as the recommended no-key default with `mode = "tool_call"`, deepseek-v4-flash.toml renamed from its `deepseek_chat_tool` origin), promoting `data/prompt/lab.md` to a tracked public example (`.gitignore` whitelist plus a README Starter assets bullet), rewriting README for non-technical onboarding including the one-sentence coding-agent prompt chapter, redacting real course/assignment/student identifiers to placeholders (111111/222222/990019, 990001 = "Student A") in public files, and making the grader emit a friendly error for unknown providers,
+
+and neglected expanding the prompt set beyond the single lab addendum, rewording more docs, or keeping a machine-fluent README,
+
+to achieve install-and-run from the README alone with every shipped example valid as-is and a publishable public surface,
+
+accepting that bundled providers must now set `mode = "tool_call"` (local qwen3.8:latest supports tool calls; a missing mode is rejected by provider config validation, while an unknown provider name surfaces via the new friendly error path) and that the cloud example rename breaks configs referencing the old `deepseek_chat_tool` name,
+
+because the user asked for this wrap-up in the 2026-09-09 feedback batch; the rename/README/friendly-error commits are local dev only (1e37e0e, cc0d7c5, 3fcc13b), the lab.md promotion is uncommitted alongside this entry, and remote main is untouched per policy.

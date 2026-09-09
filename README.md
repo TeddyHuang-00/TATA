@@ -300,6 +300,8 @@ The repository ships with working example files:
   and students
 - `data/rubrics/example_rubric.toml`: an example rubric
 - `data/prompt/system.md`: a generic grading prompt
+- `data/prompt/lab.md`: a lab-specific grading addendum, listed alongside
+  `system.md` in `system_prompt` to combine them
 - `data/providers/ollama.toml`: the bundled local LLM provider, the
   recommended default (no key needed)
 - `data/providers/deepseek-v4-flash.toml`: an optional cloud provider that
