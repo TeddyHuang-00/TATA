@@ -18,7 +18,7 @@ ASSIGNMENT_CONFIG = (
     "[grading]\n"
     'rubric = "rubrics/a1.toml"\n'
     'system_prompt = "prompt/system.md"\n'
-    'provider = "deepseek-v4-flash"\n'
+    'provider = "deepseek"\n'
     "max_parallel_tasks = 4\n"
     "\n"
     "[fetch]\n"

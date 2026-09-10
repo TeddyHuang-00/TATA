@@ -29,7 +29,7 @@ mode = "..."
 
 ## Example
 
-`data/providers/deepseek-v4-flash.toml`:
+`data/providers/deepseek.toml`:
 
 ```toml
 base_url = "https://api.deepseek.com"
@@ -84,8 +84,8 @@ If env var is missing, placeholder resolves to empty string, which usually cause
 
 Example:
 
-- Assignment config uses `provider = "deepseek-v4-flash"`
-- Then `data/providers/deepseek-v4-flash.toml` must exist.
+- Assignment config uses `provider = "deepseek"`
+- Then `data/providers/deepseek.toml` must exist.
 
 ## Common mistakes
 

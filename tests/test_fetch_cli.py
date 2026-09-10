@@ -197,7 +197,7 @@ def test_retry_finds_course_config_list(
         "[grading]\n"
         'rubric = "rubrics/a.toml"\n'
         'system_prompt = "prompt/system.md"\n'
-        'provider = "deepseek-v4-flash"\n',
+        'provider = "deepseek"\n',
         encoding="utf-8",
     )
 
@@ -261,7 +261,7 @@ def test_run_fetch_assignment_config_uses_course_fetch_state(
         "[grading]\n"
         'rubric = "rubrics/a.toml"\n'
         'system_prompt = "prompt/system.md"\n'
-        'provider = "deepseek-v4-flash"\n',
+        'provider = "deepseek"\n',
         encoding="utf-8",
     )
 
@@ -297,7 +297,7 @@ def test_run_fetch_non_numeric_assignment_dir_exits(
         "[grading]\n"
         'rubric = "rubrics/a.toml"\n'
         'system_prompt = "prompt/system.md"\n'
-        'provider = "deepseek-v4-flash"\n',
+        'provider = "deepseek"\n',
         encoding="utf-8",
     )
     with pytest.raises(SystemExit) as exc:
@@ -322,7 +322,7 @@ def test_remember_never_writes_mode_key(
         "[grading]\n"
         'rubric = "rubrics/a.toml"\n'
         'system_prompt = "prompt/system.md"\n'
-        'provider = "deepseek-v4-flash"\n',
+        'provider = "deepseek"\n',
         encoding="utf-8",
     )
 

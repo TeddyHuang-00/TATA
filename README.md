@@ -114,7 +114,7 @@ Click a tab to switch (or press Tab / Shift+Tab). Follow these six steps:
    and model to match the service, pick a mode (for example `tool_call`),
    and paste your key into api_key. Alternatively, write
    `${DEEPSEEK_API_KEY}` in the api_key field and put the real key into the
-   project's `.env` file; the bundled example provider `deepseek-v4-flash`
+   project's `.env` file; the bundled example provider `deepseek`
    does exactly that.
 
 3. **Pick a rubric.** In the Library tab, Rubrics sub-tab, create a new
@@ -225,7 +225,7 @@ provider = "ollama"
 ```
 
 The repository bundles two providers: `ollama` (local, recommended, no
-key) and `deepseek-v4-flash` (a cloud alternative that reads
+key) and `deepseek` (a cloud alternative that reads
 `DEEPSEEK_API_KEY` from `.env`).
 
 How paths resolve: `rubric` and `system_prompt` are relative to the
@@ -304,7 +304,7 @@ The repository ships with working example files:
   `system.md` in `system_prompt` to combine them
 - `data/providers/ollama.toml`: the bundled local LLM provider, the
   recommended default (no key needed)
-- `data/providers/deepseek-v4-flash.toml`: an optional cloud provider that
+- `data/providers/deepseek.toml`: an optional cloud provider that
   reads `DEEPSEEK_API_KEY` from your `.env` file
 
 Once you are set up, confirm everything is ready with:
