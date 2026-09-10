@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pytest
 from copydetect import CopyDetector
+from src.shared.caching import cache_file, load_cache_file
 from src.shared.plagiarism import (
+    PlagiarismConfig,
     _blend_rows,
+    _embedding_pairs,
     _pair_key,
+    _run_embedding,
     _write_full_pair_data,
     detect_plagiarism,
+    embedding_input_hash,
 )
 
 
@@ -190,3 +197,153 @@ def test_aggregate_quiet_suppresses_stdout_report(
         detect_plagiarism(root / "config.toml", aggregate=True, quiet=False)
         out = capsys.readouterr().out
         assert "Cross-Assignment Aggregate" in out, out
+
+
+# -- B4: embedding cache at <assignment>/.cache/embedding.json, hash freshness --
+
+
+def _plagiarism_config(
+    root: Path, model: str = "fake-embedding-model"
+) -> PlagiarismConfig:
+    return PlagiarismConfig(
+        assignment_dir=root,
+        raw_dir=root / "raw",
+        processed_dir=root / "processed",
+        output_dir=root / "plagiarism",
+        submissions_dir=root / "plagiarism" / "submissions",
+        template_dir=root / "plagiarism" / "template",
+        report_file=root / "plagiarism" / "report.html",
+        full_pairs_file=root / "plagiarism" / "all_pairs.json",
+        template_file=root / "template.ipynb",
+        extensions=[".py"],
+        display_threshold=0.8,
+        include_python_files=True,
+        copydetect_weight=0.95,
+        embedding_weight=0.05,
+        embedding_model=model,
+    )
+
+
+@pytest.fixture
+def fake_embedder(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Monkeypatched SentenceTransformer (no model download); call sizes recorded.
+
+    ``encode_document`` returns deterministic 1-column embeddings, so file i
+    vs file j similarity is ``(i + 1) * (j + 1) / 100`` in percent.
+    """
+    calls: list[int] = []
+
+    class FakeModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def encode_document(
+            self,
+            texts: list[str],
+            batch_size: int = 16,
+            show_progress_bar: bool = False,
+        ) -> np.ndarray:
+            calls.append(len(texts))
+            return (np.arange(1, len(texts) + 1) / 10).reshape(-1, 1).astype(np.float32)
+
+    monkeypatch.setattr("src.shared.plagiarism.SentenceTransformer", FakeModel)
+    return calls
+
+
+def test_embedding_reused_when_processed_inputs_unchanged(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    fake_embedder: list[int],
+) -> None:
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    cfg = _plagiarism_config(tmp_path)
+
+    assert _run_embedding(cfg) is True
+    assert fake_embedder == [2]
+
+    cache_path = cache_file(tmp_path, "embedding")
+    data = load_cache_file(cache_path)
+    assert data["hash"] == embedding_input_hash(cfg.processed_dir, cfg.embedding_model)
+    # Pairs reach the consumer through the same interface as before.
+    assert _embedding_pairs(cache_path) == {("aaa.md", "bbb.md"): pytest.approx(2.0)}
+    # The old flat file is never written anymore.
+    assert not (tmp_path / "plagiarism" / "all_pairs.embedding.json").exists()
+
+    assert _run_embedding(cfg) is True
+    assert fake_embedder == [2]  # hash matched: pairs reused, no re-encode
+
+
+def test_embedding_recomputes_when_processed_md_changes(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    fake_embedder: list[int],
+) -> None:
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    cfg = _plagiarism_config(tmp_path)
+
+    assert _run_embedding(cfg) is True
+    assert fake_embedder == [2]
+
+    write_tree(tmp_path, "processed/aaa.md", "rewritten answer with more words " * 4)
+    assert _run_embedding(cfg) is True
+    assert fake_embedder == [2, 2]  # md content change -> recompute
+    data = load_cache_file(cache_file(tmp_path, "embedding"))
+    assert data["hash"] == embedding_input_hash(cfg.processed_dir, cfg.embedding_model)
+
+
+def test_embedding_recomputes_when_model_changes(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    fake_embedder: list[int],
+) -> None:
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+
+    assert _run_embedding(_plagiarism_config(tmp_path, model="model-a")) is True
+    assert fake_embedder == [2]
+
+    assert _run_embedding(_plagiarism_config(tmp_path, model="model-b")) is True
+    assert fake_embedder == [2, 2]  # model name is part of the input hash
+
+
+def test_embedding_recomputes_on_corrupt_cache(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    fake_embedder: list[int],
+) -> None:
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    cfg = _plagiarism_config(tmp_path)
+    cache_path = cache_file(tmp_path, "embedding")
+
+    assert _run_embedding(cfg) is True
+    assert fake_embedder == [2]
+
+    cache_path.write_bytes(b'{"fmt": 1, "data": {')  # truncated JSON
+    assert _embedding_pairs(cache_path) == {}  # consumer read stays tolerant
+    assert _run_embedding(cfg) is True  # recompute, no crash
+    assert fake_embedder == [2, 2]
+
+    cache_path.write_text(
+        json.dumps({"fmt": 99, "data": {"hash": "stale", "pairs": []}}),
+        encoding="utf-8",
+    )
+    assert _run_embedding(cfg) is True  # wrong envelope -> treated as empty
+    assert fake_embedder == [2, 2, 2]
+
+
+def test_embedding_input_hash_tracks_md_and_model(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+) -> None:
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    processed = tmp_path / "processed"
+
+    baseline = embedding_input_hash(processed, "model-a")
+    assert embedding_input_hash(processed, "model-a") == baseline
+    assert embedding_input_hash(processed, "model-b") != baseline
+
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    assert embedding_input_hash(processed, "model-a") != baseline

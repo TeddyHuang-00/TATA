@@ -24,6 +24,13 @@ from .assignment_config import (
     resolve_assignment_paths,
     root_plagiarism_section,
 )
+from .caching import (
+    cache_file,
+    content_hash,
+    file_digest,
+    load_cache_file,
+    save_cache_file,
+)
 from .cli_options import (
     AliasChoices,
     ConfigFileCliOptions,
@@ -58,6 +65,7 @@ class PlagiarismCliOptions(ConfigFileCliOptions):
 
 @dataclass(frozen=True)
 class PlagiarismConfig:
+    assignment_dir: Path
     raw_dir: Path
     processed_dir: Path
     output_dir: Path
@@ -119,6 +127,7 @@ def _load_plagiarism_config(config_path: Path) -> PlagiarismConfig:
     template_file = (config_path.parent / plagiarism.template_file).resolve()
 
     return PlagiarismConfig(
+        assignment_dir=config_path.parent.resolve(),
         raw_dir=paths.raw_dir,
         processed_dir=paths.processed_dir,
         output_dir=output_dir,
@@ -292,11 +301,12 @@ def _run_code_plagiarism(
     }
 
 
-def _embedding_pairs(embedding_path: Path) -> dict[tuple[str, str], float]:
-    """Map of (file_a, file_b) -> similarity percent from embedding pair data."""
-    if not embedding_path.exists():
-        return {}
-    payload = json.loads(embedding_path.read_text(encoding="utf-8"))
+def _embedding_pairs(cache_path: Path) -> dict[tuple[str, str], float]:
+    """Map of (file_a, file_b) -> similarity percent from the embedding cache.
+
+    Tolerant read: missing/broken/wrong-envelope cache reads as ``{}``.
+    """
+    payload = load_cache_file(cache_path)
     pairs: dict[tuple[str, str], float] = {}
     for row in payload.get("pairs", []):
         a = Path(row["test_file"]).name
@@ -346,19 +356,23 @@ def _top_pairs(embs: np.ndarray) -> list[tuple[int, int, float]]:
     return pairs
 
 
-def _embedding_fresh(out_path: Path, processed_dir: Path) -> bool:
-    mds = list(processed_dir.glob("*.md"))
-    return (
-        bool(mds)
-        and out_path.exists()
-        and out_path.stat().st_mtime >= max(f.stat().st_mtime for f in mds)
-    )
+def embedding_input_hash(processed_dir: Path, model: str) -> str:
+    """Input hash for the embedding cache: sorted processed/*.md digests + model.
+
+    Public so the cache-migration tool can recompute stored hashes with the
+    production rule instead of reimplementing it.
+    """
+    md_digests = [
+        file_digest(md).encode("utf-8") for md in sorted(processed_dir.glob("*.md"))
+    ]
+    return content_hash([*md_digests, model.encode("utf-8")])
 
 
 def _run_embedding(cfg: PlagiarismConfig) -> bool:
-    """Embed processed/*.md and write all_pairs.embedding.json (skip when fresh)."""
-    out_path = cfg.output_dir / "all_pairs.embedding.json"
-    if _embedding_fresh(out_path, cfg.processed_dir):
+    """Embed processed/*.md into <assignment>/.cache/embedding.json (skip on hash match)."""
+    cache_path = cache_file(cfg.assignment_dir, "embedding")
+    input_hash = embedding_input_hash(cfg.processed_dir, cfg.embedding_model)
+    if load_cache_file(cache_path).get("hash") == input_hash:
         return True
     if SentenceTransformer is None:
         print(
@@ -397,17 +411,9 @@ def _run_embedding(cfg: PlagiarismConfig) -> bool:
         }
         for i, j, s in _top_pairs(embs)
     ]
-    payload = {
-        "version": 1,
-        "test_file_count": len(items),
-        "reference_file_count": len(items),
-        "pair_count": len(rows),
-        "pairs": rows,
-    }
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    save_cache_file(cache_path, {"hash": input_hash, "pairs": rows})
     print(
-        f"[plagiarism] embedding -> {out_path} ({len(items)} files, {len(rows)} pairs)"
+        f"[plagiarism] embedding -> {cache_path} ({len(items)} files, {len(rows)} pairs)"
     )
     return True
 
@@ -436,7 +442,7 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
     _write_full_pair_data(detector, copydetect_path)
     copydetect_rows = json.loads(copydetect_path.read_text(encoding="utf-8"))["pairs"]
 
-    embedding_pairs = _embedding_pairs(cfg.output_dir / "all_pairs.embedding.json")
+    embedding_pairs = _embedding_pairs(cache_file(cfg.assignment_dir, "embedding"))
     rows = _blend_rows(
         copydetect_rows,
         embedding_pairs,
