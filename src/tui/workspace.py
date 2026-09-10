@@ -19,7 +19,7 @@ Honesty notes over the design (design 99 accepted trade-offs):
   When the count is unknown (fetch/analyze) the bar is indeterminate.
 - Synchronous stage functions cannot be killed: ``cancel_event.set()`` puts
   the UI in "Stopping…" and the job's result is dropped when the function
-  returns (checkpoint/mtime semantics make the next run incremental). No new
+  returns (the shared cache rules make the next run incremental). No new
   job starts while one runs (exclusive worker group).
 """
 
@@ -157,10 +157,10 @@ def fmt_last_run(ts: float | None) -> str:
 def _grade_pending(config_path: Path) -> int:
     """Submissions grading would actually (re)grade right now.
 
-    Same hash-cache rule ``grade_assignment`` applies (pending_grade_submissions
-    in src.shared.grading) — NOT the checkpoint: its done list never shrinks,
-    so after a content change it still says all-done while the cache queues a
-    regrade. Broken config -> 0 (dirty-config tolerance; grade can't run).
+    The single shared rule: ``pending_grade_submissions`` in
+    src.shared.grading — the same function ``grade_assignment`` queues from,
+    so the display can never disagree with a run.
+    Broken config -> 0 (dirty-config tolerance; grade can't run).
     """
     try:
         return len(pending_grade_submissions(config_path))
@@ -185,10 +185,9 @@ def _pre_pending(config_path: Path) -> int:
 def _cached_grade(config_path: Path) -> int:
     """Submissions currently valid under the grading hash cache.
 
-    Inverse of ``_grade_pending`` under the same shared rule — used for the
-    grade progress bar (the cache is updated per submission during a run)
-    and the grade subtitle's done count (NOT the checkpoint: its done list
-    never shrinks, so it over-reports after a content change).
+    Inverse of ``_grade_pending`` under the same shared rule (single source:
+    src.shared.grading) — used for the grade progress bar (the cache is
+    updated per submission during a run) and the grade subtitle's done count.
     """
     try:
         return cached_grade_count(config_path)
@@ -298,7 +297,7 @@ class AssignmentScreen(JobHost):
     cancel_button_id = "#ws-cancel"
     progress_text_id = "#ws-progress-text"
     protect_message = "Stage job '{stage}' is running — press x to cancel"
-    cancelled_log = "Job cancelled — progress saved (checkpoint/mtime based)"
+    cancelled_log = "Job cancelled — progress saved (cache based)"
     cancelled_notify = "Cancelled — progress saved"
     green_contains: ClassVar[tuple[str, ...]] = ("[done]", "✓")
     green_prefixes: ClassVar[tuple[str, ...]] = ("[processed]",)
@@ -727,9 +726,8 @@ class AssignmentScreen(JobHost):
             return count_files(a_dir / "processed", ".md")
         if stage == "grade":
             # Count under the grading hash-cache rule (cache is updated per
-            # submission during a run, so the bar moves); NOT the checkpoint
-            # whose done list never shrinks — that shows N/N while a regrade
-            # is queueing.
+            # submission during a run, so the bar moves); the same shared
+            # rule that queues the run — single source, no second counter.
             return _cached_grade(info.config_path)
         if stage == "score":
             return count_recursive(a_dir / "scored")

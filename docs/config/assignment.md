@@ -163,7 +163,7 @@ Fields:
 - `raw_dir` (default `raw`): input submissions location for preprocessing/plagiarism.
 - `processed_dir` (default `processed`): preprocessed markdown outputs consumed by grading.
 - `graded_dir` (default `graded`): grading JSON output location consumed by scoring/analyze.
-- `logs_dir` (default `logs`): stage logs/checkpoint/meta-analysis files.
+- `logs_dir` (default `logs`): stage logs/meta-analysis files.
 - `reference_file` (optional, default none): reference answer file for comparison grading. Omit to grade against rubric criteria alone.
 
 Accepted value type:

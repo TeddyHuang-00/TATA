@@ -140,7 +140,7 @@ Symptom:
 
 Fix:
 
-1. Remove `logs/grading.cache.json` (and `logs/grading.checkpoint.json` if present)
+1. Remove `.cache/grading.json` in the assignment directory
 1. Remove stale files in `graded/`
 1. Run grade again
 

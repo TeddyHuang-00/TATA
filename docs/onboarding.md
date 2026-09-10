@@ -176,7 +176,7 @@ uv run cli analyze -c data/my-assignment/config.toml
 - Processed markdown: `processed/`
 - Structured grading JSON: `graded/*.json`
 - Score summaries: `scored/` (format-specific subfolders)
-- Logs and checkpoint: `logs/`
+- Logs: `logs/`
 - Meta analysis reports: `logs/meta_analysis.json`, `logs/meta_analysis.md`
 - Plagiarism outputs: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
 - Full pair data for aggregation: `plagiarism/all_pairs.json`

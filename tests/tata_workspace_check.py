@@ -14,7 +14,6 @@ Run: uv run tests/tata_workspace_check.py
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import tempfile
 import time
@@ -22,7 +21,7 @@ from pathlib import Path
 
 from e2e_common import COURSE, make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.assignment_config import load_assignment_file
-from src.shared.caching import CACHE_FMT
+from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import _grading_pending, _load_assignment_config
 from src.tui import workspace as tw
 from src.tui.app import AliasEditorModal, TataApp
@@ -41,14 +40,15 @@ ASSIGNMENT_CFG = (
 
 
 def _seed_grade_cache(data_root: Path) -> None:
-    """Fixture state the grading hash-cache rule needs (ebb855b: the
-    subtitle follows logs/grading.cache.json, not the checkpoint).
+    """Fixture state the grading hash-cache rule needs (the grade subtitle
+    follows ``<assignment>/.cache/grading.json``; values come from the rule
+    itself via _grading_pending).
 
     The [grading] config references rubrics/exam.toml + prompt/system.md;
     without them the pending lookup raises -> 0 and the grade button shows
     "2/2 done". Write those files plus a cache entry marking 100001 done,
     so the workspace renders the intended partial state "1 pending · 1
-    done" (hash values come from the rule itself via _grading_pending).
+    done".
     """
     (data_root / "rubrics").mkdir(exist_ok=True)
     (data_root / "rubrics" / "exam.toml").write_text(
@@ -62,12 +62,10 @@ def _seed_grade_cache(data_root: Path) -> None:
     cfg = _load_assignment_config(a1 / "config.toml")
     cfg_model = load_assignment_file(a1 / "config.toml")
     _pending, hashes = _grading_pending(cfg, cfg_model)
-    cache = {
-        stem: {"fmt": CACHE_FMT, "hash": h}
-        for stem, h in hashes.items()
-        if stem == "100001"
-    }
-    (a1 / "logs" / "grading.cache.json").write_text(json.dumps(cache), encoding="utf-8")
+    save_cache_file(
+        cache_file(a1, "grading"),
+        {stem: {"hash": h} for stem, h in hashes.items() if stem == "100001"},
+    )
 
 
 def _stage_buttons(app: TataApp) -> dict[str, Button]:

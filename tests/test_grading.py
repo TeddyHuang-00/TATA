@@ -89,11 +89,12 @@ def test_grade_cache_skips_second_run(
     assert result["success"] == 1
     assert len(calls) == 1
 
-    cache_file = tmp_path / "data" / "c1" / "a1" / "logs" / "grading.cache.json"
-    cache = json.loads(cache_file.read_text(encoding="utf-8"))
-    assert "100001" in cache
-    assert cache["100001"]["fmt"] == 1
-    assert isinstance(cache["100001"]["hash"], str)
+    a_dir = tmp_path / "data" / "c1" / "a1"
+    envelope = json.loads(cache_file(a_dir, "grading").read_text(encoding="utf-8"))
+    assert set(envelope) == {"fmt", "data"}
+    assert envelope["fmt"] == 1
+    assert set(envelope["data"]["100001"]) == {"hash"}
+    assert isinstance(envelope["data"]["100001"]["hash"], str)
 
     result2 = grade_assignment(config_path)
     assert result2 is not None
@@ -130,18 +131,58 @@ def test_grade_force_reqrades_despite_valid_cache(
     grade_assignment(config_path, force=True)
 
     assert len(calls) == 2
+    # force bypasses the decision but never deletes the cache file.
+    assert cache_file(tmp_path / "data" / "c1" / "a1", "grading").is_file()
 
 
-def test_pending_follows_hash_cache_not_checkpoint(
+def test_broken_or_foreign_envelope_cache_regrades_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tolerance: corrupt JSON / wrong fmt envelope -> {} -> full regrade."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+    cache_path = cache_file(tmp_path / "data" / "c1" / "a1", "grading")
+
+    grade_assignment(config_path)  # the cache is written
+    cache_path.write_text("{not json", encoding="utf-8")
+    grade_assignment(config_path)
+    assert len(calls) == 2
+
+    cache_path.write_text(json.dumps({"fmt": 999, "data": {}}), encoding="utf-8")
+    grade_assignment(config_path)
+    assert len(calls) == 3
+
+
+def test_grade_writes_no_checkpoint_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The zombie checkpoint is gone: a successful run leaves logs/ empty
+    and writes the cache to .cache/grading.json only."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+    a_dir = tmp_path / "data" / "c1" / "a1"
+
+    grade_assignment(config_path)
+
+    # No checkpoint and no legacy logs/ cache file (logs/ holds nothing
+    # after a clean run: the error log only appears on failures).
+    assert not list(a_dir.rglob("grading.checkpoint.json"))
+    assert not list((a_dir / "logs").iterdir())
+    assert cache_file(a_dir, "grading").is_file()
+
+
+def test_pending_follows_hash_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Item: "needs rerun" count must come from the grading hash cache.
 
-    Regression: the workspace display counted pending from
-    grading.checkpoint.json (a done list that never shrinks), while the run
-    queued tasks by the hash cache. After a processed md changes, the cache
-    says "regrade" (run queues it) although the checkpoint still says all
-    done — the display then under-reported 0 to rerun.
+    Display and run share the one rule (src.shared.grading._grading_pending):
+    after a processed md changes, both say the submission regrades. Regression:
+    the old display counted pending from grading.checkpoint.json (a done list
+    that never shrinks), so it under-reported 0 to rerun while the run queued
+    the submission by the hash cache.
     """
     from src.tui.scan import AssignmentInfo, Counts
     from src.tui.workspace import AssignmentScreen, _incremental_line, state_key
@@ -152,18 +193,14 @@ def test_pending_follows_hash_cache_not_checkpoint(
     a_dir = tmp_path / "data" / "c1" / "a1"
 
     grade_assignment(config_path)
-    checkpoint = json.loads(
-        (a_dir / "logs" / "grading.checkpoint.json").read_text(encoding="utf-8")
-    )
-    assert checkpoint["done"] == ["100001.md"]
+    # No zombie checkpoint is produced by a run (single state source).
+    assert not (a_dir / "logs" / "grading.checkpoint.json").exists()
 
     (a_dir / "processed" / "100001.md").write_text(
         "# changed answer\n", encoding="utf-8"
     )
 
-    # Checkpoint (the old display source) still says "all done"...
-    assert len(checkpoint["done"]) == 1
-    # ...but the cache rule the run applies says this submission regrades.
+    # The cache rule the run applies says this submission regrades.
     pending = pending_grade_submissions(config_path)
     assert [p.stem for p in pending] == ["100001"]
 
@@ -190,9 +227,8 @@ def test_pending_follows_hash_cache_not_checkpoint(
     )
     assert state_key(full) == "partial"
 
-    # The grade progress bar polls the cache rule, not the checkpoint: while
-    # the checkpoint still lists the submission, the cache says 0 done and
-    # goes back to 1 once the regrade lands.
+    # The grade progress bar polls the cache rule: while the cached hash is
+    # stale it says 0 done, and goes back to 1 once the regrade lands.
     ws = AssignmentScreen.__new__(AssignmentScreen)
     ws._info = full
     assert ws._stage_done("grade") == 0

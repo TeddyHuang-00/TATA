@@ -117,17 +117,18 @@ uv run cli analyze -c data/my-assignment/config.toml
 - Processed markdown: `processed/`
 - Grading JSON: `graded/*.json`
 - Score summaries: `scored/` (format-specific subfolders)
-- Logs and checkpoint: `logs/`
+- Logs: `logs/`
 - Plagiarism report and extracted files: `plagiarism/report.html`, `plagiarism/submissions/`, `plagiarism/template/`
 
 ## 11. Why do I get "All submissions already graded (cache hit)"?
 
-The grading cache (`logs/grading.cache.json`, keyed by submission input
-hashes) remembers which submissions were graded with unchanged inputs.
+The grading cache (`.cache/grading.json` in the assignment directory, keyed
+by submission input hashes) remembers which submissions were graded with
+unchanged inputs.
 
 If you want to regrade from scratch, remove:
 
-- `logs/grading.cache.json` (and `logs/grading.checkpoint.json` if present)
+- `.cache/grading.json` in the assignment directory
 - old files in `graded/`
 
 or re-run with `--force`. Then run grade again.

@@ -18,7 +18,7 @@ from .assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
-from .caching import CACHE_FMT, content_hash, load_cache, save_cache
+from .caching import cache_file, content_hash, load_cache_file, save_cache_file
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
 from .provider import build_provider_client, get_providers
@@ -36,10 +36,6 @@ class AssignmentConfig:
     system_prompt_files: list[Path]
     provider_name: str
     max_parallel_tasks: int = 10
-
-
-class GradingCheckpoint(BaseModel):
-    done: list[str] = Field(default_factory=list)
 
 
 class GradingCliOptions(ConfigFileCliOptions):
@@ -96,19 +92,6 @@ def _read_system_prompt(system_prompt_files: list[Path]) -> str:
     return "\n\n".join(section for section in sections if section)
 
 
-def _load_checkpoint(checkpoint_file: Path) -> GradingCheckpoint:
-    if not checkpoint_file.exists():
-        return GradingCheckpoint()
-    return GradingCheckpoint.model_validate_json(
-        checkpoint_file.read_text(encoding="utf-8")
-    )
-
-
-def _save_checkpoint(checkpoint_file: Path, checkpoint: GradingCheckpoint) -> None:
-    checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint_file.write_text(checkpoint.model_dump_json(indent=2), encoding="utf-8")
-
-
 def _collect_submissions(
     processed_dir: Path, reference_file: Path | None
 ) -> list[Path]:
@@ -129,14 +112,14 @@ def _grading_pending(
     """(submissions to (re)grade, stem -> input hash) under the grading cache rule.
 
     Single source of the rule shared by ``grade_assignment`` and the TUI's
-    display: a submission is pending unless ``logs/grading.cache.json`` holds
-    a fmt/hash match AND its graded JSON exists. Hash covers the processed
+    display: a submission is pending unless ``<assignment>/.cache/grading.json``
+    holds a matching hash AND its graded JSON exists. Hash covers the processed
     md, rubric, system prompts, reference, the [grading] section, the
     provider entry (name/base_url/model/mode/temperature) and the
     visual_evaluation flag; any change regrades.
     """
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
-    cache = load_cache(cfg.logs_dir / "grading.cache.json")
+    cache = load_cache_file(cache_file(cfg.processed_dir.parent, "grading"))
 
     provider = get_providers()[cfg_model.grading.provider]
     grading_payload = json.dumps(
@@ -175,7 +158,6 @@ def _grading_pending(
         output_file = cfg.graded_dir / f"{submission.stem}.json"
         return bool(
             isinstance(entry, dict)
-            and entry.get("fmt") == CACHE_FMT
             and entry.get("hash") == sub_hashes[submission.stem]
             and output_file.is_file()
         )
@@ -374,10 +356,7 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     cfg.graded_dir.mkdir(parents=True, exist_ok=True)
     cfg.logs_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_file = cfg.logs_dir / "grading.checkpoint.json"
     error_log_file = cfg.logs_dir / "grading.errors.log"
-
-    checkpoint = _load_checkpoint(checkpoint_file)
 
     if not cfg.rubric_file.exists():
         msg = (
@@ -431,17 +410,15 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
         }
 
     # Grading cache: a submission is pending unless its input hash matches
-    # logs/grading.cache.json AND the graded JSON exists; any change regrades.
+    # .cache/grading.json AND the graded JSON exists; any change regrades.
     # (Rule lives in _grading_pending — shared with the TUI display.)
-    cache_path = cfg.logs_dir / "grading.cache.json"
+    cache_path = cache_file(cfg.processed_dir.parent, "grading")
     pending_submissions, sub_hashes = _grading_pending(cfg, cfg_model)
-    cache = load_cache(cache_path)
+    cache = load_cache_file(cache_path)
 
     if force:
         pending_submissions = submissions
-        print(
-            "Force mode enabled: ignoring cache/checkpoint and regrading all submissions."
-        )
+        print("Force mode enabled: ignoring cache and regrading all submissions.")
     elif not pending_submissions:
         print("All submissions already graded (cache hit).")
         return {
@@ -518,15 +495,9 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
 
             if error_message is None:
                 output_file.write_text(result_json, encoding="utf-8")
-                if submission_name not in checkpoint.done:
-                    checkpoint.done.append(submission_name)
-                _save_checkpoint(checkpoint_file, checkpoint)
                 try:
-                    cache[submission.stem] = {
-                        "fmt": CACHE_FMT,
-                        "hash": sub_hashes[submission.stem],
-                    }
-                    save_cache(cache_path, cache)
+                    cache[submission.stem] = {"hash": sub_hashes[submission.stem]}
+                    save_cache_file(cache_path, cache)
                 except Exception as exc:  # grading must never break on cache
                     print(f"[warn] failed to write grading cache: {exc}")
                 print(f"[done] {submission_name}")

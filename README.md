@@ -139,9 +139,9 @@ Click a tab to switch (or press Tab / Shift+Tab). Follow these six steps:
    press `s` to open the score review for the assignment.
 
 That is the whole loop. Every assignment you import gets its own folder and
-config. `preprocess` and `grade` keep checkpoints, so rerunning either one
-resumes where it stopped. The other stages keep no checkpoints: they simply
-recompute when rerun, which is safe.
+config. `fetch`, `preprocess` and `grade` keep content-hash caches
+(`.cache/`), so rerunning them skips unchanged work. `score` and `analyze`
+simply recompute when rerun, which is safe.
 
 ## Command line (optional)
 
