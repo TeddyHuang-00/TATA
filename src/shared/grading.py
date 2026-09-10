@@ -4,6 +4,7 @@ import base64
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,13 @@ from .assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
-from .caching import cache_file, content_hash, load_cache_file, save_cache_file
+from .caching import (
+    cache_file,
+    content_hash,
+    file_digest,
+    load_cache_file,
+    save_cache_file,
+)
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
 from .provider import build_provider_client, get_providers
@@ -35,6 +42,7 @@ class AssignmentConfig:
     rubric_file: Path
     system_prompt_files: list[Path]
     provider_name: str
+    hooks_dir: Path | None
     max_parallel_tasks: int = 10
 
 
@@ -70,6 +78,13 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
         ]
     provider_name = str(grading.provider)
     max_parallel_tasks = grading.max_parallel_tasks
+    # Same resolution as HookRuntime.from_config: hooks.dir sits under the
+    # data/ root; None when no mount is configured (nothing to hash).
+    hooks_dir = (
+        (config_root(config_path) / cfg.hooks.dir).resolve()
+        if cfg.hooks.mounts
+        else None
+    )
 
     return AssignmentConfig(
         assignment_name=name,
@@ -80,6 +95,7 @@ def _load_assignment_config(config_path: Path) -> AssignmentConfig:
         rubric_file=rubric_file,
         system_prompt_files=system_prompt_files,
         provider_name=provider_name,
+        hooks_dir=hooks_dir,
         max_parallel_tasks=max_parallel_tasks,
     )
 
@@ -106,6 +122,75 @@ def _collect_submissions(
     return [p for p in submission_files if p.stem != reference_stem]
 
 
+def _submission_images(cfg: AssignmentConfig, stem: str) -> list[Path]:
+    """Screenshots of ``stem`` in grader order: page renders (``_pN``) first,
+    then notebook-extracted outputs (``_iN``), each naturally sorted; ``[]``
+    when none exist. Single source for the grading hash and the vision
+    payload (``_images_for``)."""
+    shots_dir = cfg.processed_dir / "screenshots"
+    try:
+        mtime_ns = shots_dir.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = 0  # no screenshots dir -> empty listing below
+    return [
+        shots_dir / name
+        for name in _submission_image_names(str(shots_dir), stem, mtime_ns)
+    ]
+
+
+# Memoized so TUI polling goes stat + cache hit instead of re-globbing per
+# tick; the directory's mtime_ns keys it (add/remove/rename bumps it — content
+# rewrites need not: only names are cached here, and file_digest keys on the
+# file's own mtime_ns/size).
+@lru_cache(maxsize=4096)
+def _submission_image_names(
+    dir_str: str, stem: str, dir_mtime_ns: int
+) -> tuple[str, ...]:
+    del dir_mtime_ns
+    shots_dir = Path(dir_str)
+    pages = sorted(shots_dir.glob(f"{stem}_p*.png"))
+    extracted = sorted(shots_dir.glob(f"{stem}_i*.png"))
+    return tuple([p.name for p in pages] + [p.name for p in extracted])
+
+
+# Mount points grading.py invokes (docs/hooks.md lifecycle map): only these
+# hooks run during the grade stage, so only their config/scripts enter the
+# grading hash — other stages' hooks cannot affect it.
+_GRADE_HOOK_MOUNTS = (
+    "before_grade",
+    "before_grade_submission",
+    "after_grade_submission",
+    "after_grade",
+)
+
+
+def _hook_hash_parts(
+    cfg: AssignmentConfig, cfg_model: AssignmentFileConfig
+) -> list[bytes]:
+    """Hash parts for grade-stage hooks: for each referenced script, its mount
+    point + configured path and a ``file_digest`` of its bytes (a missing
+    script hashes as a marker — grading fails on it anyway). Runtime behavior
+    (env vars, files a script reads, side effects) is not statically
+    capturable and stays outside the hash."""
+    if cfg.hooks_dir is None:
+        return []
+    parts: list[bytes] = []
+    for mount_point in _GRADE_HOOK_MOUNTS:
+        script_cfg = cfg_model.hooks.mounts.get(mount_point)
+        if script_cfg is None:
+            continue
+        script_rels = [script_cfg] if isinstance(script_cfg, str) else script_cfg
+        for script_rel in script_rels:
+            script_path = (cfg.hooks_dir / script_rel).resolve()
+            script_digest = (
+                file_digest(script_path).encode()
+                if script_path.is_file()
+                else b"<missing>"
+            )
+            parts.extend([f"{mount_point}:{script_rel}".encode(), script_digest])
+    return parts
+
+
 def _grading_pending(
     cfg: AssignmentConfig, cfg_model: AssignmentFileConfig
 ) -> tuple[list[Path], dict[str, str]]:
@@ -115,8 +200,11 @@ def _grading_pending(
     display: a submission is pending unless ``<assignment>/.cache/grading.json``
     holds a matching hash AND its graded JSON exists. Hash covers the processed
     md, rubric, system prompts, reference, the [grading] section, the
-    provider entry (name/base_url/model/mode/temperature) and the
-    visual_evaluation flag; any change regrades.
+    provider entry (name/base_url/model/mode/temperature), the
+    visual_evaluation flag, its screenshots (visual on) and the grade-stage
+    hooks (config + script bytes); any change regrades. Every file input goes
+    through the memoized ``file_digest`` so TUI polling does not re-read
+    screenshots.
     """
     submissions = _collect_submissions(cfg.processed_dir, cfg.reference_file)
     cache = load_cache_file(cache_file(cfg.processed_dir.parent, "grading"))
@@ -136,22 +224,32 @@ def _grading_pending(
         },
         sort_keys=True,
     ).encode("utf-8")
-    rubric_bytes = cfg.rubric_file.read_bytes()
-    prompt_bytes = [p.read_bytes() for p in cfg.system_prompt_files]
-    reference_bytes = (
-        cfg.reference_file.read_bytes() if cfg.reference_file is not None else b""
+    reference_digest = (
+        file_digest(cfg.reference_file).encode()
+        if cfg.reference_file is not None
+        else b""
     )
+    shared_parts = [
+        file_digest(cfg.rubric_file).encode(),
+        *[file_digest(p).encode() for p in cfg.system_prompt_files],
+        reference_digest,
+        grading_payload,
+        *_hook_hash_parts(cfg, cfg_model),
+    ]
 
-    sub_hashes = {
-        s.stem: content_hash([
-            s.read_bytes(),
-            rubric_bytes,
-            *prompt_bytes,
-            reference_bytes,
-            grading_payload,
+    visual_evaluation = cfg_model.processing.visual_evaluation
+    sub_hashes: dict[str, str] = {}
+    for submission in submissions:
+        image_parts = (
+            [file_digest(p).encode() for p in _submission_images(cfg, submission.stem)]
+            if visual_evaluation
+            else []
+        )
+        sub_hashes[submission.stem] = content_hash([
+            file_digest(submission).encode(),
+            *shared_parts,
+            *image_parts,
         ])
-        for s in submissions
-    }
 
     def cached_valid(submission: Path) -> bool:
         entry = cache.get(submission.stem)
@@ -456,13 +554,10 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
     def _images_for(submission: Path) -> list[str]:
         if not use_images:
             return []
-        # Order: page renders (docx/pdf _pN) first, then notebook-extracted
-        # outputs (ipynb _iN); each class in natural filename order.
-        page_files = sorted(screenshots_dir.glob(f"{submission.stem}_p*.png"))
-        extracted_files = sorted(screenshots_dir.glob(f"{submission.stem}_i*.png"))
+        # Same discovery as the grading hash: _submission_images.
         return [
             base64.b64encode(f.read_bytes()).decode()
-            for f in page_files + extracted_files
+            for f in _submission_images(cfg, submission.stem)
         ]
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:

@@ -7,9 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from instructor import Mode
+from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import (
     _build_grading_messages,
+    _grading_pending,
+    _load_assignment_config,
     build_client,
     grade_assignment,
     pending_grade_submissions,
@@ -251,6 +254,135 @@ def test_pending_follows_hash_cache(
     assert scanned[0].grade_pending == 0
     assert scanned[0].pre_pending == 0
     assert state_key(scanned[0]) == "done"
+
+
+# --- B3b: grading hash completeness (screenshots + hooks, digest-based) -----
+
+_HOOK_NOOP = (
+    "import json, sys\n"
+    "payload = json.loads(sys.stdin.read() or '{}')\n"
+    "print(json.dumps(payload))\n"
+)
+
+
+def _seed_valid_grade_cache(config_path: Path) -> None:
+    """Seed a fully-valid grading cache: graded JSON per submission plus hashes
+    computed by the rule itself (never hardcoded — Pitfall 18)."""
+    a_dir = config_path.parent
+    cfg = _load_assignment_config(config_path)
+    cfg_model = load_assignment_file(config_path)
+    _, hashes = _grading_pending(cfg, cfg_model)
+    for stem in hashes:
+        (a_dir / "graded" / f"{stem}.json").write_text("{}", encoding="utf-8")
+    save_cache_file(
+        cache_file(a_dir, "grading"), {s: {"hash": h} for s, h in hashes.items()}
+    )
+
+
+def _add_grade_hook_mount(config_path: Path, script_name: str) -> None:
+    """Append a before_grade_submission mount to the assignment config."""
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + f'[hooks.mounts]\nbefore_grade_submission = "{script_name}"\n',
+        encoding="utf-8",
+    )
+
+
+def test_screenshot_rerender_invalidates_when_visual_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B3b: md unchanged, only the screenshots change -> regrade (visual on)."""
+    config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
+    _patch_grade_deps(monkeypatch, [])
+    shots = config_path.parent / "processed" / "screenshots"
+    shots.mkdir(parents=True)
+    (shots / "100001_p1.png").write_bytes(b"page")
+    (shots / "100001_i0.png").write_bytes(b"cell")
+    _seed_valid_grade_cache(config_path)
+    assert pending_grade_submissions(config_path) == []
+
+    (shots / "100001_i0.png").write_bytes(b"cell-v2")  # notebook image changed
+    assert [p.stem for p in pending_grade_submissions(config_path)] == ["100001"]
+
+    _seed_valid_grade_cache(config_path)  # accept the new image state
+    (shots / "100001_p1.png").write_bytes(b"page-v2")  # page render changed
+    assert [p.stem for p in pending_grade_submissions(config_path)] == ["100001"]
+
+
+def test_screenshot_change_ignored_when_visual_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B3b: with visual_evaluation off, screenshots never enter the hash."""
+    config_path = _setup_grade_env(tmp_path)
+    _patch_grade_deps(monkeypatch, [])
+    shots = config_path.parent / "processed" / "screenshots"
+    shots.mkdir(parents=True)
+    (shots / "100001_p1.png").write_bytes(b"page")
+    _seed_valid_grade_cache(config_path)
+    assert pending_grade_submissions(config_path) == []
+
+    (shots / "100001_p1.png").write_bytes(b"page-v2")
+    (shots / "100001_i0.png").write_bytes(b"new-image")
+    assert pending_grade_submissions(config_path) == []
+
+
+def test_hook_config_change_invalidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B3b: editing a grade-stage [hooks.mounts] entry -> regrade."""
+    config_path = _setup_grade_env(tmp_path)
+    _patch_grade_deps(monkeypatch, [])
+    hooks = tmp_path / "data" / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "h1.py").write_text(_HOOK_NOOP, encoding="utf-8")
+    (hooks / "h2.py").write_text(_HOOK_NOOP, encoding="utf-8")
+
+    _add_grade_hook_mount(config_path, "h1.py")
+    _seed_valid_grade_cache(config_path)
+    assert pending_grade_submissions(config_path) == []
+
+    # Same bytes, different script wired at the mount point.
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace('"h1.py"', '"h2.py"'),
+        encoding="utf-8",
+    )
+    assert [p.stem for p in pending_grade_submissions(config_path)] == ["100001"]
+
+
+def test_hook_script_byte_change_invalidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B3b: same config, edited hook script bytes -> regrade."""
+    config_path = _setup_grade_env(tmp_path)
+    _patch_grade_deps(monkeypatch, [])
+    script = tmp_path / "data" / "hooks" / "h1.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(_HOOK_NOOP, encoding="utf-8")
+    _add_grade_hook_mount(config_path, "h1.py")
+    _seed_valid_grade_cache(config_path)
+    assert pending_grade_submissions(config_path) == []
+
+    script.write_text(_HOOK_NOOP + "\n# tweak\n", encoding="utf-8")
+    assert [p.stem for p in pending_grade_submissions(config_path)] == ["100001"]
+
+
+def test_grading_hash_stable_across_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B3b: same inputs -> identical sub_hashes on repeat (memo hits included)."""
+    config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
+    _patch_grade_deps(monkeypatch, [])
+    shots = config_path.parent / "processed" / "screenshots"
+    shots.mkdir(parents=True)
+    (shots / "100001_p1.png").write_bytes(b"page")
+    cfg = _load_assignment_config(config_path)
+    cfg_model = load_assignment_file(config_path)
+
+    _, first = _grading_pending(cfg, cfg_model)
+    _, second = _grading_pending(cfg, cfg_model)
+
+    assert set(first) == {"100001"}
+    assert first == second
 
 
 def _image_payloads(content: list[dict]) -> list[bytes]:
