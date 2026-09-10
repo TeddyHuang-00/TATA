@@ -15,7 +15,7 @@ data/prompt/*
 !data/prompt/lab.md
 !data/providers/
 data/providers/*
-!data/providers/deepseek-v4-flash.toml
+!data/providers/deepseek.toml
 !data/providers/ollama.toml
 
 __pycache__/

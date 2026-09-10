@@ -34,7 +34,7 @@ mode = "..."
 ```toml
 base_url = "https://api.deepseek.com"
 api_key = "${DEEPSEEK_API_KEY}"
-model = "deepseek-v4-flash-vision-exp"
+model = "deepseek-flash"
 mode = "tool_call"
 ```
 
