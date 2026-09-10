@@ -23,13 +23,11 @@ from .assignment_config import (
     resolve_assignment_paths,
 )
 from .caching import (
-    CACHE_FMT,
     cache_file,
     content_hash,
     file_hash,
-    load_cache,
     load_cache_file,
-    save_cache,
+    save_cache_file,
 )
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .convert import (
@@ -233,11 +231,14 @@ def _screenshots_missing(shots_dir: Path, output_stem: str) -> bool:
 
 
 def _cached(cache: dict, stem: str, item_hash: str, output_file: Path) -> bool:
-    """True when the cache entry for ``stem`` matches and the output exists."""
+    """True when the cache entry for ``stem`` matches and the output exists.
+
+    The envelope fmt check lives in ``load_cache_file``; an entry is valid on
+    hash match alone (plus the output existing).
+    """
     entry = cache.get(stem)
     return bool(
         isinstance(entry, dict)
-        and entry.get("fmt") == CACHE_FMT
         and entry.get("hash") == item_hash
         and output_file.is_file()
     )
@@ -366,10 +367,11 @@ def _preprocess_pending(  # ruff: ignore[too-many-arguments, too-many-positional
     would reconvert under the preprocess cache rule.
 
     Single source of the rule shared by ``preprocess_assignment`` and the
-    TUI display: an item is pending unless ``processed/.preprocess.cache.json``
-    holds a fmt/hash match AND its output md exists. Hash covers the raw file
-    contents, fetch stamps for folders, the [processing] config, template
-    selection and the hook scripts; any change reconverts.
+    TUI display: an item is pending unless ``<assignment>/.cache/preprocess.json``
+    (envelope-checked by ``load_cache_file``) holds a matching hash entry AND
+    its output md exists. Hash covers the raw file contents, fetch stamps for
+    folders, the [processing] config, template selection and the hook scripts;
+    any change reconverts.
     """
     pending: dict[Path, tuple[list[str], str]] = {}
     for item in items:
@@ -420,7 +422,7 @@ def pending_preprocess_items(config_path: Path) -> list[Path]:
     items = _iter_raw_items(raw_dir)
     item_files_by = {item: _item_files(item, configured_formats) for item in items}
     fetch_cache: dict[str, str] = load_cache_file(cache_file(raw_dir.parent, "fetch"))
-    cache = load_cache(processed_dir / ".preprocess.cache.json")
+    cache = load_cache_file(cache_file(raw_dir.parent, "preprocess"))
     nbconvert_template, template_dir_path = _resolve_template_base(
         config_path, processing
     )
@@ -545,12 +547,12 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
     # folder (multi-file student, concatenated into one per-student md).
     fetch_cache: dict[str, str] = load_cache_file(cache_file(raw_dir.parent, "fetch"))
 
-    # Output cache (processed/.preprocess.cache.json): skip an item whose raw
-    # inputs, processing config, template selection, fetch stamps (folder
+    # Output cache (<assignment>/.cache/preprocess.json): skip an item whose
+    # raw inputs, processing config, template selection, fetch stamps (folder
     # headers) and hook scripts are unchanged and whose output md exists.
     # Old entries with a changed hash are reconverted (no pruning needed).
-    cache_path = processed_dir / ".preprocess.cache.json"
-    cache = load_cache(cache_path)
+    cache_path = cache_file(raw_dir.parent, "preprocess")
+    cache = load_cache_file(cache_path)
     cfg_payload = json.dumps(
         {
             "processing": processing.model_dump_json(),
@@ -570,8 +572,8 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
         ]
 
     # Rule for "would reconvert" (shared with the TUI display via
-    # _preprocess_pending): an item is pending unless .preprocess.cache.json
-    # holds a fmt/hash match AND its output md exists; any change reconverts.
+    # _preprocess_pending): an item is pending unless .cache/preprocess.json
+    # holds a matching hash AND its output md exists; any change reconverts.
     pending = _preprocess_pending(
         items,
         item_files_by,
@@ -661,7 +663,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                 )
                 print(f"[processed] {raw_file.name} -> {output_file.name}")
                 processed_count += 1
-                cache[output_stem] = {"fmt": CACHE_FMT, "hash": item_hash, "src": src}
+                cache[output_stem] = {"hash": item_hash, "src": src}
                 if processing.visual_evaluation:
                     _render_stem_screenshots(
                         processed_dir,
@@ -830,10 +832,10 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
                         tmp_file.unlink(missing_ok=True)
             if converted:
                 processed_count += 1
-                cache[item.name] = {"fmt": CACHE_FMT, "hash": item_hash, "src": src}
+                cache[item.name] = {"hash": item_hash, "src": src}
 
     try:
-        save_cache(cache_path, cache)
+        save_cache_file(cache_path, cache)
     except OSError as exc:
         print(f"[warn] failed to write preprocess cache: {exc}")
 

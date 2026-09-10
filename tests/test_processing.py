@@ -11,7 +11,7 @@ import anydoc
 import nbformat
 import pytest
 from PIL import Image
-from src.shared.caching import cache_file, save_cache_file
+from src.shared.caching import CACHE_FMT, cache_file, load_cache_file, save_cache_file
 from src.shared.grading import _read_reference_text
 from src.shared.processing import (
     SUPPORTED_INPUT_FORMATS,
@@ -116,9 +116,9 @@ def test_preprocess_cache_skips_unchanged_second_run(
     preprocess_assignment(tmp_path / "config.toml")
 
     assert len(calls) == 1
-    cache_file = tmp_path / "processed" / ".preprocess.cache.json"
-    assert cache_file.is_file()
-    # dot-named cache file is not a processed student
+    cache_path = cache_file(tmp_path, "preprocess")
+    assert cache_path.is_file()  # <assignment>/.cache/preprocess.json
+    # the unified cache lives outside processed/ and is not a student
     assert count_files(tmp_path / "processed", ".md") == 1
 
 
@@ -153,20 +153,53 @@ def test_preprocess_broken_cache_treated_as_empty(tmp_path: Path) -> None:
     raw.mkdir()
     (raw / "100.md").write_text("# x\n", encoding="utf-8")
     _write_grading_config(tmp_path)
-    (tmp_path / "processed").mkdir()
-    (tmp_path / "processed" / ".preprocess.cache.json").write_text(
-        "{not json", encoding="utf-8"
-    )
+    cache_path = cache_file(tmp_path, "preprocess")
+    cache_path.parent.mkdir()
+    cache_path.write_text("{not json", encoding="utf-8")
 
     result = preprocess_assignment(tmp_path / "config.toml")
 
     assert result is not None
     assert result["success"] == 1
     assert (tmp_path / "processed" / "100.md").is_file()
-    cache = json.loads(
-        (tmp_path / "processed" / ".preprocess.cache.json").read_text("utf-8")
-    )
-    assert "100" in cache
+    assert "100" in load_cache_file(cache_path)
+
+
+def test_preprocess_wrong_fmt_envelope_reconverts_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B2: a wrong-fmt envelope is rejected at the envelope layer -> empty
+    cache -> full reconvert; display side agrees (same rule)."""
+    from src.shared.processing import pending_preprocess_items
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100.md").write_text("v1\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+    calls: list[Path] = []
+
+    def spy(src: Path, dst: Path) -> None:
+        calls.append(src)
+        shutil.copy2(src, dst)
+
+    monkeypatch.setattr("src.shared.pipeline._convert_markdown", spy)
+
+    preprocess_assignment(tmp_path / "config.toml")
+    cache_path = cache_file(tmp_path, "preprocess")
+    envelope = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert envelope["fmt"] == CACHE_FMT
+    assert set(envelope["data"]["100"]) == {"hash", "src"}  # no per-entry fmt
+
+    # Same rule-generated payload, foreign fmt: only the envelope is tampered.
+    envelope["fmt"] = CACHE_FMT + 1
+    cache_path.write_text(json.dumps(envelope), encoding="utf-8")
+    assert [p.name for p in pending_preprocess_items(tmp_path / "config.toml")] == [
+        "100.md"
+    ]
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert len(calls) == 2  # fmt mismatch -> treated as empty -> reconverted
 
 
 def test_pending_preprocess_follows_hash_cache_not_filecount(

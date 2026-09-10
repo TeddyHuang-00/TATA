@@ -177,6 +177,7 @@ def test_raw_count_skips_stale_flat_leftovers(tmp_path: Path) -> None:
 
 def test_counts_exclude_reference_and_dedupe_graded(tmp_path: Path) -> None:
     """Item 1: reference md is not a student; graded dedupes _LATE_ stems."""
+    from src.shared.caching import cache_file, save_cache_file
     from src.tui.scan import scan_assignments
 
     course = tmp_path / "data" / "111111"
@@ -192,7 +193,7 @@ def test_counts_exclude_reference_and_dedupe_graded(tmp_path: Path) -> None:
     processed.mkdir(parents=True)
     (processed / "100001.md").write_text("# s", encoding="utf-8")
     (processed / "reference.md").write_text("# ref", encoding="utf-8")
-    (processed / ".preprocess.cache.json").write_text("{}", encoding="utf-8")
+    save_cache_file(cache_file(a1, "preprocess"), {})  # unified cache location
     graded = a1 / "graded"
     graded.mkdir()
     (graded / "100001.json").write_text("{}", encoding="utf-8")
