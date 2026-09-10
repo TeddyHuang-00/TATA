@@ -1,7 +1,3 @@
-# schema: ../config/rubric.schema.json
-# @schema ../config/rubric.schema.json
-#:schema ../config/rubric.schema.json
-
 [[criterion]]
 name = "Criterion 1"
 desc = "Description of criterion 1"
