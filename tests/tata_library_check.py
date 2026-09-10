@@ -143,10 +143,10 @@ async def _check_shell_and_rubrics(root: Path) -> None:
         await wait_for(pilot, lambda: app.query_one("#shell-tabs").display)
         tabs = app.query_one("#shell-tabs", TabbedContent)
         panes = tabs.query_one("ContentSwitcher").children
+        # v9 shell (D1): two tabs; Settings is a pushed Screen, not a tab
         assert [pane.id for pane in panes] == [
             "tab-dashboard",
             "tab-library",
-            "tab-settings",
         ]
         app.switch_tab("tab-library")
         await pilot.pause()
@@ -617,7 +617,8 @@ def _autogen_meta(pane: RubricsPane) -> Select:
 
 
 async def _check_autogen_modal(root: Path) -> None:
-    """Modal lists only assignments with a fetched assignment.md."""
+    """Modal lists only assignments with a fetched assignment.md; the alias
+    input exists and starts blank (blank = default name)."""
     _build_autogen_fixture(root)
     rubrics_dir = root / "data" / "rubrics"
     pane = RubricsPane(AppState(root_dir=root))
@@ -643,6 +644,11 @@ async def _check_autogen_modal(root: Path) -> None:
             assert values == configs, values
             labels = [label for label, value in select._options if value != Select.NULL]
             assert labels == ["000001 (c1/000001)", "000003 (c1/000003)"], labels
+            # optional alias input exists, starts blank, and says as much
+            alias_input = app.screen.query_one("#ag-alias", Input)
+            assert alias_input.value == ""
+            assert "optional" in alias_input.placeholder
+            assert "assignment ID" in alias_input.placeholder
             # cancel dismisses the modal without side effects: no generate
             # call, no new .toml
             await pilot.click("#cancel")
@@ -754,6 +760,36 @@ async def _check_autogen_overwrite(root: Path) -> None:
             assert out.read_text(encoding="utf-8") == NEW_TOML
             assert not expected_tmp.exists()
             assert _autogen_meta(pane).value == "000001.toml"
+            # second round with an alias: the overwrite message names the
+            # effective (alias-aware) file, keeping the assignment context
+            rubrics_dir = root / "data" / "rubrics"
+            (rubrics_dir / "my-alias.toml").write_text(SAMPLE_TOML, encoding="utf-8")
+            await wait_for(
+                pilot, lambda: not pane.query_one("#rb-autogen").has_class("-active")
+            )
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            app.screen.query_one("#ag-alias", Input).value = "my-alias"
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+            assert "rubrics/my-alias.toml already exists" in _modal_message(app)
+            assert "assignment c1/000001" in _modal_message(app)
+            await pilot.click("#overwrite")
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message == "Generated rubric: my-alias.toml" and sev == "success"
+                    for message, sev in notices
+                ),
+            )
+            assert (rubrics_dir / "my-alias.toml").read_text(
+                encoding="utf-8"
+            ) == NEW_TOML
+            assert _autogen_meta(pane).value == "my-alias.toml"
     finally:
         tui_rubrics_pane.generate_rubric = original
 
@@ -897,6 +933,179 @@ async def _check_autogen_reentrancy(root: Path) -> None:
         tui_rubrics_pane.generate_rubric = original
 
 
+async def _check_autogen_alias_blank(root: Path) -> None:
+    """Blank alias: output keeps the default name (assignment dir name, i.e.
+    the assignment ID) with the existing success notify."""
+    _build_autogen_fixture(root)
+    rubrics_dir = root / "data" / "rubrics"
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    calls: list[tuple[str, str]] = []
+
+    def fake_generate(config_path: Path, out: Path) -> None:
+        calls.append((str(config_path), str(out)))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(SAMPLE_TOML, encoding="utf-8")
+
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = fake_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            app.screen.query_one("#ag-alias", Input).value = "   "  # blank
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message == "Generated rubric: 000001.toml" and sev == "success"
+                    for message, sev in notices
+                ),
+            )
+            assert calls == [
+                (
+                    str(root / "data" / "c1" / "000001" / "config.toml"),
+                    str(rubrics_dir / "000001.toml.tmp"),
+                )
+            ], calls
+            assert (rubrics_dir / "000001.toml").is_file()
+            assert _autogen_meta(pane).value == "000001.toml"
+    finally:
+        tui_rubrics_pane.generate_rubric = original
+
+
+async def _check_autogen_alias_custom(root: Path) -> None:
+    """Non-empty alias: generates <alias>.toml, selects and loads it, and
+    leaves the default-name file untouched."""
+    _build_autogen_fixture(root)
+    rubrics_dir = root / "data" / "rubrics"
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    calls: list[tuple[str, str, bool]] = []
+
+    def fake_generate(config_path: Path, out: Path) -> None:
+        calls.append((str(config_path), str(out), out.exists()))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(SAMPLE_TOML, encoding="utf-8")
+
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = fake_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            app.screen.query_one("#ag-alias", Input).value = "my-alias"
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            await wait_for(
+                pilot,
+                lambda: any(
+                    message == "Generated rubric: my-alias.toml" and sev == "success"
+                    for message, sev in notices
+                ),
+            )
+            assert calls == [
+                (
+                    str(root / "data" / "c1" / "000001" / "config.toml"),
+                    str(rubrics_dir / "my-alias.toml.tmp"),
+                    False,
+                )
+            ], calls
+            assert (rubrics_dir / "my-alias.toml").is_file()
+            assert not (rubrics_dir / "000001.toml").exists()
+            assert _autogen_meta(pane).value == "my-alias.toml"
+            assert pane.query_one("#rb-criteria").row_count == 1
+    finally:
+        tui_rubrics_pane.generate_rubric = original
+
+
+async def _check_autogen_alias_invalid(root: Path) -> None:
+    """Invalid aliases ('../x', '..'): error notify, no generation, no file,
+    and the modal stays open so the alias can be fixed."""
+    _build_autogen_fixture(root)
+    rubrics_dir = root / "data" / "rubrics"
+    pane = RubricsPane(AppState(root_dir=root))
+    app = RubricsHost(pane)
+    calls: list[tuple[str, str]] = []
+
+    def fake_generate(config_path: Path, out: Path) -> None:
+        calls.append((str(config_path), str(out)))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(SAMPLE_TOML, encoding="utf-8")
+
+    original = tui_rubrics_pane.generate_rubric
+    tui_rubrics_pane.generate_rubric = fake_generate
+    try:
+        async with app.run_test(size=(160, 100)) as pilot:
+            await wait_for(pilot, lambda: _autogen_meta(pane).display)
+            notices, _ = spy_notify(app)
+            await pilot.click("#rb-autogen")
+            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+            app.screen.query_one("#ag-assignment", Select).value = str(
+                root / "data" / "c1" / "000001" / "config.toml"
+            )
+            # invalid aliases: '../x' (path separator) and '..' (dot-only —
+            # would otherwise produce a stray '...toml')
+            for bad in ("../x", ".."):
+                errors_before = sum(
+                    1
+                    for message, sev in notices
+                    if message == "Enter a valid filename for the alias"
+                    and sev == "error"
+                )
+                app.screen.query_one("#ag-alias", Input).value = bad
+                await pilot.pause()
+                await pilot.click("#ag-generate")
+                await wait_for(
+                    pilot,
+                    lambda n=errors_before: (
+                        sum(
+                            1
+                            for message, sev in notices
+                            if message == "Enter a valid filename for the alias"
+                            and sev == "error"
+                        )
+                        > n
+                    ),
+                )
+                assert calls == [], calls
+                assert list(rubrics_dir.glob("*.toml")) == []
+                assert isinstance(app.screen, AutoGenModal)
+                # wait out the Generate button's press animation before the
+                # next click (Textual swallows clicks while "-active").
+                await wait_for(
+                    pilot,
+                    lambda: (
+                        not app.screen.query_one("#ag-generate").has_class("-active")
+                    ),
+                )
+            # recoverable: fix the alias in the same modal and generate.
+            # Wait out the Generate button's press animation first — Textual
+            # swallows clicks while the button is still "-active".
+            await wait_for(
+                pilot,
+                lambda: not app.screen.query_one("#ag-generate").has_class("-active"),
+            )
+            app.screen.query_one("#ag-alias", Input).value = "fixed"
+            await pilot.pause()
+            await pilot.click("#ag-generate")
+            await wait_for(pilot, lambda: _autogen_meta(pane).value == "fixed.toml")
+            assert (rubrics_dir / "fixed.toml").is_file()
+    finally:
+        tui_rubrics_pane.generate_rubric = original
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -919,6 +1128,9 @@ async def main() -> None:
         await _check_autogen_empty(root / "ag-empty")
         await _check_autogen_failure(root / "ag-failure")
         await _check_autogen_reentrancy(root / "ag-reentrancy")
+        await _check_autogen_alias_blank(root / "ag-alias-blank")
+        await _check_autogen_alias_custom(root / "ag-alias-custom")
+        await _check_autogen_alias_invalid(root / "ag-alias-invalid")
     print("tata library check OK")
 
 
@@ -947,6 +1159,18 @@ def test_autogen_failure(tmp_path: Path) -> None:
 
 def test_autogen_reentrancy(tmp_path: Path) -> None:
     asyncio.run(_check_autogen_reentrancy(tmp_path))
+
+
+def test_autogen_alias_blank(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_alias_blank(tmp_path))
+
+
+def test_autogen_alias_custom(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_alias_custom(tmp_path))
+
+
+def test_autogen_alias_invalid(tmp_path: Path) -> None:
+    asyncio.run(_check_autogen_alias_invalid(tmp_path))
 
 
 if __name__ == "__main__":

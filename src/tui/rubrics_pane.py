@@ -102,11 +102,13 @@ class FileNameModal(ModalScreen[str | None]):
         self._submit()
 
 
-class AutoGenModal(ModalScreen[str | None]):
+class AutoGenModal(ModalScreen[tuple[str, str] | None]):
     """Pick an assignment description and generate a rubric from it.
 
-    ``assignments`` is a list of (label, config_path str) pairs; Generate
-    dismisses with the config path string, Cancel with None.
+    ``assignments`` is a list of (label, config_path str) pairs. The optional
+    alias input names the output file (blank = the assignment directory name,
+    i.e. the assignment ID). Generate dismisses with ``(config_path, alias)``;
+    Cancel with None.
     """
 
     BINDINGS: ClassVar = [Binding("escape", "cancel", "Cancel", show=False)]
@@ -124,6 +126,11 @@ class AutoGenModal(ModalScreen[str | None]):
             yield Static("[b]Auto-generate rubric[/b]", classes="modal-title")
             yield Static("Pick an assignment description to generate from:")
             yield Select(self._assignments, id="ag-assignment", allow_blank=False)
+            yield Input(
+                "",
+                placeholder="alias (optional) - default: assignment ID",
+                id="ag-alias",
+            )
             with Horizontal(classes="modal-actions"):
                 yield Button("Cancel", id="cancel")
                 yield Button(
@@ -141,8 +148,13 @@ class AutoGenModal(ModalScreen[str | None]):
 
     def _submit(self) -> None:
         value = self.query_one("#ag-assignment", Select).value
-        if value is not None:
-            self.dismiss(str(value))
+        if value is None:
+            return
+        alias = self.query_one("#ag-alias", Input).value.strip()
+        if alias and validate_name(alias, ".toml") is None:
+            self.app.notify("Enter a valid filename for the alias", severity="error")
+            return
+        self.dismiss((str(value), alias))
 
 
 class RubricsPane(Vertical):
@@ -611,10 +623,11 @@ class RubricsPane(Vertical):
             return
         self.app.push_screen(AutoGenModal(assignments), self._handle_autogen)
 
-    def _handle_autogen(self, config_path: str | None) -> None:
-        if config_path is None:
+    def _handle_autogen(self, result: tuple[str, str] | None) -> None:
+        if result is None:
             return
-        self._run_autogen(Path(config_path))
+        config_path, alias = result
+        self._run_autogen(Path(config_path), alias)
 
     def _autogen_assignments(self) -> list[tuple[str, str]]:
         """(label, config_path) for every assignment with a fetched description."""
@@ -651,9 +664,14 @@ class RubricsPane(Vertical):
         self._sync_file_buttons()
         self._sync_action_buttons()
 
-    def _run_autogen(self, config_path: Path) -> None:
-        """Generate (or regenerate) the rubric for an assignment description."""
-        out = self._rubrics_dir() / f"{config_path.parent.name}.toml"
+    def _run_autogen(self, config_path: Path, alias: str = "") -> None:
+        """Generate (or regenerate) the rubric for an assignment description.
+
+        ``alias`` (validated by the modal) names the output file; blank falls
+        back to the assignment directory name (the assignment ID).
+        """
+        name = validate_name(alias, ".toml") or f"{config_path.parent.name}.toml"
+        out = self._rubrics_dir() / name
         if out.exists():
             self.app.push_screen(
                 ConfirmationModal(
