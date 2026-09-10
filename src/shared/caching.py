@@ -84,7 +84,8 @@ def file_digest(path: Path) -> str:
     return _digest_cached(str(path), st.st_mtime_ns, st.st_size)
 
 
-@lru_cache(maxsize=128)
+# Sized for one job's 500+ screenshot working set; raise if cross-job churn bites.
+@lru_cache(maxsize=4096)
 def _digest_cached(path_str: str, mtime_ns: int, size: int) -> str:
     # mtime_ns/size are cache-key components only; the digest reads fresh bytes.
     del mtime_ns, size
