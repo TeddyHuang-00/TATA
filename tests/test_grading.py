@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from instructor import Mode
+from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import (
     _build_grading_messages,
     build_client,
@@ -177,7 +178,7 @@ def test_pending_follows_hash_cache_not_checkpoint(
     # The state badge must agree too: counts are full but the cache says
     # regrade -> Partial (with raw actually fetched and pre cached-valid).
     (a_dir / "raw").mkdir(exist_ok=True)
-    (a_dir / "raw" / ".fetch-cache.json").write_text("{}", encoding="utf-8")
+    save_cache_file(cache_file(a_dir, "fetch"), {})  # raw actually fetched
     (a_dir / "scored").mkdir(exist_ok=True)
     (a_dir / "scored" / "100001.txt").write_text(
         "Total Score: 90/100", encoding="utf-8"

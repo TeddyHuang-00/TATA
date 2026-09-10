@@ -11,6 +11,7 @@ import anydoc
 import nbformat
 import pytest
 from PIL import Image
+from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import _read_reference_text
 from src.shared.processing import (
     SUPPORTED_INPUT_FORMATS,
@@ -229,12 +230,12 @@ def test_folder_concat_html_and_ipynb(tmp_path: Path) -> None:
         ]
     )
     nbformat.write(nb, raw / "100" / "100_0.ipynb")
-    (raw / ".fetch-cache.json").write_text(
-        json.dumps({
+    save_cache_file(
+        cache_file(tmp_path, "fetch"),
+        {
             "100.html": "2026-01-01T00:00:00Z",
             "100_0.ipynb": "2026-01-02T00:00:00Z",
-        }),
-        encoding="utf-8",
+        },
     )
     _write_grading_config(tmp_path)
 

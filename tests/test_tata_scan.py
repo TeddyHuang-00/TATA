@@ -115,7 +115,9 @@ def test_assignment_id_from_numeric_dir_name(tmp_path: Path) -> None:
 
 def test_raw_count_counts_student_folders_once(tmp_path: Path) -> None:
     """SUBMIT-ALL: raw counts top-level ITEMS — a multi-file student folder
-    is one submission, dot-entries (.fetch-cache.json) are excluded."""
+    is one submission. A `.cache/` dir at the assignment root (unified cache
+    location) and dot-entries never add to any count."""
+    from src.shared.caching import cache_file, save_cache_file
     from src.tui.scan import scan_assignments
 
     course = tmp_path / "data" / "111111"
@@ -123,10 +125,11 @@ def test_raw_count_counts_student_folders_once(tmp_path: Path) -> None:
     a1.mkdir(parents=True)
     (course / "config.toml").write_text("", encoding="utf-8")
     (a1 / "config.toml").write_text("", encoding="utf-8")
+    save_cache_file(cache_file(a1, "fetch"), {})  # .cache/ at the assignment root
     raw = a1 / "raw"
     raw.mkdir()
     (raw / "100001.html").write_text("<p>a</p>", encoding="utf-8")
-    (raw / ".fetch-cache.json").write_text("{}", encoding="utf-8")
+    (raw / ".DS_Store").write_text("junk", encoding="utf-8")  # dot-entry skipped
     multi = raw / "100002"
     multi.mkdir()
     (multi / "100002.html").write_text("<p>a</p>", encoding="utf-8")

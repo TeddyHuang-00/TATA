@@ -83,7 +83,7 @@ class CourseInfo:
 
 
 def count_files(dir_: Path, suffix: str | None = None) -> int:
-    """Direct files in ``dir_``, skipping dotfiles ('.fetch-cache.json')."""
+    """Direct files in ``dir_``, skipping dotfiles."""
     if not dir_.is_dir():
         return 0
     return sum(

@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.shared.caching import cache_file, save_cache_file
 from textual.app import App
 from textual.pilot import Pilot
 from textual.widgets import DataTable, Static
@@ -65,7 +66,7 @@ def make_course(
     settings live in the course config). ``graded`` is "first" or "all"
     (writes graded/100001.json). ``processed`` lists the processed/*.md stems
     (default ["100001"]). ``scored``/``fetch_cache``/``logs`` add the
-    scored/txt, raw/.fetch-cache.json and logs/checkpoint files. ``pairs`` is
+    scored/txt, .cache/fetch.json and logs/checkpoint files. ``pairs`` is
     "full" or "minimal" (plagiarism/all_pairs.json on the first assignment).
     ``env`` writes the Canvas .env next to the data root.
     """
@@ -104,7 +105,7 @@ def make_course(
                 "Total Score: 15.0/25.0", encoding="utf-8"
             )
         if fetch_cache:
-            (a_dir / "raw" / ".fetch-cache.json").write_text("{}", encoding="utf-8")
+            save_cache_file(cache_file(a_dir, "fetch"), {})
         if logs:
             (a_dir / "logs" / "grading.checkpoint.json").write_text(
                 json.dumps({"done": ["100001"]}), encoding="utf-8"

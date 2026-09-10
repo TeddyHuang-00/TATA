@@ -22,7 +22,15 @@ from .assignment_config import (
     load_assignment_file,
     resolve_assignment_paths,
 )
-from .caching import CACHE_FMT, content_hash, file_hash, load_cache, save_cache
+from .caching import (
+    CACHE_FMT,
+    cache_file,
+    content_hash,
+    file_hash,
+    load_cache,
+    load_cache_file,
+    save_cache,
+)
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .convert import (
     SUPPORTED_INPUT_FORMATS,
@@ -198,11 +206,10 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
 
 
 def _iter_raw_items(raw_dir: Path) -> list[Path]:
-    """Top-level raw entries: files and dirs, dot-entries (e.g.
-    .fetch-cache.json) skipped. A top-level file whose base uid (stem with
-    any _N/_LATE_N suffix stripped) names a top-level dir is a stale flat
-    leftover of a folderized student (mixed legacy layout): skipped so the
-    student isn't double-processed."""
+    """Top-level raw entries: files and dirs, dot-entries skipped. A
+    top-level file whose base uid (stem with any _N/_LATE_N suffix stripped)
+    names a top-level dir is a stale flat leftover of a folderized student
+    (mixed legacy layout): skipped so the student isn't double-processed."""
     entries = sorted(
         p
         for p in raw_dir.iterdir()
@@ -237,8 +244,8 @@ def _cached(cache: dict, stem: str, item_hash: str, output_file: Path) -> bool:
 
 
 def _submission_stamp(cache: dict[str, str], raw_file: Path) -> str:
-    """Stamp for a raw file: the .fetch-cache.json entry when known, else
-    the file's mtime, else '' — the submitted header part is omitted."""
+    """Stamp for a raw file: the fetch cache entry when known, else the
+    file's mtime, else '' — the submitted header part is omitted."""
     stamp = cache.get(raw_file.name)
     if stamp is not None:
         return stamp
@@ -332,7 +339,11 @@ def _item_hash_and_src(  # ruff: ignore[too-many-arguments, too-many-positional-
     )
     parts: list[bytes] = [file_hash(raw_dir, rels).encode("utf-8")]
     if item.is_dir():
-        parts.append(json.dumps(fetch_cache, sort_keys=True).encode("utf-8"))
+        parts.append(
+            json.dumps(fetch_cache, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
     parts.append(cfg_payload)
     parts.extend(hook_parts)
     return rels, content_hash(parts)
@@ -393,7 +404,7 @@ def _resolve_template_base(
     return nbconvert_template, template_dir_path
 
 
-def pending_preprocess_items(config_path: Path) -> list[Path]:  # ruff: ignore[too-many-locals]
+def pending_preprocess_items(config_path: Path) -> list[Path]:
     """Raw items ``preprocess_assignment`` would reconvert right now (cache rule).
 
     Same rule the run applies (``_preprocess_pending``) — NOT raw-vs-processed
@@ -408,13 +419,7 @@ def pending_preprocess_items(config_path: Path) -> list[Path]:  # ruff: ignore[t
     configured_formats = _normalize_input_formats(processing.input_format)
     items = _iter_raw_items(raw_dir)
     item_files_by = {item: _item_files(item, configured_formats) for item in items}
-    fetch_cache: dict[str, str] = {}
-    fetch_cache_path = raw_dir / ".fetch-cache.json"
-    if fetch_cache_path.exists():
-        try:
-            fetch_cache = json.loads(fetch_cache_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            fetch_cache = {}
+    fetch_cache: dict[str, str] = load_cache_file(cache_file(raw_dir.parent, "fetch"))
     cache = load_cache(processed_dir / ".preprocess.cache.json")
     nbconvert_template, template_dir_path = _resolve_template_base(
         config_path, processing
@@ -538,13 +543,7 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
 
     # Process each raw item (per-student): a file (single submission) or a
     # folder (multi-file student, concatenated into one per-student md).
-    fetch_cache: dict[str, str] = {}
-    fetch_cache_path = raw_dir / ".fetch-cache.json"
-    if fetch_cache_path.exists():
-        try:
-            fetch_cache = json.loads(fetch_cache_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            fetch_cache = {}
+    fetch_cache: dict[str, str] = load_cache_file(cache_file(raw_dir.parent, "fetch"))
 
     # Output cache (processed/.preprocess.cache.json): skip an item whose raw
     # inputs, processing config, template selection, fetch stamps (folder

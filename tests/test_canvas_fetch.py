@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from src.shared.aliases import load_alias_file
+from src.shared.caching import cache_file, load_cache_file, save_cache_file
 from src.shared.canvas_fetch import fetch_assignment, remember_course_fetch
-from src.shared.processing import preprocess_assignment
+from src.shared.processing import pending_preprocess_items, preprocess_assignment
 
 
 class StubAtt:
@@ -105,7 +106,7 @@ def test_attachments_layout_and_cache(tmp_path: Path) -> None:
     assert (out / "300" / "300.ipynb").exists()
     assert (out / "300" / "300_1.docx").exists()
     assert not (out / "300.ipynb").exists()
-    assert (out / ".fetch-cache.json").exists()
+    assert cache_file(out.parent, "fetch").exists()
     aliases = _student_aliases(out)
     assert aliases == {
         "100": "Alpha, A",
@@ -143,7 +144,7 @@ def test_body_flat_and_cached(tmp_path: Path) -> None:
     assert (out / "100.html").read_text() == "my answer"
     assert (out / "200_LATE_0.html").read_text() == "late answer"
     assert not (out / "300.html").exists()
-    assert (out / ".fetch-cache.json").exists()
+    assert cache_file(out.parent, "fetch").exists()
     assert set(_student_aliases(out)) == {"100", "200", "300"}
 
     # Body files are cached by (filename, updated_at) too: an unchanged item
@@ -331,7 +332,7 @@ def test_fetch_folderize_transition_preserves_cache(tmp_path: Path) -> None:
     StubAtt.downloads = 0
     fetch_assignment(canvas, 1, 2, out)
     assert StubAtt.downloads == 0
-    cache = json.loads((out / ".fetch-cache.json").read_text())
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
     assert "100.docx" in cache
     assert "100_1.docx" in cache
 
@@ -361,7 +362,7 @@ def test_fetch_prunes_folder_on_shrink_to_flat(tmp_path: Path) -> None:
 
     assert (out / "100.html").exists()
     assert not (out / "100").exists()
-    cache = json.loads((out / ".fetch-cache.json").read_text())
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
     assert cache.get("100.html")  # produced flat -> key kept
     assert "100_1.html" not in cache  # folder-only name -> key dropped
 
@@ -400,7 +401,7 @@ def test_fetch_drops_cache_for_deleted_flat_names(tmp_path: Path) -> None:
     fetch_assignment(canvas, 1, 2, out)
     assert (out / "100.pdf").exists()
     assert not (out / "100.docx").exists()
-    cache = json.loads((out / ".fetch-cache.json").read_text())
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
     assert "100.pdf" in cache
     assert "100.docx" not in cache
 
@@ -433,7 +434,7 @@ def test_fetch_prunes_stale_folder_members_on_rename(tmp_path: Path) -> None:
     assert (out / "100" / "100.html").exists()
     assert (out / "100" / "100_0.ipynb").exists()
     assert not (out / "100" / "100_0.docx").exists()
-    cache = json.loads((out / ".fetch-cache.json").read_text())
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
     assert "100.html" in cache  # produced name -> key kept
     assert "100_0.ipynb" in cache
     assert "100_0.docx" not in cache
@@ -464,7 +465,7 @@ def test_fetch_removes_folder_for_unsubmitted_student(tmp_path: Path) -> None:
     fetch_assignment(canvas, 1, 2, out)
 
     assert not (out / "100").exists()
-    cache = json.loads((out / ".fetch-cache.json").read_text())
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
     assert "100.html" not in cache
     assert "100_0.docx" not in cache
 
@@ -491,7 +492,7 @@ def test_fetch_same_uid_flat_and_folder_keeps_folder(tmp_path: Path) -> None:
     assert (out / "100" / "100.html").exists()
     assert (out / "100" / "100_0.docx").exists()
     assert not (out / "100.html").exists()  # flat copy of the same uid removed
-    cache = json.loads((out / ".fetch-cache.json").read_text())
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
     assert "100.html" in cache  # the folder copy carries the name
     assert "100_0.docx" in cache
 
@@ -530,3 +531,62 @@ def test_assignment_description_conversion_failure_degrades(
     monkeypatch.setattr("src.shared.canvas_fetch.MarkItDown", Boom)
     fetch_assignment(StubCanvas(StubAssignment([], description="<p>hi</p>")), 1, 2, out)
     assert (out.parent / "assignment.md").read_text(encoding="utf-8") == "<p>hi</p>"
+
+
+def test_fetch_corrupt_or_foreign_cache_treated_as_empty(tmp_path: Path) -> None:
+    """A broken / wrong-fmt cache file must not crash the fetch; it reads as
+    empty, so every item is downloaded again (correct fallback)."""
+    broken_payloads = ["{not json", json.dumps({"fmt": 99, "data": {}})]
+    for i, broken in enumerate(broken_payloads):
+        case = tmp_path / f"case{i}"
+        out = case / "raw"
+        uid = 200 + i
+        subs = [
+            StubSub(
+                uid,
+                name="Alpha, A",
+                sortable_name="Alpha, A",
+                attachments=[StubAtt("a.docx")],
+            )
+        ]
+        canvas = StubCanvas(StubAssignment(subs))
+        fetch_assignment(canvas, 1, 2, out)
+        cache_path = cache_file(case, "fetch")
+        assert load_cache_file(cache_path) == {f"{uid}.docx": "2026-01-01T00:00:00Z"}
+
+        cache_path.write_text(broken, encoding="utf-8")
+        StubAtt.downloads = 0
+        fetch_assignment(canvas, 1, 2, out)  # must not raise
+        assert StubAtt.downloads == 1  # empty cache -> full re-download
+        assert load_cache_file(cache_path) == {f"{uid}.docx": "2026-01-01T00:00:00Z"}
+
+
+def test_preprocess_hash_tracks_fetch_cache_entries(tmp_path: Path) -> None:
+    """Folder items hash the fetch cache payload: an updated_at change alone
+    (same raw bytes) re-queues the item for reconversion, display and run
+    agreeing on the same rule."""
+    raw = tmp_path / "raw"
+    (raw / "100").mkdir(parents=True)
+    (raw / "100" / "100.html").write_text("<h1>A</h1>", encoding="utf-8")
+    (tmp_path / "config.toml").write_text(
+        '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\nprovider = "deepseek"\n',
+        encoding="utf-8",
+    )
+    save_cache_file(cache_file(tmp_path, "fetch"), {"100.html": "S1"})
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+    assert result is not None
+    assert result["success"] == 1
+    md = tmp_path / "processed" / "100.md"
+    assert "submitted: S1" in md.read_text(encoding="utf-8")
+    assert pending_preprocess_items(tmp_path / "config.toml") == []
+
+    # Same raw bytes, new Canvas stamp -> fetch payload changed -> pending.
+    save_cache_file(cache_file(tmp_path, "fetch"), {"100.html": "S2"})
+    assert [p.name for p in pending_preprocess_items(tmp_path / "config.toml")] == [
+        "100"
+    ]
+    result = preprocess_assignment(tmp_path / "config.toml")
+    assert result is not None
+    assert result["success"] == 1
+    assert "submitted: S2" in md.read_text(encoding="utf-8")

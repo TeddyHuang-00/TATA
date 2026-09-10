@@ -44,6 +44,7 @@ from textual.widgets import Button, ProgressBar, RichLog, Static
 from src.shared.aliases import assignment_display_name
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import load_assignment_file
+from src.shared.caching import cache_file
 from src.shared.cli_options import FetchCliOptions
 from src.shared.fetch_pipeline import run_fetch
 from src.shared.grading import (
@@ -196,8 +197,8 @@ def _cached_grade(config_path: Path) -> int:
 
 
 def _is_fetched(assignment_dir: Path) -> bool:
-    """Fetch freshness = ``raw/.fetch-cache.json`` presence (design §5)."""
-    return (assignment_dir / "raw" / ".fetch-cache.json").is_file()
+    """Fetch freshness = fetch cache (``.cache/fetch.json``) presence (design §5)."""
+    return cache_file(assignment_dir, "fetch").is_file()
 
 
 def _incremental_line(info: AssignmentInfo) -> str:

@@ -4,7 +4,6 @@
 # multi-file -> out/<uid>/<name>.
 from __future__ import annotations
 
-import json
 import operator
 import re
 import shutil
@@ -20,6 +19,7 @@ from canvasapi import Canvas
 from markitdown import MarkItDown, StreamInfo
 
 from src.shared.aliases import upsert_student_aliases
+from src.shared.caching import cache_file, load_cache_file, save_cache_file
 
 
 def load_env() -> tuple[str, str]:
@@ -122,13 +122,14 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
     ``<uid>{_LATE_0}.html`` plus each attachment as
     ``<uid>{_LATE_i|_i}.{ext}``. A submission with a single file lands flat
     in ``out/``; with more than one file it lands in ``out/<uid>/``. The
-    plain filename is the ``.fetch-cache.json`` key either way."""
+    plain filename is the fetch cache (``<assignment>/.cache/fetch.json``)
+    key either way."""
     course = canvas.get_course(course_id)
     assignment = course.get_assignment(assignment_id)
     out.mkdir(parents=True, exist_ok=True)
     _save_assignment_description(assignment, out)
-    cache_path = out / ".fetch-cache.json"
-    cache = json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    cache_path = cache_file(out.parent, "fetch")
+    cache = load_cache_file(cache_path)
     subs = list(assignment.get_submissions(include=["user", "attachments"]))
     rows = []
     flat_names: set[str] = set()
@@ -240,7 +241,7 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
                 p.unlink()
                 if p.name not in folder_names:
                     cache.pop(p.name, None)
-    cache_path.write_text(json.dumps(cache))
+    save_cache_file(cache_path, cache)
     rows.sort(key=operator.itemgetter("sortable_name"))
     aliases = {
         r["user_id"]: (
