@@ -22,7 +22,7 @@ from pathlib import Path
 from e2e_common import COURSE, make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file, save_cache_file
-from src.shared.grading import _grading_pending, _load_assignment_config
+from src.shared.grading import grading_pending, load_assignment_config
 from src.tui import workspace as tw
 from src.tui.app import AliasEditorModal, TataApp
 from src.tui.score_review import ScoreReviewScreen
@@ -42,7 +42,7 @@ ASSIGNMENT_CFG = (
 def _seed_grade_cache(data_root: Path) -> None:
     """Fixture state the grading hash-cache rule needs (the grade subtitle
     follows ``<assignment>/.cache/grading.json``; values come from the rule
-    itself via _grading_pending).
+    itself via grading_pending).
 
     The [grading] config references rubrics/exam.toml + prompt/system.md;
     without them the pending lookup raises -> 0 and the grade button shows
@@ -59,9 +59,9 @@ def _seed_grade_cache(data_root: Path) -> None:
     (data_root / "prompt").mkdir(exist_ok=True)
     (data_root / "prompt" / "system.md").write_text("You are a TA.\n", encoding="utf-8")
     a1 = data_root / COURSE / "a1"
-    cfg = _load_assignment_config(a1 / "config.toml")
+    cfg = load_assignment_config(a1 / "config.toml")
     cfg_model = load_assignment_file(a1 / "config.toml")
-    _pending, hashes = _grading_pending(cfg, cfg_model)
+    _pending, hashes = grading_pending(cfg, cfg_model)
     save_cache_file(
         cache_file(a1, "grading"),
         {stem: {"hash": h} for stem, h in hashes.items() if stem == "100001"},

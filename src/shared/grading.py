@@ -54,7 +54,7 @@ class GradingCliOptions(ConfigFileCliOptions):
     )
 
 
-def _load_assignment_config(config_path: Path) -> AssignmentConfig:
+def load_assignment_config(config_path: Path) -> AssignmentConfig:
     cfg = load_assignment_file(config_path)
     grading = cfg.grading
     paths = resolve_assignment_paths(cfg, config_path.parent)
@@ -191,7 +191,7 @@ def _hook_hash_parts(
     return parts
 
 
-def _grading_pending(
+def grading_pending(
     cfg: AssignmentConfig, cfg_model: AssignmentFileConfig
 ) -> tuple[list[Path], dict[str, str]]:
     """(submissions to (re)grade, stem -> input hash) under the grading cache rule.
@@ -265,9 +265,9 @@ def _grading_pending(
 
 def pending_grade_submissions(config_path: Path) -> list[Path]:
     """Submissions ``grade_assignment`` would (re)grade right now (cache rule)."""
-    cfg = _load_assignment_config(config_path)
+    cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
-    return _grading_pending(cfg, cfg_model)[0]
+    return grading_pending(cfg, cfg_model)[0]
 
 
 def cached_grade_count(config_path: Path) -> int:
@@ -276,9 +276,9 @@ def cached_grade_count(config_path: Path) -> int:
     Same rule ``grade_assignment`` applies; the TUI progress bar polls this
     per tick because the cache is updated per submission during a run.
     """
-    cfg = _load_assignment_config(config_path)
+    cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
-    pending, sub_hashes = _grading_pending(cfg, cfg_model)
+    pending, sub_hashes = grading_pending(cfg, cfg_model)
     return len(sub_hashes) - len(pending)
 
 
@@ -444,7 +444,7 @@ def _run_single_grading_task(  # ruff: ignore[too-many-arguments]
 
 
 def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
-    cfg = _load_assignment_config(config_path)
+    cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
         cfg_model,
@@ -509,9 +509,9 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
 
     # Grading cache: a submission is pending unless its input hash matches
     # .cache/grading.json AND the graded JSON exists; any change regrades.
-    # (Rule lives in _grading_pending — shared with the TUI display.)
+    # (Rule lives in grading_pending — shared with the TUI display.)
     cache_path = cache_file(cfg.processed_dir.parent, "grading")
-    pending_submissions, sub_hashes = _grading_pending(cfg, cfg_model)
+    pending_submissions, sub_hashes = grading_pending(cfg, cfg_model)
     cache = load_cache_file(cache_path)
 
     if force:

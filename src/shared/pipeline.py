@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -406,23 +407,27 @@ def _resolve_template_base(
     return nbconvert_template, template_dir_path
 
 
-def pending_preprocess_items(config_path: Path) -> list[Path]:
-    """Raw items ``preprocess_assignment`` would reconvert right now (cache rule).
+@dataclass(frozen=True)
+class _PreprocessRuleInputs:
+    """Everything the preprocess cache rule needs besides the two cache dicts."""
 
-    Same rule the run applies (``_preprocess_pending``) — NOT raw-vs-processed
-    file counts: raw content can change while the count stays the same, and
-    the run reconverts on the hash mismatch.
-    """
+    items: list[Path]
+    item_files_by: dict[Path, list[tuple[Path, InputFormat]]]
+    raw_dir: Path
+    processed_dir: Path
+    cfg_payload: bytes
+    hook_parts: list[bytes]
+    strip_canvas_suffix: bool
+    clean_filenames: bool
+
+
+def _preprocess_rule_inputs(config_path: Path) -> _PreprocessRuleInputs:
     cfg = load_assignment_file(config_path)
     processing = cfg.processing
     paths = resolve_assignment_paths(cfg, config_path.parent)
-    raw_dir = paths.raw_dir
-    processed_dir = paths.processed_dir
     configured_formats = _normalize_input_formats(processing.input_format)
-    items = _iter_raw_items(raw_dir)
+    items = _iter_raw_items(paths.raw_dir)
     item_files_by = {item: _item_files(item, configured_formats) for item in items}
-    fetch_cache: dict[str, str] = load_cache_file(cache_file(raw_dir.parent, "fetch"))
-    cache = load_cache_file(cache_file(raw_dir.parent, "preprocess"))
     nbconvert_template, template_dir_path = _resolve_template_base(
         config_path, processing
     )
@@ -444,20 +449,77 @@ def pending_preprocess_items(config_path: Path) -> list[Path]:
             for script_paths in hook_runtime.mounts.values()
             for script in script_paths
         ]
+    return _PreprocessRuleInputs(
+        items=items,
+        item_files_by=item_files_by,
+        raw_dir=paths.raw_dir,
+        processed_dir=paths.processed_dir,
+        cfg_payload=cfg_payload,
+        hook_parts=hook_parts,
+        strip_canvas_suffix=processing.strip_canvas_suffix,
+        clean_filenames=processing.clean_filenames,
+    )
+
+
+def pending_preprocess_items(config_path: Path) -> list[Path]:
+    """Raw items ``preprocess_assignment`` would reconvert right now (cache rule).
+
+    Same rule the run applies (``_preprocess_pending``) — NOT raw-vs-processed
+    file counts: raw content can change while the count stays the same, and
+    the run reconverts on the hash mismatch.
+    """
+    rule = _preprocess_rule_inputs(config_path)
+    fetch_cache: dict[str, str] = load_cache_file(
+        cache_file(rule.raw_dir.parent, "fetch")
+    )
+    cache = load_cache_file(cache_file(rule.raw_dir.parent, "preprocess"))
     return list(
         _preprocess_pending(
-            items,
-            item_files_by,
-            raw_dir,
-            processed_dir,
+            rule.items,
+            rule.item_files_by,
+            rule.raw_dir,
+            rule.processed_dir,
             cache,
             fetch_cache,
-            cfg_payload,
-            hook_parts,
-            strip_canvas_suffix=processing.strip_canvas_suffix,
-            clean_filenames=processing.clean_filenames,
+            rule.cfg_payload,
+            rule.hook_parts,
+            strip_canvas_suffix=rule.strip_canvas_suffix,
+            clean_filenames=rule.clean_filenames,
         )
     )
+
+
+def preprocess_item_hashes(
+    config_path: Path, fetch_cache: dict[str, str] | None = None
+) -> dict[str, tuple[list[str], str]]:
+    """``stem -> (src relpaths, current-rule hash)`` for every raw item.
+
+    Same rule ``pending_preprocess_items`` applies (raw bytes, fetch stamps
+    for folders, [processing] payload, hook scripts), computed for every item
+    regardless of the cache — the cache-migration tool rewrites stored hashes
+    with it (production rule, never reimplemented). ``fetch_cache`` defaults
+    to ``.cache/fetch.json``; migrating callers pass the pending payload so
+    the hash matches the post-migration file.
+    """
+    rule = _preprocess_rule_inputs(config_path)
+    if fetch_cache is None:
+        fetch_cache = load_cache_file(cache_file(rule.raw_dir.parent, "fetch"))
+    hashes: dict[str, tuple[list[str], str]] = {}
+    for item in rule.items:
+        if not rule.item_files_by[item]:
+            continue
+        stem = _output_stem(
+            item, rule.item_files_by, rule.strip_canvas_suffix, rule.clean_filenames
+        )
+        hashes[stem] = _item_hash_and_src(
+            item,
+            rule.item_files_by,
+            rule.raw_dir,
+            fetch_cache,
+            rule.cfg_payload,
+            rule.hook_parts,
+        )
+    return hashes
 
 
 def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]

@@ -11,10 +11,10 @@ from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import (
     _build_grading_messages,
-    _grading_pending,
-    _load_assignment_config,
     build_client,
     grade_assignment,
+    grading_pending,
+    load_assignment_config,
     pending_grade_submissions,
 )
 from src.shared.provider import ProviderInfo, ProviderList
@@ -181,7 +181,7 @@ def test_pending_follows_hash_cache(
 ) -> None:
     """Item: "needs rerun" count must come from the grading hash cache.
 
-    Display and run share the one rule (src.shared.grading._grading_pending):
+    Display and run share the one rule (src.shared.grading.grading_pending):
     after a processed md changes, both say the submission regrades. Regression:
     the old display counted pending from grading.checkpoint.json (a done list
     that never shrinks), so it under-reported 0 to rerun while the run queued
@@ -269,9 +269,9 @@ def _seed_valid_grade_cache(config_path: Path) -> None:
     """Seed a fully-valid grading cache: graded JSON per submission plus hashes
     computed by the rule itself (never hardcoded — Pitfall 18)."""
     a_dir = config_path.parent
-    cfg = _load_assignment_config(config_path)
+    cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
-    _, hashes = _grading_pending(cfg, cfg_model)
+    _, hashes = grading_pending(cfg, cfg_model)
     for stem in hashes:
         (a_dir / "graded" / f"{stem}.json").write_text("{}", encoding="utf-8")
     save_cache_file(
@@ -375,11 +375,11 @@ def test_grading_hash_stable_across_calls(
     shots = config_path.parent / "processed" / "screenshots"
     shots.mkdir(parents=True)
     (shots / "100001_p1.png").write_bytes(b"page")
-    cfg = _load_assignment_config(config_path)
+    cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
 
-    _, first = _grading_pending(cfg, cfg_model)
-    _, second = _grading_pending(cfg, cfg_model)
+    _, first = grading_pending(cfg, cfg_model)
+    _, second = grading_pending(cfg, cfg_model)
 
     assert set(first) == {"100001"}
     assert first == second

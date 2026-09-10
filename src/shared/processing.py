@@ -41,6 +41,7 @@ from .pipeline import (
     main,
     pending_preprocess_items,
     preprocess_assignment,
+    preprocess_item_hashes,
 )
 from .screenshots import (
     _cleanup_stem_shots,
@@ -93,6 +94,7 @@ __all__ = [
     "main",
     "pending_preprocess_items",
     "preprocess_assignment",
+    "preprocess_item_hashes",
 ]
 
 if __name__ == "__main__":
