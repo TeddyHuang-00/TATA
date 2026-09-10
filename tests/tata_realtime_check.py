@@ -3,17 +3,19 @@
 User-reported stale-panel bugs (settings edits not reflected in the
 Dashboard workspace panel; deleted rubrics still offered in the Settings
 dropdown; new providers missing until restart) — fixed 2026-09-09. This
-check drives the FULL TataApp (tab activation + Pilot) and asserts:
+check drives the FULL TataApp and asserts (v9: settings is a fullscreen
+`push_screen` view opened with `,`, closed with esc):
 
-- S1: Settings save (assignment context, grading.max_parallel_tasks 4 -> 7),
-  back to Dashboard -> the workspace config panel shows the new value.
-- S2: Library Rubrics delete a rubric, back to Settings -> the rubric Select
-  no longer offers the deleted file.
-- S3: Library Providers add a provider, back to Settings -> the provider
-  Select offers the new provider (mount-time registry snapshot regression).
-- S4: Settings save (course context, plagiarism.display_threshold 0.5 -> 0.8),
-  back to Dashboard (course level) -> the plagiarism pane topbar shows the
-  new threshold.
+- S1: Settings save (assignment level, grading.max_parallel_tasks 4 -> 7),
+  close settings -> the workspace config panel shows the new value.
+- S2: Library Rubrics delete a rubric, open Settings at the assignment
+  level -> the rubric Select no longer offers the deleted file.
+- S3: Library Providers add a provider, open Settings at the assignment
+  level -> the provider Select offers the new provider (mount-time registry
+  snapshot regression).
+- S4: Settings save (course level, plagiarism.display_threshold 0.5 -> 0.8),
+  close settings on the course dashboard -> the plagiarism pane topbar
+  shows the new threshold.
 
 Provider reads are made hermetic: the app defaults to the repo's real
 ``data/providers``; the check points both ``providers_pane.REPO_ROOT`` and
@@ -46,6 +48,7 @@ from e2e_common import (  # isort: skip - seeds repo-root sys.path before src im
 )
 from src.tui.app import TataApp
 from src.tui.library import LibraryScreen
+from src.tui.plagiarism import PlagiarismViewScreen
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import ConfirmationModal
 from textual.pilot import Pilot
@@ -146,9 +149,10 @@ async def _s1_settings_save_refreshes_workspace(root: Path) -> None:
             body = text(app.query_one("#config-body", Static))
             assert re.search(r"max_parallel\[/b\]\s+4", body), body
 
-            app.switch_tab("tab-settings")
+            await pilot.press("comma")
             await pilot.pause()
-            settings = app.query_one(SettingsScreen)
+            settings = app.screen
+            assert isinstance(settings, SettingsScreen), settings
             assert settings.current_context == "assignment"
             max_parallel = settings.query_one("#f-grading-max_parallel_tasks", Input)
             assert max_parallel.value == "4"
@@ -162,8 +166,9 @@ async def _s1_settings_save_refreshes_workspace(root: Path) -> None:
             )
             assert saved["grading"]["max_parallel_tasks"] == 7
 
-            app.switch_tab("tab-dashboard")
+            await pilot.press("escape")
             await pilot.pause()
+            assert not isinstance(app.screen, SettingsScreen)
             body = text(app.query_one("#config-body", Static))
             assert re.search(r"max_parallel\[/b\]\s+7", body), body
 
@@ -187,10 +192,18 @@ async def _s2_deleted_rubric_gone_from_settings(root: Path) -> None:
             await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
             assert not (root / "data" / "rubrics" / "a2.toml").exists()
 
-            app.switch_tab("tab-settings")
+            app.switch_tab("tab-dashboard")
             await pilot.pause()
-            settings = app.query_one(SettingsScreen)
-            assert settings.current_context == "global"
+            # grading Selects live at the assignment level (v9 level scoping)
+            await _enter_course(app, pilot)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.state.dashboard_level == "assignment"
+            await pilot.press("comma")
+            await pilot.pause()
+            settings = app.screen
+            assert isinstance(settings, SettingsScreen), settings
+            assert settings.current_context == "assignment"
             rubric = settings.query_one("#f-grading-rubric", Select)
             values = {value for _, value in rubric._options}  # type: ignore[attr-defined]
             assert "rubrics/a1.toml" in values, values
@@ -221,27 +234,46 @@ async def _s3_added_provider_shows_in_settings(root: Path) -> None:
             await pilot.pause()
             assert (root / "data" / "providers" / "pilot.toml").is_file()
 
-            app.switch_tab("tab-settings")
+            app.switch_tab("tab-dashboard")
             await pilot.pause()
-            settings = app.query_one(SettingsScreen)
+            # provider Select lives at the assignment level (v9 level scoping)
+            await _enter_course(app, pilot)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.state.dashboard_level == "assignment"
+            await pilot.press("comma")
+            await pilot.pause()
+            settings = app.screen
+            assert isinstance(settings, SettingsScreen), settings
             provider = settings.query_one("#f-grading-provider", Select)
             values = {value for _, value in provider._options}  # type: ignore[attr-defined]
             assert values == {"ollama", "pilot"}, values
 
 
 async def _s4_threshold_change_updates_plag_pane(root: Path) -> None:
-    """Settings plagiarism threshold save -> Dashboard pane topbar updates."""
+    """Settings plagiarism threshold save -> the pushed plagiarism view's
+    pane topbar updates (v9: the pane lives in the fullscreen view)."""
     with _hermetic_providers(root):
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 44)) as pilot:
             await wait_for(pilot, lambda: app.query_one(DataTable).row_count > 0)
             await _enter_course(app, pilot)
-            topbar = text(app.query_one("#plag-topbar", Static))
+            table = app.query_one("#dashboard-table", DataTable)
+            table.focus()
+            await pilot.press("p")
+            await wait_for(pilot, lambda: isinstance(app.screen, PlagiarismViewScreen))
+            topbar = text(app.screen.query_one("#plag-topbar", Static))
             assert "display threshold 50%" in topbar, topbar
+            await pilot.press("escape")
+            await wait_for(
+                pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen)
+            )
 
-            app.switch_tab("tab-settings")
+            table.focus()
+            await pilot.press("comma")
             await pilot.pause()
-            settings = app.query_one(SettingsScreen)
+            settings = app.screen
+            assert isinstance(settings, SettingsScreen), settings
             assert settings.current_context == "course"
             thr = settings.query_one("#f-plagiarism-display_threshold", Input)
             assert thr.value == "0.5"
@@ -249,10 +281,18 @@ async def _s4_threshold_change_updates_plag_pane(root: Path) -> None:
             settings.action_save()
             await pilot.pause()
 
-            app.switch_tab("tab-dashboard")
+            await pilot.press("escape")
             await pilot.pause()
-            topbar = text(app.query_one("#plag-topbar", Static))
+            assert not isinstance(app.screen, SettingsScreen)
+            table.focus()
+            await pilot.press("p")
+            await wait_for(pilot, lambda: isinstance(app.screen, PlagiarismViewScreen))
+            topbar = text(app.screen.query_one("#plag-topbar", Static))
             assert "display threshold 80%" in topbar, topbar
+            await pilot.press("escape")
+            await wait_for(
+                pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen)
+            )
 
 
 async def main() -> None:

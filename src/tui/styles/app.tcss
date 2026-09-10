@@ -57,13 +57,13 @@ Screen {
 
 #ws-topbar {
     height: auto;
-    padding: 0 1 1 1;
+    padding: 0 1;
     border-bottom: solid $primary;
 }
 
-#ws-incr {
+#ws-status {
     height: auto;
-    padding: 0 1 1 1;
+    padding: 0 1;  /* no bottom pad: #richlog needs every row it can get at 100x30 */
     color: $text-muted;
 }
 
@@ -73,22 +73,22 @@ Screen {
 
 #stage-grid {
     grid-size: 2 3;
-    grid-gutter: 1 2;
+    grid-gutter: 0 2;  /* no row gap: the 1fr #richlog needs the 2 rows at 100x30 */
     width: 1fr;
     height: auto;
-    margin: 1 1 0 0;
+    margin: 0 1 0 0;  /* no top margin: the 1fr #richlog needs the rows at 100x30 */
 }
 
 .stage-btn {
     width: 1fr;
-    height: 3;
+    height: 4;  /* 2 border rows + both label lines (subtitle was clipped at 3) */
     border: round $panel;
 }
 
 #config-panel {
     width: 38;
     height: auto;
-    margin: 1 0 0 0;
+    margin: 0;  /* aligned with #stage-grid (both start at #ws-main's top) */
     border: round $primary;
     border-title-color: $primary;
     padding: 0 1;
@@ -121,7 +121,6 @@ Screen {
 
 #richlog {
     height: 1fr;
-    margin: 0 0 1 0;
     border: round $primary;
     border-title-color: $text-muted;
 }
@@ -138,10 +137,25 @@ TabbedContent {
     height: 1fr;
 }
 
-/* ---- plagiarism workspace (S4; embedded under the course table) ----
+/* ---- plagiarism workspace (S4; fullscreen push at course level) ----
+   D9 panel framing: top bar / tabs area / log get round $primary borders.
    Horizontal/ContentSwitcher/TabPane default to 1fr/auto heights that leave
    the pane collapsed or the buttons row hogging the space; same scoped
    fr-chain fix as #settings-tabs / #library-tabs. */
+#plag-topbar {
+    height: auto;
+    padding: 0 1;
+    border: round $primary;
+}
+
+#plag-tabs {
+    border: round $primary;
+}
+
+#plag-log {
+    border: round $primary;
+}
+
 #plag-buttons,
 #plag-progress {
     height: auto;

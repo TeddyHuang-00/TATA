@@ -1,9 +1,13 @@
 """Runnable headless check for the T6c dashboard key wiring (TATA).
 
 Covers: c import-course gate (.env) + modal cancel, c import-assignment modal
-(monkeypatched fetch), F/p confirm modals (cancel paths), s score review
-(graded / ungraded / assignment-level guard), o/g config tab switching with
-context, 1-5 state filter, tab switch -> Plagiarism reload.
+(monkeypatched fetch), F fetch-all confirm modal (cancel path), s score review
+(graded / ungraded / assignment-level guard), `,` settings push at all three
+dashboard levels (course/global here, assignment in the s-guard check; the old
+g/o shortcuts are gone), p / [Plagiarism] push the fullscreen plagiarism view
+(esc pops with focus back on #dashboard-table, esc mid-job is refused), 1-4
+state filter, tab switch. The course table (1fr, with its Flagged column) and
+the view's push/esc semantics replace the old embedded-pane section.
 
 Run: uv run tests/tata_dash_check.py
 """
@@ -11,6 +15,7 @@ Run: uv run tests/tata_dash_check.py
 from __future__ import annotations
 
 import asyncio
+import queue
 import shutil
 import tempfile
 from collections.abc import Callable, Iterator
@@ -29,7 +34,7 @@ from e2e_common import (  # isort: skip - seeds repo-root sys.path before src im
 from rich.text import Text as RichText
 from src.shared.aliases import load_alias_file
 from src.shared.cli_options import FetchCliOptions
-from src.tui import app as tata_app_mod, modals as tata_modal_mod
+from src.tui import app as tata_app_mod, icons, modals as tata_modal_mod
 from src.tui.app import (
     AliasEditorModal,
     AssignmentSetupModal,
@@ -38,12 +43,13 @@ from src.tui.app import (
     ImportCourseModal,
     TataApp,
 )
-from src.tui.plagiarism import PlagiarismScreen
+from src.tui.plagiarism import PlagiarismScreen, PlagiarismViewScreen
 from src.tui.plagiarism_detail import AssignmentPairDetailScreen
 from src.tui.score_review import ScoreReviewScreen
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import ConfirmationModal
 from textual.containers import Vertical
+from textual.coordinate import Coordinate
 from textual.pilot import Pilot
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
 
@@ -222,7 +228,9 @@ async def _check_score_review(pilot: Pilot, app: TataApp) -> None:
 
 
 async def _check_s_guard_at_assignment(pilot: Pilot, app: TataApp) -> None:
-    """s at assignment level -> workspace's own key; dashboard never pushes review."""
+    """s at assignment level -> workspace's own key; dashboard never pushes
+    review. Also v9 T3 item 6: `,` opens Settings at ALL three levels — here
+    with focus inside #workspace (the assignment level)."""
     table = app.query_one("#dashboard-table", DataTable)
     table.focus()
     await pilot.press(
@@ -231,9 +239,30 @@ async def _check_s_guard_at_assignment(pilot: Pilot, app: TataApp) -> None:
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "assignment"
+    # the plagiarism button is course-only (hidden at both other levels)
+    assert not app.query_one("#dash-plagiarism", Button).display
     await pilot.press("s")
     await pilot.pause()
     assert not isinstance(app.screen, ScoreReviewScreen)
+    # `,` at the assignment level: focus sits inside the workspace
+    workspace = app.query_one("#workspace")
+    assert workspace.display
+    focused = app.focused
+    assert focused is not None, "no focus at the assignment level"
+    nodes = [focused, *list(focused.ancestors)]
+    assert any(node is workspace for node in nodes), focused
+    await pilot.press("comma")
+    await pilot.pause()
+    settings = app.screen
+    assert isinstance(settings, SettingsScreen), settings
+    assert settings.current_context == "assignment", settings.current_context
+    assert "Settings · Assignment" in str(
+        settings.query_one("#settings-title", Static).content
+    )
+    await pilot.press("escape")
+    await pilot.pause()
+    assert not isinstance(app.screen, SettingsScreen)
+    assert app.state.dashboard_level == "assignment"
     # back up to course for the next checks
     await pilot.press("escape")
     await pilot.pause()
@@ -251,44 +280,200 @@ async def _check_fetch_all_confirm(pilot: Pilot, app: TataApp) -> None:
     assert app.query_one(DashboardScreen)._job is None
 
 
-async def _check_plagiarism_confirm(pilot: Pilot, app: TataApp) -> None:
-    """p -> ConfirmationModal; cancel with escape."""
+async def _check_plagiarism_course(pilot: Pilot, app: TataApp) -> None:
+    """D4: the course level has no embedded pane; the course table is 1fr
+    (leftover height) and carries the Flagged column; the `[Plagiarism]`
+    button is course-only."""
+    app.switch_tab("tab-dashboard")
+    await pilot.pause()
     table = app.query_one("#dashboard-table", DataTable)
+    assert app.state.dashboard_level == "global"
+    # global level: no plagiarism button and nothing embedded anywhere
+    assert not app.query_one("#dash-plagiarism", Button).display
+    assert len(app.query(PlagiarismScreen)) == 0
+    # feedback 3: the shared-threshold ">80% pairs" column is still gone
+    labels = [str(c.label) for c in table.columns.values()]
+    assert labels == [
+        "Course",
+        "Assignments",
+        "Raw",
+        "Proc",
+        "Grad",
+        "Avg score",
+        "Last run",
+    ], labels
+    assert not any(label.endswith("pairs") for label in labels), labels
     table.focus()
-    await pilot.press("p")
-    await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+    await pilot.press("enter")
+    await pilot.pause()
+    assert app.state.dashboard_level == "course"
+    # course level: the button shows; the old embed is gone
+    button = app.query_one("#dash-plagiarism", Button)
+    assert button.display
+    assert button.label.plain == f"{icons.PLAGIARISM} Plagiarism", button.label
+    assert len(app.query(PlagiarismScreen)) == 0, "pane must not be embedded"
+    # Flagged column: a1 has 1 flagged pair (minimal fixture), a2 none
+    labels = [str(c.label) for c in table.columns.values()]
+    assert labels == [
+        "Assignment",
+        "ID",
+        "Raw",
+        "Proc",
+        "Grad",
+        "Flagged",
+        "Avg",
+        "State",
+        "Last run",
+    ], labels
+    assert cell(table, 0, 0) == "My Alias", cell(table, 0, 0)
+    assert cell(table, 0, 5) == "1", cell(table, 0, 5)
+    assert cell(table, 1, 5) == "-", cell(table, 1, 5)
+    assert str(table.get_cell_at(Coordinate(0, 5)).style) == "red bold"
+    assert str(table.get_cell_at(Coordinate(1, 5)).style) == "dim"
+    # 1fr table: measured 24 rows at 120x40 (no embed split any more)
+    assert table.region.height == 24, table.region
+
+
+async def _check_pane_row_enter(
+    pilot: Pilot, app: TataApp, pane: PlagiarismScreen
+) -> None:
+    """Feedback 3 regression: Enter on a pane row pushes its detail screen and
+    must NOT navigate the dashboard into the assignment view."""
+    await pilot.press("t")  # students
+    await pilot.press("t")  # pairs
+    await pilot.pause()
+    pairs_table = pane.query_one("#pairs-table", DataTable)
+    assert pairs_table.row_count == 1, pairs_table.row_count
+    await wait_for(pilot, lambda: pairs_table.has_focus)
+    stack_len = len(app.screen_stack)
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentPairDetailScreen))
+    assert app.state.dashboard_level == "course", app.state.dashboard_level
+    assert len(app.screen_stack) == stack_len + 1
     await pilot.press("escape")
-    await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
-    assert app.query_one(DashboardScreen)._job is None
+    await wait_for(
+        pilot, lambda: not isinstance(app.screen, AssignmentPairDetailScreen)
+    )
+    assert app.state.dashboard_level == "course", app.state.dashboard_level
+    assert len(app.screen_stack) == stack_len
+
+
+async def _check_plagiarism_view(pilot: Pilot, app: TataApp) -> None:
+    """`p` / the `[Plagiarism]` button push the fullscreen view; focus lands
+    in the pane so up/down work; esc pops back with focus on #dashboard-table;
+    esc mid-job is refused; pane-row Enter opens its detail screen without
+    navigating the dashboard."""
+    table = app.query_one("#dashboard-table", DataTable)
+    button = app.query_one("#dash-plagiarism", Button)
+
+    # `p` pushes the view; focus lands inside the pane
+    await pilot.press("p")
+    await wait_for(pilot, lambda: isinstance(app.screen, PlagiarismViewScreen))
+    view = app.screen
+    pane = view.query_one(PlagiarismScreen)
+    focused = app.focused
+    assert focused is not None, "no focus after the push"
+    nodes = [focused, *list(focused.ancestors)]
+    assert any(node is pane for node in nodes), focused
+    # pane keys work: t switches to the Assignments pane (2 rows) whose
+    # cursor then moves with down (focus was seated by the push)
+    await pilot.press("t")
+    await pilot.pause()
+    assign = pane.query_one("#assign-table", DataTable)
+    assert assign.row_count == 2, assign.row_count
+    await wait_for(pilot, lambda: assign.has_focus)
+    await pilot.press("down")
+    await wait_for(pilot, lambda: assign.cursor_row == 1)
+    await _check_pane_row_enter(pilot, app, pane)
+
+    # esc during a fake in-flight job: refused, warning, view stays open
+    pane._job = {"stage": "detect", "queue": queue.Queue(), "state": "running"}
+    notices, orig_notify = spy_notify(app)
+    try:
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, PlagiarismViewScreen), "esc popped mid-job"
+        assert any("press x to cancel" in msg for msg, _s in notices), notices
+    finally:
+        app.notify = orig_notify
+        pane._job = None
+
+    # a plain esc pops back to the course dashboard; focus on the table
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen))
+    await wait_for(pilot, lambda: table.has_focus)
+    assert app.state.dashboard_level == "course"
+    assert len(app.query(PlagiarismScreen)) == 0
+
+    # second entry path: the `[Plagiarism]` button
+    button.press()
+    await wait_for(pilot, lambda: isinstance(app.screen, PlagiarismViewScreen))
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen))
+    await wait_for(pilot, lambda: table.has_focus)
+    assert app.state.dashboard_level == "course"
+    # back to global for the following checks (they re-enter the course)
+    await pilot.press("escape")
+    await pilot.pause()
+    assert app.state.dashboard_level == "global"
 
 
 async def _check_config_keys(pilot: Pilot, app: TataApp) -> None:
-    """o (course) -> Settings tab context=course; g (global) -> context=global."""
+    """`,` pushes fullscreen Settings for the CURRENT level; g/o are gone.
+
+    The old g (global) / o (course) shortcuts and their tab switch were
+    removed (feedback v9 item 2): one Settings entry point, scoped to the
+    level the dashboard is at.
+    """
     table = app.query_one("#dashboard-table", DataTable)
     table.focus()
-    await pilot.press("o")
+    # course level: `,` pushes settings with the course level baked in
+    await pilot.press("comma")
     await pilot.pause()
-    settings = app.query_one(SettingsScreen)
-    tabbed = app.query_one("#shell-tabs")
-    assert tabbed.active == "tab-settings", tabbed.active
+    settings = app.screen
+    assert isinstance(settings, SettingsScreen), settings
     assert settings.current_context == "course", settings.current_context
-    # back to dashboard, up to global, then g -> global context
-    app.switch_tab("tab-dashboard")
+    assert "Settings · Course" in str(
+        settings.query_one("#settings-title", Static).content
+    )
+    await pilot.press("escape")
     await pilot.pause()
+    assert not isinstance(app.screen, SettingsScreen)
+    assert app.query_one("#shell-tabs").active == "tab-dashboard"
+    assert app.state.dashboard_level == "course"
+
+    # back to global: the old `g` key is a no-op now (binding removed)
     table.focus()
     await pilot.press("escape")
     await pilot.pause()
     assert app.state.dashboard_level == "global"
-    table.focus()
     await pilot.press("g")
     await pilot.pause()
-    assert tabbed.active == "tab-settings"
+    assert not isinstance(app.screen, SettingsScreen)
+    await pilot.press("o")  # removed course shortcut: also a no-op
+    await pilot.pause()
+    assert not isinstance(app.screen, SettingsScreen)
+
+    # `,` at global level: global settings screen
+    table.focus()
+    await pilot.press("comma")
+    await pilot.pause()
+    settings = app.screen
+    assert isinstance(settings, SettingsScreen), settings
     assert settings.current_context == "global", settings.current_context
+    assert str(settings.query_one("#settings-title", Static).content) == (
+        "Settings · Global"
+    )
+    await pilot.press("escape")
+    await pilot.pause()
+    assert not isinstance(app.screen, SettingsScreen)
 
 
 async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     """1-4 filter (the 5/Flagged filter was removed): 3 -> partial (the
-    fixture's state), 2 -> empty; pressing 5 is a no-op now."""
+    fixture's state), 2 -> empty; pressing 5 is a no-op now. The active
+    filter also shows as a persistent dim breadcrumb suffix (F6), absent
+    for All."""
     app.switch_tab("tab-dashboard")
     await pilot.pause()
     # enter course again
@@ -298,20 +483,26 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     await pilot.pause()
     assert app.state.dashboard_level == "course"
     assert table.row_count == 2
+    breadcrumb = app.query_one("#breadcrumb", Static)
+    assert "filter:" not in text(breadcrumb), text(breadcrumb)
     await pilot.press("3")
     await pilot.pause()
     assert table.row_count == 2, table.row_count  # both assignments are partial
+    assert "filter: Partial" in text(breadcrumb), text(breadcrumb)
     await pilot.press("2")
     await pilot.pause()
     assert table.row_count == 0, table.row_count  # none are done
     assert app.query_one("#dash-empty", Static).display
+    assert "filter: Done" in text(breadcrumb), text(breadcrumb)
     await pilot.press("5")  # feedback 5: the flagged binding is gone
     await pilot.pause()
     assert table.row_count == 0
+    assert "filter: Done" in text(breadcrumb), text(breadcrumb)  # no-op keeps it
     await pilot.press("1")
     await pilot.pause()
     assert table.row_count == 2
     assert app.query_one(DashboardScreen)._filter is None
+    assert "filter:" not in text(breadcrumb), text(breadcrumb)
 
 
 async def _check_search_sort(pilot: Pilot, app: TataApp) -> None:
@@ -416,74 +607,6 @@ async def _check_search_keystroke(pilot: Pilot, app: TataApp) -> None:
     assert app.state.dashboard_level == "global"
 
 
-async def _check_plagiarism_embed(pilot: Pilot, app: TataApp) -> None:
-    """S4 embed: global level has no \"pairs\" column and the pane is hidden;
-    course level shows the pane (upper table + lower pane, both nonzero)."""
-    app.switch_tab("tab-dashboard")
-    await pilot.pause()
-    plag = app.query_one(PlagiarismScreen)
-    table = app.query_one("#dashboard-table", DataTable)
-    assert app.state.dashboard_level == "global"
-    assert not plag.display
-    # feedback 3: the shared-threshold ">80% pairs" column is gone
-    labels = [str(c.label) for c in table.columns.values()]
-    assert labels == [
-        "Course",
-        "Assignments",
-        "Raw",
-        "Proc",
-        "Grad",
-        "Avg score",
-        "Last run",
-    ], labels
-    assert not any(label.endswith("pairs") for label in labels), labels
-    # enter the course: pane visible, loaded (no no-course empty state)
-    table.focus()
-    await pilot.press("enter")
-    await pilot.pause()
-    assert app.state.dashboard_level == "course"
-    assert plag.display
-    assert not plag.query_one("#plag-empty", Static).display
-    # upper half = assignment table, lower half = plagiarism pane; both live
-    assert table.region.height > 0
-    assert plag.region.height > 0
-    assert plag.region.y >= table.region.y + table.region.height
-    assert table.region.height >= 10
-    # pane compactness: buttons row is at content height, no blank filler
-    assert plag.query_one("#plag-buttons").region.height <= 4
-    # feedback 3 regression: Enter on a plagiarism pane row pushes its detail
-    # screen — it must NOT navigate the dashboard into the assignment view
-    pairs_table = plag.query_one("#pairs-table", DataTable)
-    assert pairs_table.row_count == 1, pairs_table.row_count
-    stack_len = len(app.screen_stack)
-    pairs_table.focus()
-    await pilot.press("enter")
-    await wait_for(pilot, lambda: isinstance(app.screen, AssignmentPairDetailScreen))
-    assert app.state.dashboard_level == "course", app.state.dashboard_level
-    assert len(app.screen_stack) == stack_len + 1
-    await pilot.press("escape")
-    await wait_for(
-        pilot, lambda: not isinstance(app.screen, AssignmentPairDetailScreen)
-    )
-    assert app.state.dashboard_level == "course", app.state.dashboard_level
-    assert len(app.screen_stack) == stack_len
-    # assignment level: pane hidden again (embedded at course level only)
-    table.focus()
-    await pilot.press("enter")
-    await pilot.pause()
-    assert app.state.dashboard_level == "assignment"
-    assert not plag.display
-    await pilot.press("escape")
-    await pilot.pause()
-    assert app.state.dashboard_level == "course"
-    # back to global: pane hidden again
-    await pilot.press("escape")
-    await pilot.pause()
-    assert app.state.dashboard_level == "global"
-    assert not plag.display
-    assert table.region.height >= 25
-
-
 async def _check_aliases(pilot: Pilot, app: TataApp) -> None:
     """Alias display names: Global/Course tables + breadcrumb + ws topbar."""
     app.switch_tab("tab-dashboard")
@@ -507,8 +630,10 @@ async def _check_aliases(pilot: Pilot, app: TataApp) -> None:
     await pilot.press("enter")
     await pilot.pause()
     assert app.state.dashboard_level == "assignment"
-    topbar = text(app.query_one("#ws-topbar", Static))
-    assert "My Alias" in topbar, topbar
+    # v9 (feedback 3): the ws topbar no longer carries the assignment name —
+    # the breadcrumb is the single place it appears.
+    breadcrumb = text(app.query_one("#breadcrumb", Static))
+    assert "My Alias" in breadcrumb, breadcrumb
 
 
 async def _check_alias_brackets() -> None:
@@ -540,7 +665,7 @@ async def _check_alias_brackets() -> None:
             # display text keeps literal brackets; the stored content is
             # markup-escaped, so rendering raises no MarkupError
             assert RichText.from_markup(topbar).plain == (
-                "TATA · Dashboard [Course: My Course [S]]   Canvas: ? (.env missing)"
+                "TATA · Canvas: ? (.env missing)"
             ), topbar
             assert RichText.from_markup(breadcrumb).plain == "Global / My Course [S]"
             assert table.row_count == 1
@@ -672,9 +797,9 @@ async def main() -> None:
                 await _check_score_review(pilot, app)
                 await _check_s_guard_at_assignment(pilot, app)
                 await _check_fetch_all_confirm(pilot, app)
-                await _check_plagiarism_confirm(pilot, app)
                 await _check_config_keys(pilot, app)
-                await _check_plagiarism_embed(pilot, app)
+                await _check_plagiarism_course(pilot, app)
+                await _check_plagiarism_view(pilot, app)
                 await _check_filter(pilot, app)
                 await _check_search_sort(pilot, app)
                 await _check_search_keystroke(pilot, app)

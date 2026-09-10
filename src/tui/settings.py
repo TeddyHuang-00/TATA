@@ -1,20 +1,31 @@
-"""TATA Settings screen (S5, T6b): three-layer config editing.
+"""TATA Settings screen (S5, T6b): level-scoped config editing.
 
-The screen edits ``config.toml`` at three layers — global
-(``data/config.toml``), course (``data/<course>/config.toml``)
-and assignment (``data/<course>/<name>/config.toml``) — selected by a
-context ``Select``. The read path reuses :mod:`src.shared.assignment_config`
-(layered merge via :func:`load_assignment_file`); writes merge **only the
-edited keys** into the target file and validate the result with the same
-pydantic models before persisting (design 05 §4). All UI copy is English.
+A fullscreen ``Screen`` pushed from the dashboard (``,`) at the current
+dashboard level. The level is **baked in at construction** — one screen
+instance edits exactly one ``config.toml`` layer: global
+(``data/config.toml``), course (``data/<course>/config.toml``) or
+assignment (``data/<course>/<name>/config.toml``). There is no context
+dropdown and no level navigation: the stale-context bug class is gone
+structurally.
 
-Hosted by :mod:`src.tui.app` (T6c) inside the Settings TabPane; this module
-deliberately does not import or modify that file (the ``AppState`` type is
-imported under TYPE_CHECKING only, breaking the circular import).
+Each level composes only the tabs that belong to it:
+
+- global: Canvas (``.env`` + connection test) + Plagiarism
+- course: Canvas (``course_id`` + fetch list + test) + Plagiarism
+- assignment: Grading + Plagiarism + Paths (with inherited/default badges)
+
+The read path reuses :mod:`src.shared.assignment_config` (layered merge via
+:func:`load_assignment_file`); writes merge **only the edited keys** into the
+target file and validate the result with the same pydantic models before
+persisting (design 05 §4). All UI copy is English.
+
+Hosted by :mod:`src.tui.app` (T6c) via ``push_screen``; this module
+deliberately does not import that file at module level (the ``AppState`` type
+is imported under TYPE_CHECKING only, breaking the circular import).
 
 v1 scope limits (design 05): the provider registry is read-only (edit
-``data/providers/*.toml`` with e=$EDITOR), ``.env`` is display-only, and
-full hook-model editing are not implemented.
+``data/providers/*.toml`` with e=$EDITOR) and full hook-model editing are
+not implemented.
 """
 
 from __future__ import annotations
@@ -28,10 +39,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
 from dotenv import set_key
+from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.screen import Screen
 from textual.widgets import (
     Button,
     Checkbox,
@@ -60,8 +73,6 @@ from src.shared.canvas_fetch import (
 )
 from src.shared.config_edit import edit_config, read_config, validate_config_edits
 from src.shared.provider import get_providers
-from src.tui.css_loader import load_css
-from src.tui.workspace import is_displayed
 
 if TYPE_CHECKING:
     from src.tui.app import AppState
@@ -105,12 +116,9 @@ _CHECKBOX_SPECS: tuple[tuple[str, str], ...] = (
     ("processing.visual_evaluation", "Visual evaluation (screenshots)"),
 )
 
-# Context -> writable TOML sections (design 05 §2.5).
-_EDITABLE: dict[str, frozenset[str]] = {
-    "global": frozenset({"plagiarism"}),
-    "course": frozenset({"fetch", "plagiarism"}),
-    "assignment": frozenset({"grading", "plagiarism", "assignment", "processing"}),
-}
+# Context -> writable TOML sections (design 05 §2.5) is gone: a settings
+# screen instance edits exactly one level and composes exactly that level's
+# tabs, so no field is ever shown disabled.
 
 
 def _field_widget_id(fqid: str) -> str:
@@ -308,19 +316,26 @@ class _LField(Vertical):
         yield self._widget
 
 
-def _context_label(dir_name: str, display_name: str, ident: int | None) -> str:
-    """``Alias (id)`` when aliased; ``dir_name`` otherwise (no double ID)."""
-    if display_name != dir_name:
-        id_str = dir_name if ident is None else str(ident)
-        return f"{display_name} ({id_str})"
-    return dir_name
+# Per-level tab sets: (title, id) in display order. The digit keys map to
+# this list positionally; only the tabs of the screen's level are composed.
+_TABS_BY_LEVEL: dict[str, tuple[tuple[str, str], ...]] = {
+    "global": (("Canvas", "tab-canvas"), ("Plagiarism", "tab-plagiarism")),
+    "course": (("Canvas", "tab-canvas"), ("Plagiarism", "tab-plagiarism")),
+    "assignment": (
+        ("Grading", "tab-grading"),
+        ("Plagiarism", "tab-plagiarism"),
+        ("Paths / Advanced", "tab-paths"),
+    ),
+}
 
 
-class SettingsScreen(Vertical):
-    """S5 settings: context selector + four tab panes + layering-aware save.
+class SettingsScreen(Screen[None]):
+    """S5 settings: one dashboard level, its tabs only, layering-aware save.
 
-    Exposes :meth:`set_context` / :meth:`action_save` / :meth:`action_reset`
-    so host wiring (T6c) and headless checks can drive it without key events.
+    ``ctx`` is one of ``global`` / ``course`` / ``assignment`` and is fixed at
+    construction (``app.push_screen(SettingsScreen(state, level))``); the
+    screen never switches levels. Escape pops back to the dashboard
+    (``pop_on_escape``, the score-review pattern).
     """
 
     can_focus = True  # holds the key bindings when no inner widget is focused
@@ -330,19 +345,24 @@ class SettingsScreen(Vertical):
         Binding("r", "reset", "Reset"),
         Binding("e", "edit_config", "Edit config"),
         Binding("t", "test_canvas", "Test Canvas"),
-        Binding("1", "tab_grading", "Grading"),
-        Binding("2", "tab_canvas", "Canvas"),
-        Binding("3", "tab_plagiarism", "Plagiarism"),
-        Binding("4", "tab_paths", "Paths"),
+        Binding("1", "open_tab(0)", "Tab 1"),
+        Binding("2", "open_tab(1)", "Tab 2"),
+        Binding("3", "open_tab(2)", "Tab 3"),
+        Binding("4", "open_tab(3)", "Tab 4"),
+        Binding("escape", "close", "Back"),
     ]
 
-    DEFAULT_CSS = load_css("settings.tcss")
+    CSS_PATH = "styles/settings.tcss"
 
-    def __init__(self, state: AppState) -> None:
+    def __init__(self, state: AppState, ctx: str, pop_on_escape: bool = False) -> None:
+        if ctx not in _TABS_BY_LEVEL:
+            msg = f"unknown settings level: {ctx!r}"
+            raise ValueError(msg)
         super().__init__(id="settings-screen")
         self.state = state
-        self._ctx: str = ""  # unset until on_mount sets the initial context
-        self._ctx_manual = False  # True until a programmatic set_context clears it
+        self._ctx = ctx  # baked in: this instance edits exactly this level
+        self.pop_on_escape = pop_on_escape
+        self._tabs = _TABS_BY_LEVEL[ctx]
         self._widgets: dict[str, Input | Select | Checkbox | _PromptCheckList] = {}
         self._reset_buttons: dict[str, Button] = {}
         self._reset_fqids: dict[str, str] = {}
@@ -358,142 +378,199 @@ class SettingsScreen(Vertical):
             section, key = fqid.split(".", 1)
             self._specs[fqid] = (section, key, kind)
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide actions that have no target at this level (digits, t)."""
+        if action == "open_tab":
+            index = int(str(parameters[0]))
+            return index < len(self._tabs)
+        if action == "test_canvas":
+            return "tab-canvas" in {tab_id for _title, tab_id in self._tabs}
+        return True
+
     # ---------- composition ----------
 
     @override
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings-top"):
-            yield Static("Settings · Context:", id="settings-title")
-            yield Select([("Global", "global")], id="ctx-select", allow_blank=False)
-        yield Static("", id="ctx-hint")
+            yield Static(self._title_text(), id="settings-title")
+        yield Static("", id="settings-hint")
         with TabbedContent(id="settings-tabs"):
-            with TabPane("Grading", id="tab-grading"), ScrollableContainer():
-                yield _LField(
-                    "provider (from data/providers/)",
-                    self._select("grading.provider"),
-                    reset=self._reset_button("grading.provider"),
-                )
-                yield _LField(
-                    "rubric (from data/rubrics)",
-                    self._select("grading.rubric"),
-                    reset=self._reset_button("grading.rubric"),
-                )
-                yield self._prompt_checklist("grading.system_prompt")
-                yield _LField(
-                    "max_parallel_tasks (1..10)",
-                    self._input("grading.max_parallel_tasks"),
-                    reset=self._reset_button("grading.max_parallel_tasks"),
-                )
-            with TabPane("Canvas", id="tab-canvas"), ScrollableContainer():
-                yield Static("", id="canvas-env")
-                yield _LField(
-                    "Canvas URL",
-                    Input(
-                        id="canvas-url",
-                        placeholder="https://canvas.instructure.com",
-                    ),
-                )
-                yield _LField(
-                    "Canvas token (visible only while editing)",
-                    _SecretInput(id="canvas-token"),
-                )
-                with Horizontal():
-                    yield Button("Save .env", id="btn-save-env", variant="primary")
-                    yield Button("Reload .env", id="btn-reload-env")
-                yield Static("", id="canvas-fetch-list")
-                yield _LField(
-                    "course_id (Canvas course, numeric)",
-                    self._input("fetch.course_id"),
-                    reset=self._reset_button("fetch.course_id"),
-                )
-                yield Button("Test Canvas connection", id="btn-test-canvas")
-            with TabPane("Plagiarism", id="tab-plagiarism"), ScrollableContainer():
-                yield _LField(
-                    "copydetect_weight (0..1)",
-                    self._input("plagiarism.copydetect_weight"),
-                    reset=self._reset_button("plagiarism.copydetect_weight"),
-                )
-                yield _LField(
-                    "embedding_weight (0..1)",
-                    self._input("plagiarism.embedding_weight"),
-                    reset=self._reset_button("plagiarism.embedding_weight"),
-                )
-                yield _LField(
-                    "display_threshold (0..1)",
-                    self._input("plagiarism.display_threshold"),
-                    reset=self._reset_button("plagiarism.display_threshold"),
-                )
-                yield _LField(
-                    "pairwise_alpha (>0, <=1)",
-                    self._input("plagiarism.pairwise_alpha"),
-                    reset=self._reset_button("plagiarism.pairwise_alpha"),
-                )
-                yield _LField(
-                    "individual_alpha (>0, <=1)",
-                    self._input("plagiarism.individual_alpha"),
-                    reset=self._reset_button("plagiarism.individual_alpha"),
-                )
-                yield _LField(
-                    "score_floor (0..0.5)",
-                    self._input("plagiarism.score_floor"),
-                    reset=self._reset_button("plagiarism.score_floor"),
-                )
-                yield _LField(
-                    "score_cap (0.5..1)",
-                    self._input("plagiarism.score_cap"),
-                    reset=self._reset_button("plagiarism.score_cap"),
-                )
-                yield _LField(
-                    "embedding_model",
-                    self._input("plagiarism.embedding_model"),
-                    reset=self._reset_button("plagiarism.embedding_model"),
-                )
-                yield _LField(
-                    "extensions (comma-separated, e.g. .py, .ipynb)",
-                    self._input("plagiarism.extensions"),
-                    reset=self._reset_button("plagiarism.extensions"),
-                )
-            with TabPane("Paths / Advanced", id="tab-paths"), ScrollableContainer():
-                yield _LField(
-                    "raw_dir",
-                    self._input("assignment.raw_dir"),
-                    reset=self._reset_button("assignment.raw_dir"),
-                )
-                yield _LField(
-                    "processed_dir",
-                    self._input("assignment.processed_dir"),
-                    reset=self._reset_button("assignment.processed_dir"),
-                )
-                yield _LField(
-                    "graded_dir",
-                    self._input("assignment.graded_dir"),
-                    reset=self._reset_button("assignment.graded_dir"),
-                )
-                yield _LField(
-                    "logs_dir",
-                    self._input("assignment.logs_dir"),
-                    reset=self._reset_button("assignment.logs_dir"),
-                )
-                yield _LField(
-                    "reference_file (optional)",
-                    self._input("assignment.reference_file"),
-                    reset=self._reset_button("assignment.reference_file"),
-                )
-                yield _LField(
-                    "template_file ([plagiarism])",
-                    self._input("plagiarism.template_file"),
-                    reset=self._reset_button("plagiarism.template_file"),
-                )
-                for fqid, label in _CHECKBOX_SPECS:
+            if self._ctx == "global":
+                with TabPane("Canvas", id="tab-canvas"), ScrollableContainer():
+                    yield Static("", id="canvas-env")
                     yield _LField(
-                        label,
-                        self._checkbox(fqid),
-                        reset=self._reset_button(fqid),
+                        "Canvas URL",
+                        Input(
+                            id="canvas-url",
+                            placeholder="https://canvas.instructure.com",
+                        ),
                     )
+                    yield _LField(
+                        "Canvas token (visible only while editing)",
+                        _SecretInput(id="canvas-token"),
+                    )
+                    with Horizontal():
+                        yield Button("Save .env", id="btn-save-env", variant="primary")
+                        yield Button("Reload .env", id="btn-reload-env")
+                    yield Button("Test Canvas connection", id="btn-test-canvas")
+                with TabPane("Plagiarism", id="tab-plagiarism"), ScrollableContainer():
+                    yield from self._plagiarism_fields()
+            elif self._ctx == "course":
+                with TabPane("Canvas", id="tab-canvas"), ScrollableContainer():
+                    yield _LField(
+                        "course_id (Canvas course, numeric)",
+                        self._input("fetch.course_id"),
+                        reset=self._reset_button("fetch.course_id"),
+                    )
+                    yield Static("", id="canvas-fetch-list")
+                    yield Button("Test Canvas connection", id="btn-test-canvas")
+                with TabPane("Plagiarism", id="tab-plagiarism"), ScrollableContainer():
+                    yield from self._plagiarism_fields()
+            else:  # assignment
+                with TabPane("Grading", id="tab-grading"), ScrollableContainer():
+                    yield _LField(
+                        "provider (from data/providers/)",
+                        self._select("grading.provider"),
+                        reset=self._reset_button("grading.provider"),
+                    )
+                    yield _LField(
+                        "rubric (from data/rubrics)",
+                        self._select("grading.rubric"),
+                        reset=self._reset_button("grading.rubric"),
+                    )
+                    yield self._prompt_checklist("grading.system_prompt")
+                    yield _LField(
+                        "max_parallel_tasks (1..10)",
+                        self._input("grading.max_parallel_tasks"),
+                        reset=self._reset_button("grading.max_parallel_tasks"),
+                    )
+                with TabPane("Plagiarism", id="tab-plagiarism"), ScrollableContainer():
+                    yield from self._plagiarism_fields()
+                with (
+                    TabPane("Paths / Advanced", id="tab-paths"),
+                    ScrollableContainer(),
+                ):
+                    yield _LField(
+                        "raw_dir",
+                        self._input("assignment.raw_dir"),
+                        reset=self._reset_button("assignment.raw_dir"),
+                    )
+                    yield _LField(
+                        "processed_dir",
+                        self._input("assignment.processed_dir"),
+                        reset=self._reset_button("assignment.processed_dir"),
+                    )
+                    yield _LField(
+                        "graded_dir",
+                        self._input("assignment.graded_dir"),
+                        reset=self._reset_button("assignment.graded_dir"),
+                    )
+                    yield _LField(
+                        "logs_dir",
+                        self._input("assignment.logs_dir"),
+                        reset=self._reset_button("assignment.logs_dir"),
+                    )
+                    yield _LField(
+                        "reference_file (optional)",
+                        self._input("assignment.reference_file"),
+                        reset=self._reset_button("assignment.reference_file"),
+                    )
+                    yield _LField(
+                        "template_file ([plagiarism])",
+                        self._input("plagiarism.template_file"),
+                        reset=self._reset_button("plagiarism.template_file"),
+                    )
+                    for fqid, label in _CHECKBOX_SPECS:
+                        yield _LField(
+                            label,
+                            self._checkbox(fqid),
+                            reset=self._reset_button(fqid),
+                        )
         with Horizontal(id="settings-actions"):
             yield Button("Save (ctrl+s)", id="btn-save", variant="primary")
             yield Button("Reset (r)", id="btn-reset")
         yield Static("", id="settings-status")
+
+    def _plagiarism_fields(self) -> ComposeResult:
+        """The [plagiarism] editor — shared by every level's Plagiarism tab."""
+        yield _LField(
+            "copydetect_weight (0..1)",
+            self._input("plagiarism.copydetect_weight"),
+            reset=self._reset_button("plagiarism.copydetect_weight"),
+        )
+        yield _LField(
+            "embedding_weight (0..1)",
+            self._input("plagiarism.embedding_weight"),
+            reset=self._reset_button("plagiarism.embedding_weight"),
+        )
+        yield _LField(
+            "display_threshold (0..1)",
+            self._input("plagiarism.display_threshold"),
+            reset=self._reset_button("plagiarism.display_threshold"),
+        )
+        yield _LField(
+            "pairwise_alpha (>0, <=1)",
+            self._input("plagiarism.pairwise_alpha"),
+            reset=self._reset_button("plagiarism.pairwise_alpha"),
+        )
+        yield _LField(
+            "individual_alpha (>0, <=1)",
+            self._input("plagiarism.individual_alpha"),
+            reset=self._reset_button("plagiarism.individual_alpha"),
+        )
+        yield _LField(
+            "score_floor (0..0.5)",
+            self._input("plagiarism.score_floor"),
+            reset=self._reset_button("plagiarism.score_floor"),
+        )
+        yield _LField(
+            "score_cap (0.5..1)",
+            self._input("plagiarism.score_cap"),
+            reset=self._reset_button("plagiarism.score_cap"),
+        )
+        yield _LField(
+            "embedding_model",
+            self._input("plagiarism.embedding_model"),
+            reset=self._reset_button("plagiarism.embedding_model"),
+        )
+        yield _LField(
+            "extensions (comma-separated, e.g. .py, .ipynb)",
+            self._input("plagiarism.extensions"),
+            reset=self._reset_button("plagiarism.extensions"),
+        )
+
+    def _title_text(self) -> str:
+        """``Settings · Global`` / ``Settings · Course: <name> (<id>)`` …"""
+        state = self.state
+        if self._ctx == "course":
+            course = state.current_course
+            if course is not None:
+                name = course_display_name(
+                    state.assignments_dir, course.dir_name, course.course_id
+                )
+                ident = f" ({course.course_id})" if course.course_id is not None else ""
+                return f"Settings · Course: {escape(name)}{ident}"
+        elif self._ctx == "assignment":
+            assignment = state.current_assignment
+            if assignment is not None:
+                course_name = (
+                    state.current_course.dir_name
+                    if state.current_course is not None
+                    else ""
+                )
+                name = assignment_display_name(
+                    state.assignments_dir,
+                    course_name,
+                    assignment.dir_name,
+                    assignment.assignment_id,
+                )
+                ident = (
+                    f" ({assignment.assignment_id})"
+                    if assignment.assignment_id is not None
+                    else ""
+                )
+                return f"Settings · Assignment: {escape(name)}{ident}"
+        return "Settings · Global"
 
     def _reset_button(self, fqid: str) -> Button:
         """Small per-field reset button (deletes the key at this layer)."""
@@ -530,81 +607,14 @@ class SettingsScreen(Vertical):
     @override
     def on_mount(self) -> None:
         self._load_env_fields()
-        self.set_context(self._initial_ctx())
+        self._load_context()
 
-        # Seed ctx-select focus only when the settings pane is the visible
-        # one. Textual's TabbedContent activates any pane that receives a
-        # Focus event, so an unconditional seed at startup activates the
-        # HIDDEN settings pane and drops the dashboard tab/focus (the
-        # deferred check is needed because all panes are still displayed
-        # during mount; the app's own switch_tab focuses ctx-select when
-        # the user actually opens the settings tab).
-        def _seed() -> None:
-            if is_displayed(self):
-                self.query_one("#ctx-select", Select).focus()
-
-        self.call_after_refresh(_seed)
-
-    # ---------- context API ----------
+    # ---------- level ----------
 
     @property
     def current_context(self) -> str:
+        """This screen's level (global / course / assignment); set at init."""
         return self._ctx
-
-    def available_contexts(self) -> list[str]:
-        options = ["global"]
-        if self.state.current_course is not None:
-            options.append("course")
-        if self.state.current_assignment is not None:
-            options.append("assignment")
-        return options
-
-    def context_options(self) -> list[tuple[str, str]]:
-        """(value, label) pairs for ``#ctx-select``.
-
-        Labels show the alias + id when an alias.toml entry exists (e.g.
-        ``Sample Course (111111)``); plain ``dir_name`` otherwise. Values
-        stay ``global``/``course``/``assignment`` — display only.
-        """
-        options: list[tuple[str, str]] = [("global", "Global")]
-        course = self.state.current_course
-        if course is not None:
-            name = course_display_name(
-                self.state.assignments_dir, course.dir_name, course.course_id
-            )
-            options.append((
-                "course",
-                _context_label(course.dir_name, name, course.course_id),
-            ))
-        assignment = self.state.current_assignment
-        if assignment is not None:
-            name = assignment_display_name(
-                self.state.assignments_dir,
-                course.dir_name if course is not None else "",
-                assignment.dir_name,
-                assignment.assignment_id,
-            )
-            options.append((
-                "assignment",
-                _context_label(assignment.dir_name, name, assignment.assignment_id),
-            ))
-        return options
-
-    def set_context(self, ctx: str, force: bool = False, manual: bool = False) -> None:
-        if ctx not in self.available_contexts():
-            return
-        if not force and ctx == self._ctx:
-            return
-        self._ctx_manual = manual
-        self._ctx = ctx
-        self._load_context()
-
-    def _initial_ctx(self) -> str:
-        if self.state.current_assignment is not None:
-            return "assignment"
-        if self.state.current_course is not None:
-            return "course"
-        return "global"
 
     # ---------- loading ----------
 
@@ -629,10 +639,10 @@ class SettingsScreen(Vertical):
             return None
 
     def _layer_view(self) -> dict:
-        """Values to display for the current context.
+        """Values to display at this level.
 
-        Assignment context shows the fully layered view (existing merge code);
-        course/global contexts show the layer's own raw values over the schema
+        The assignment level shows the fully layered view (existing merge
+        code); course/global show the layer's own raw values over the schema
         defaults (that is what the target file holds, and what gets written).
         """
         if self._ctx == "assignment":
@@ -658,39 +668,24 @@ class SettingsScreen(Vertical):
         return view
 
     def _load_context(self) -> None:
+        """Load this level's values into the composed widgets and re-render."""
         view = self._layer_view()
         self._global_exists = self._global_path().is_file()
-        contexts = self.available_contexts()
-        if self._ctx not in contexts:
-            self._ctx = "global"
-
-        ctx_select = self.query_one("#ctx-select", Select)
-        options = [(label, value) for value, label in self.context_options()]
-        current_values = {
-            value for _, value in ctx_select._options if value is not Select.NULL
-        }
-        if current_values != {value for _, value in options}:
-            ctx_select.set_options(options)
-        if ctx_select.value != self._ctx:
-            ctx_select.value = self._ctx
 
         hint = ""
-        if self.state.current_course is None:
+        if self._ctx == "global" and not self._global_exists:
             hint = (
-                "No course selected — only the Global context is editable. "
-                "Enter a course from the Dashboard (Global view) to unlock the "
-                "Course/Assignment contexts."
+                "No global config file (data/config.toml) yet — editing and "
+                "saving here (ctrl+s) creates it, or press e to open it in "
+                "$EDITOR."
             )
-        elif self._ctx == "global" and not self._global_exists:
-            hint = (
-                "No global config file (data/config.toml) — press e to "
-                "create it, or save here once the file exists."
-            )
-        self.query_one("#ctx-hint", Static).update(hint)
+        self.query_one("#settings-hint", Static).update(hint)
 
         self._loaded = {}
         for fqid, (section, key, kind) in self._specs.items():
-            widget = self._widgets[fqid]
+            widget = self._widgets.get(fqid)
+            if widget is None:
+                continue  # field not composed at this level
             value = (
                 (view.get(section) or {}).get(key) if isinstance(view, dict) else None
             )
@@ -702,10 +697,6 @@ class SettingsScreen(Vertical):
                 widget._refresh_files()
             self._set_widget_value(widget, kind, value)
             self._loaded[fqid] = self._value_str(widget)
-            writable = self._writable(section)
-            widget.disabled = not writable
-            if fqid in self._reset_buttons:
-                self._reset_buttons[fqid].disabled = not writable
         self._apply_badges()
         self._render_statics()
         self._update_status()
@@ -724,7 +715,8 @@ class SettingsScreen(Vertical):
             return frozenset()
         raw = read_config(assignment.config_path)
         local: set[str] = set()
-        for fqid, (section, key, _kind) in self._specs.items():
+        for fqid in self._widgets:
+            section, key, _kind = self._specs[fqid]
             section_data = raw.get(section)
             if isinstance(section_data, dict) and section_data.get(key) is not None:
                 local.add(fqid)
@@ -758,15 +750,16 @@ class SettingsScreen(Vertical):
         return isinstance(data, dict) and data.get(key) is not None
 
     def _apply_badges(self) -> None:
-        """Append an inheritance badge to the label in the assignment context.
+        """Append an inheritance badge to the label in the assignment level.
 
-        Assignment context shows the layered effective values; a key that is
-        not set in the local config gets a badge naming the source layer and
-        the effective value (or the schema default). Other contexts show
-        plain labels.
+        The assignment level shows the layered effective values; a composed
+        key that is not set in the local config gets a badge naming the source
+        layer and the effective value (or the schema default). Other levels
+        show plain labels.
         """
         local = self._local_keys() if self._ctx == "assignment" else None
-        for fqid, (section, key, _kind) in self._specs.items():
+        for fqid in self._widgets:
+            section, key, _kind = self._specs[fqid]
             label = self._field_label(fqid)
             base = self._base_labels.get(fqid)
             if base is None:
@@ -823,14 +816,6 @@ class SettingsScreen(Vertical):
         elif not isinstance(widget, Select):
             widget.value = SettingsScreen._format_value(kind, value)
 
-    def _writable(self, section: str) -> bool:
-        global_blocked = (
-            section == "plagiarism"
-            and self._ctx == "global"
-            and not self._global_exists
-        )
-        return section in _EDITABLE[self._ctx] and not global_blocked
-
     # ---------- rendering ----------
 
     @staticmethod
@@ -858,29 +843,25 @@ class SettingsScreen(Vertical):
         return str(widget.value or "")
 
     def _render_statics(self) -> None:
-        env = self.state.env_state or {}
-        if env.get("has_env"):
-            env_text = (
-                f"[green]Canvas .env: found[/green] — {env.get('base_url')}, "
-                f"token: {mask_secret(env.get('token') or '')}. [dim]Edit URL and "
-                "token in the fields above, then Save .env.[/dim]"
-            )
-        else:
-            env_text = (
-                "[yellow]Canvas .env: not found[/yellow] — set CANVAS_BASE_URL / "
-                "CANVAS_ACCESS_TOKEN in the fields above and Save .env "
-                "(gitignored), then press t to test."
-            )
-        self.query_one("#canvas-env", Static).update(env_text)
-
-        course = self.state.current_course
-        if course is None:
-            self.query_one("#canvas-fetch-list", Static).update(
-                "[dim][[fetch.assignments]]: select a course to view the "
-                "assignment list.[/dim]"
-            )
-        else:
-            raw = self._read_raw(course.config_path)
+        """Update the statics composed at this level (Canvas env / fetch list)."""
+        if self._ctx == "global":
+            env = self.state.env_state or {}
+            if env.get("has_env"):
+                env_text = (
+                    f"[green]Canvas .env: found[/green] — {env.get('base_url')}, "
+                    f"token: {mask_secret(env.get('token') or '')}. [dim]Edit URL "
+                    "and token in the fields above, then Save .env.[/dim]"
+                )
+            else:
+                env_text = (
+                    "[yellow]Canvas .env: not found[/yellow] — set "
+                    "CANVAS_BASE_URL / CANVAS_ACCESS_TOKEN in the fields above "
+                    "and Save .env (gitignored), then press t to test."
+                )
+            self.query_one("#canvas-env", Static).update(env_text)
+        elif self._ctx == "course":
+            course = self.state.current_course
+            raw = self._read_raw(course.config_path if course is not None else None)
             assigns = (raw.get("fetch") or {}).get("assignments")
             if isinstance(assigns, list) and assigns:
                 entries = [
@@ -902,8 +883,9 @@ class SettingsScreen(Vertical):
         """Refresh env fields + ``state.env_state`` from disk, re-render statics."""
         env = read_env_state(self.state.root_dir, upstream=False)
         self.state.env_state = env
-        self.query_one("#canvas-url", Input).value = env.get("base_url") or ""
-        self.query_one("#canvas-token", _SecretInput).value = env.get("token") or ""
+        if self._ctx == "global":  # the .env fields only exist at global level
+            self.query_one("#canvas-url", Input).value = env.get("base_url") or ""
+            self.query_one("#canvas-token", _SecretInput).value = env.get("token") or ""
         self._render_statics()
 
     def action_save_env(self) -> None:
@@ -948,7 +930,7 @@ class SettingsScreen(Vertical):
     def _update_status(self) -> None:
         target = self._target_path()
         if target is None:
-            target_text = "n/a (no context selected)"
+            target_text = "n/a (no data selected)"
         elif self._ctx == "global" and not target.is_file():
             target_text = f"{target} (does not exist yet)"
         else:
@@ -993,9 +975,9 @@ class SettingsScreen(Vertical):
         edits: dict[str, dict[str, object]] = {}
         errors: list[str] = []
         for fqid, (section, key, kind) in self._specs.items():
-            widget = self._widgets[fqid]
-            if widget.disabled:
-                continue
+            widget = self._widgets.get(fqid)
+            if widget is None or widget.disabled:
+                continue  # not composed at this level
             current = self._value_str(widget)
             if current == self._loaded.get(fqid):
                 continue
@@ -1014,14 +996,14 @@ class SettingsScreen(Vertical):
     def _validate(self, edits: dict[str, dict[str, object]]) -> list[str]:
         """Validate edits before writing (rules live in :mod:`src.shared.config_edit`).
 
-        Assignment context validates the final layered merged view — identical
-        to what ``load_assignment_file`` will parse after the write (per-key
-        overlay is layer-commutative). Course/global edits validate their own
-        edited sections plus the weight-sum rule (design 05 §③).
+        The assignment level validates the final layered merged view —
+        identical to what ``load_assignment_file`` will parse after the write
+        (per-key overlay is layer-commutative). Course/global edits validate
+        their own edited sections plus the weight-sum rule (design 05 §③).
         """
         target = self._target_path()
         if target is None:
-            return ["no target config for the current context"]
+            return ["no target config for this level"]
         try:
             validate_config_edits(target, edits)
         except ValueError as exc:
@@ -1038,17 +1020,18 @@ class SettingsScreen(Vertical):
             return
         target = self._target_path()
         if target is None:
-            self._fail("Save", "no target config for the current context")
+            self._fail("Save", "no target config for this level")
             return
-        if self._ctx == "global" and not target.is_file():
-            self._fail(
-                "No global config",
-                "data/config.toml does not exist — create it with $EDITOR (e) first",
-            )
-            return
+        # A missing global config.toml is fine: edit_config bootstraps it
+        # (graceful empty state at the global level — see _load_context).
         problems = self._validate(edits)
         if problems:
-            self._fail("Validation failed", "; ".join(problems))
+            detail = "; ".join(problems)
+            # Unparseable target TOML: point at the repair path (the same
+            # $EDITOR e-key flow the load path already documents).
+            if any("invalid TOML" in problem for problem in problems):
+                detail += " — press e to open it in $EDITOR and fix it"
+            self._fail("Validation failed", detail)
             return
         try:
             edit_config(target, edits)
@@ -1062,21 +1045,44 @@ class SettingsScreen(Vertical):
 
     # ---------- key actions ----------
 
+    def action_close(self) -> None:
+        """Pop back to the dashboard (pushed fullscreen view; esc/back)."""
+        if self.pop_on_escape and len(self.app.screen_stack) > 1:
+            self._refresh_dashboard()
+            self.app.pop_screen()
+
+    def _refresh_dashboard(self) -> None:
+        """Re-render the dashboard below after leaving settings.
+
+        The dashboard is not re-rendered automatically when a pushed screen
+        pops, and config edits here (max_parallel_tasks, plagiarism weights,
+        ...) must show up in the workspace / plagiarism panes immediately
+        (tata_realtime_check S1/S4).
+        """
+        with contextlib.suppress(Exception):
+            # Deferred import (noqa): src.tui.app imports this module at load
+            # time, so the name only exists once the app is running.
+            from src.tui.app import (  # ruff: ignore[import-outside-top-level]
+                DashboardScreen,
+            )
+
+            self.app.query_one(DashboardScreen).refresh_from_state()
+
     def action_reset(self) -> None:
-        """Reload the current context's values from disk (design 05 §5 'r')."""
+        """Reload this level's values from disk (design 05 §5 'r')."""
         self._load_context()
         self._set_result("[dim]Reloaded from disk[/dim]")
 
     def action_reset_field(self, fqid: str) -> None:
-        """Delete ``section.key`` from the current layer config (F5).
+        """Delete ``section.key`` from the target layer config (F5).
 
         The key disappears from the target TOML (not nulled), so the merge
-        view falls back to the upper layer (assignment context) or the schema
-        default (course/global context), and the inherited badge reappears.
+        view falls back to the upper layer (assignment level) or the schema
+        default (course/global level), and the inherited badge reappears.
         """
         target = self._target_path()
         if target is None:
-            self._fail("Reset field", "no target config for the current context")
+            self._fail("Reset field", "no target config for this level")
             return
         section, key, _kind = self._specs[fqid]
         raw = self._read_raw(target)
@@ -1094,10 +1100,10 @@ class SettingsScreen(Vertical):
         )
 
     def action_edit_config(self) -> None:
-        """Open the current context's config file in ``$EDITOR`` (design §5 'e')."""
+        """Open this level's config file in ``$EDITOR`` (design §5 'e')."""
         target = self._target_path()
         if target is None:
-            self.app.notify("No config file for this context", severity="warning")
+            self.app.notify("No config file for this level", severity="warning")
             return
         editor = os.environ.get("EDITOR")
         if not editor or shutil.which(editor.split()[0]) is None:
@@ -1120,7 +1126,7 @@ class SettingsScreen(Vertical):
         tabs = self.query_one("#settings-tabs", TabbedContent)
         if tabs.active != "tab-canvas":
             self.app.notify(
-                "Test Canvas: switch to the Canvas tab first (2)", severity="warning"
+                "Test Canvas: open the Canvas tab first", severity="warning"
             )
             return
         if not (self.state.env_state or {}).get("has_env"):
@@ -1154,37 +1160,12 @@ class SettingsScreen(Vertical):
     def _set_tab(self, name: str) -> None:
         self.query_one("#settings-tabs", TabbedContent).active = name
 
-    def action_tab_grading(self) -> None:
-        self._set_tab("tab-grading")
-
-    def action_tab_canvas(self) -> None:
-        self._set_tab("tab-canvas")
-
-    def action_tab_plagiarism(self) -> None:
-        self._set_tab("tab-plagiarism")
-
-    def action_tab_paths(self) -> None:
-        self._set_tab("tab-paths")
+    def action_open_tab(self, index: int) -> None:
+        """Digit keys 1-4: open the index-th tab composed at this level."""
+        if 0 <= index < len(self._tabs):
+            self._set_tab(self._tabs[index][1])
 
     # ---------- messages ----------
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        """Apply only user-consistent context changes.
-
-        Programmatic ``set_options``/``value`` writes post stale Changed
-        messages (the selected option gets reset first); applying those as if
-        the user had picked them would ping-pong the context forever. A
-        message whose value no longer matches the widget's live value is
-        stale; a live value equal to the current context is a repair no-op.
-        """
-        if event.select.id != "ctx-select":
-            return
-        new_ctx = str(event.value)
-        if new_ctx == self._ctx:
-            return
-        if str(event.select.value) != new_ctx:
-            return  # stale programmatic message — ignore
-        self.set_context(new_ctx, manual=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

@@ -191,7 +191,12 @@ def test_pending_follows_hash_cache(
     the submission by the hash cache.
     """
     from src.tui.scan import AssignmentInfo, Counts
-    from src.tui.workspace import AssignmentScreen, _incremental_line, state_key
+    from src.tui.workspace import (
+        AssignmentScreen,
+        _grade_pending,
+        _status_line,
+        state_key,
+    )
 
     config_path = _setup_grade_env(tmp_path)
     calls: list[MagicMock] = []
@@ -210,13 +215,20 @@ def test_pending_follows_hash_cache(
     pending = pending_grade_submissions(config_path)
     assert [p.stem for p in pending] == ["100001"]
 
-    # The incremental display agrees with the run: grade 1, not grade 0.
+    # The status row agrees with the run: grade 1, not grade 0 — the row
+    # reads _grade_pending, the same cache rule the run queues from.
     info = AssignmentInfo(
         dir_name="a1",
         config_path=config_path,
         counts=Counts(raw=1, processed=1, graded=1, scored=0),
     )
-    assert "grade 1" in _incremental_line(info)
+    assert "1 grade pending" in _status_line(
+        fetched=True,
+        pre_pending=0,
+        grade_pending=_grade_pending(config_path),
+        score_pending=max(info.counts.graded - info.counts.scored, 0),
+        analyzed=False,
+    )
 
     # The state badge must agree too: counts are full but the cache says
     # regrade -> Partial (with raw actually fetched and pre cached-valid).

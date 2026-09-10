@@ -12,9 +12,10 @@ new_value = "__new__"
 
 
 def validate_name(raw: str, suffix: str) -> str | None:
-    """Strip, append the suffix, reject path separators; None if invalid."""
+    """Strip, append the suffix, reject path separators and dot-only names;
+    None if invalid."""
     name = raw.strip()
-    if not name:
+    if not name or not name.strip("."):
         return None
     if not name.endswith(suffix):
         name += suffix

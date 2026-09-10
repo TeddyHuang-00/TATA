@@ -12,17 +12,14 @@
     width: auto;
     padding: 0 1 0 0;
 }
-#ctx-select {
-    height: 3;
-    width: 52;
-}
-#ctx-hint {
+#settings-hint {
     height: auto;
     padding: 0 0 1 0;
     color: $warning;
 }
 #settings-tabs {
     height: 1fr;
+    border: round $primary;  /* D9 panel framing (same as #plag-tabs) */
 }
 #settings-tabs > ContentSwitcher {
     height: 1fr;

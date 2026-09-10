@@ -1,8 +1,9 @@
-"""Runnable headless check for the TATA TUI platform shell (T4a).
+"""Runnable headless check for the TATA TUI platform shell (T4a; v9 rework).
 
 Follows tests/preview_check.py: App.run_test() + Pilot on a tmp course
 layout, no pytest-asyncio. Asserts: scan counts, Global table rows, drill
-down/up navigation, breadcrumb text, assignment placeholder, empty state.
+down/up navigation, breadcrumb text, assignment placeholder, empty state,
+and the v9 shell (Dashboard | Library tabs; Settings as a pushed screen).
 
 Run: uv run tests/tata_app_check.py
 """
@@ -16,12 +17,13 @@ from pathlib import Path
 from e2e_common import COURSE, cell, make_course, text, wait_for  # isort: skip - seeds repo-root sys.path before src imports
 from src.tui.app import DashboardScreen, TataApp
 from src.tui.library import LibraryScreen
-from src.tui.plagiarism import PlagiarismScreen
+from src.tui.plagiarism import PlagiarismScreen, PlagiarismViewScreen
 from src.tui.scan import scan_assignments, scan_courses
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import AssignmentScreen
+from textual.containers import Horizontal
 from textual.pilot import Pilot
-from textual.widgets import DataTable, Static, TabbedContent
+from textual.widgets import Button, DataTable, Static, TabbedContent
 
 COURSE_A = COURSE
 COURSE_B = "c2-second"
@@ -154,34 +156,72 @@ async def _check_empty_state(root: Path) -> None:
         assert "No courses yet" in text(empty), text(empty)
 
 
+async def _check_settings_entry(pilot: Pilot, app: TataApp) -> None:
+    """`,` and the (gear) button push the fullscreen settings for the CURRENT
+    level; esc pops back to the dashboard tab."""
+    table = app.query_one("#dashboard-table", DataTable)
+    table.focus()
+    await pilot.press("comma")
+    await pilot.pause()
+    settings = app.screen
+    assert isinstance(settings, SettingsScreen), settings
+    assert settings.current_context == "course", settings.current_context
+    assert "Settings · Course" in str(
+        settings.query_one("#settings-title", Static).content
+    )
+    await pilot.press("escape")
+    await pilot.pause()
+    assert not isinstance(app.screen, SettingsScreen)
+    assert app.query_one("#shell-tabs", TabbedContent).active == "tab-dashboard"
+
+    # the gear button is the mouse path to the same screen
+    app.query_one("#dash-settings", Button).press()
+    await pilot.pause()
+    assert isinstance(app.screen, SettingsScreen)
+    await pilot.press("escape")
+    await pilot.pause()
+    assert not isinstance(app.screen, SettingsScreen)
+
+
 async def _check_tabs(root: Path) -> None:
-    """T4c: real Plagiarism/Settings/Library screens mounted; tab switching."""
+    """v9: 2-tab shell (Dashboard | Library); Settings and the plagiarism
+    workspace are pushed screens (nothing embedded in the dashboard)."""
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 40)) as pilot:
         await wait_for(pilot, lambda: app.state.courses != [])
         # placeholders are gone: the real screens are mounted
-        assert app.query_one(PlagiarismScreen) is not None
-        assert app.query_one(SettingsScreen) is not None
         assert app.query_one(LibraryScreen) is not None
+        # settings is not a tab any more: no widget and no pane in the shell
+        assert len(app.query(SettingsScreen)) == 0
         tabs = app.query_one("#shell-tabs", TabbedContent)
         panes = tabs.query_one("ContentSwitcher").children
         assert [pane.id for pane in panes] == [
             "tab-dashboard",
             "tab-library",
-            "tab-settings",
         ]
         table = app.query_one("#dashboard-table", DataTable)
+        # the dashboard action row: Settings at all levels, Plagiarism is
+        # course-only; the pane is never embedded in the dashboard
+        assert app.query_one("#dash-actions", Horizontal).display
+        assert app.query_one("#dash-settings", Button).display
+        assert not app.query_one("#dash-plagiarism", Button).display
+        assert len(app.query(PlagiarismScreen)) == 0
         # enter the course so settings derives 'course' and plagiarism has data
         table.focus()
         await pilot.press("enter")
         await pilot.pause()
         assert app.state.dashboard_level == "course"
+        assert app.query_one("#dash-plagiarism", Button).display
 
-        # S4: the plagiarism pane is embedded in the course dashboard
-        plag = app.query_one(PlagiarismScreen)
-        assert plag.display
-        assert not plag.query_one("#plag-empty", Static).display
-        assert plag.query_one("#plag-tabs").display
+        # `p` pushes the fullscreen plagiarism view (not embedded)
+        await pilot.press("p")
+        await wait_for(pilot, lambda: isinstance(app.screen, PlagiarismViewScreen))
+        view = app.screen
+        pane = view.query_one(PlagiarismScreen)
+        assert pane.query_one("#plag-tabs").display
+        assert not pane.query_one("#plag-empty", Static).display
+        await pilot.press("escape")
+        await wait_for(pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen))
 
         app.switch_tab("tab-library")
         await pilot.pause()
@@ -189,14 +229,10 @@ async def _check_tabs(root: Path) -> None:
         assert library.display
         assert library.query_one("#library-tabs").display
 
-        app.switch_tab("tab-settings")
-        await pilot.pause()
-        settings = app.query_one(SettingsScreen)
-        assert settings.current_context == "course", settings.current_context
-
         app.switch_tab("tab-dashboard")
         await pilot.pause()
         assert table.display
+        await _check_settings_entry(pilot, app)
 
 
 async def main() -> None:

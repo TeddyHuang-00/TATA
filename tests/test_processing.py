@@ -213,7 +213,7 @@ def test_pending_preprocess_follows_hash_cache_not_filecount(
     """
     from src.shared.processing import pending_preprocess_items
     from src.tui.scan import AssignmentInfo, Counts
-    from src.tui.workspace import _incremental_line, state_key
+    from src.tui.workspace import _pre_pending, _status_line, state_key
 
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -234,17 +234,28 @@ def test_pending_preprocess_follows_hash_cache_not_filecount(
         config_path=config_path,
         counts=Counts(raw=1, processed=1, graded=1, scored=1),
     )
-    line = _incremental_line(info)
-    assert "pre 1" in line
-    assert "No change: 2" in line  # only grade+score are no-change; pre is pending
+    line = _status_line(
+        fetched=True,
+        pre_pending=_pre_pending(config_path),
+        grade_pending=0,
+        score_pending=max(info.counts.graded - info.counts.scored, 0),
+        analyzed=False,
+    )
+    # display reads the cache rule (render_all -> _pre_pending): pre 1, not 0
+    assert "1 preprocess pending" in line
     assert state_key(info) == "partial"
 
     # Reconvert (the run) -> cache updated -> display agrees: pre 0.
     preprocess_assignment(config_path)
     assert pending_preprocess_items(config_path) == []
-    line = _incremental_line(info)
-    assert "pre 0" in line
-    assert "No change: 3" in line
+    line = _status_line(
+        fetched=True,
+        pre_pending=_pre_pending(config_path),
+        grade_pending=0,
+        score_pending=max(info.counts.graded - info.counts.scored, 0),
+        analyzed=False,
+    )
+    assert "0 preprocess pending" in line
 
 
 def test_folder_concat_html_and_ipynb(tmp_path: Path) -> None:

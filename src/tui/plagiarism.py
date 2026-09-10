@@ -1,5 +1,8 @@
 """S4 Plagiarism screen (T2): course-scoped tabs + embedded compare pane.
 
+Pushed fullscreen from the course level as :class:`PlagiarismViewScreen`
+(esc pops back; refused while a job runs — press ``x`` to cancel first).
+
 Four tabs (``TabbedContent``, aggregate first): ``#pane-aggregate`` —
 course-level z-score table; ``#pane-assignments`` — per-assignment ranking;
 ``#pane-students`` — per-student ranking; ``#pane-pairs`` — per-pair ranking
@@ -13,6 +16,12 @@ workspace via :class:`src.tui.jobs.JobHost`: the worker thread runs
 the JSON, not the text report) with stdout redirected into a log queue; the
 main thread drains it into the RichLog.  ``[p]`` detects the current
 assignment, ``[a]`` runs the course aggregate.
+
+Cancellation is cooperative, like the workspace (design 99 §3.1): the
+detect/aggregate functions are synchronous and cannot be interrupted — ``x``
+marks the job "stopping" (cancel event set) and the summary is then reported
+as "Cancelled", but the run finishes anyway and its outputs
+(``all_pairs.json`` / ``aggregate.json``) are still written.
 
 Data sources (course-scoped; no dependence on ``state.current_assignment``):
 - pairs: ``<assignment>/plagiarism/all_pairs.json`` per assignment in
@@ -35,6 +44,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -244,7 +254,12 @@ def _cmp_pane() -> ComposeResult:
 
 class PlagiarismScreen(JobHost):
     """S4 plagiarism workspace: course-scoped tabs with p/a job buttons.
-    Embedded in the course dashboard (lower half); also testable standalone."""
+
+    Wrapped by :class:`PlagiarismViewScreen` (fullscreen push from the course
+    level); also testable standalone.  ``esc`` deliberately has no binding
+    here: a focused widget's bindings outrank the host Screen's, so a pane
+    binding would shadow the view's close (job-guarded pop).
+    """
 
     log_widget_id = "#plag-log"
     cancel_button_id = "#plag-cancel"
@@ -263,8 +278,8 @@ class PlagiarismScreen(JobHost):
         Binding("j", "cursor_down", "Cursor down"),
         Binding("p", "run_detect", "Run detection"),
         Binding("a", "run_aggregate", "Run aggregation"),
+        Binding("x", "cancel_job", "Cancel job"),
         Binding("r", "reload", "Reload"),
-        Binding("escape", "go_dashboard", "Dashboard"),
     ]
 
     def __init__(self, state: AppState) -> None:
@@ -328,7 +343,7 @@ class PlagiarismScreen(JobHost):
     def on_mount(self) -> None:
         self.styles.height = "1fr"
         self.query_one("#plag-tabs", TabbedContent).styles.height = "1fr"
-        self.query_one("#plag-log", RichLog).styles.height = 5
+        self.query_one("#plag-log", RichLog).styles.height = 8
         self.query_one("#plag-progress", Horizontal).display = False
         for table_id in (
             "pairs-table",
@@ -828,14 +843,16 @@ class PlagiarismScreen(JobHost):
         self.reload_all()
         self.app.notify("Reloaded", severity="information")
 
-    def action_go_dashboard(self) -> None:
-        """esc: leave the pane — back to the dashboard table."""
-        self.app.call_after_refresh(self._focus_dashboard_table)
+    @property
+    def job_active(self) -> bool:
+        """True while a detect/aggregate job is in flight — including the
+        "stopping" window, since cancellation is cooperative (the worker
+        runs to completion; see the module docstring).
 
-    def _focus_dashboard_table(self) -> None:
-        table = self.app.query("#dashboard-table").first()
-        if table is not None:
-            table.focus()
+        The view's esc guard reads this (and stays open — unmounting mid-job
+        would strand the JobHost drain timer and ``state.active_job``).
+        """
+        return self._job is not None
 
     def action_cancel_job(self) -> None:
         job = self._job
@@ -851,9 +868,9 @@ class PlagiarismScreen(JobHost):
     def action_run_detect(self) -> None:
         if self._protect():
             return
-        # Assignments-pane cursor wins (course-level embed: a selected row is
-        # the only assignment context); fall back to state.current_assignment
-        # for the standalone/legacy flow.
+        # Assignments-pane cursor wins (the selected row is the only
+        # assignment context); fall back to state.current_assignment for
+        # set-up flows where the pane has no selection.
         info = self._selected_assignment() or self.state.current_assignment
         if info is None:
             self.app.notify(
@@ -909,3 +926,52 @@ class PlagiarismScreen(JobHost):
     def job_finished(self, job: dict, summary: dict | None) -> None:
         self.reload_all()
         self._focus_active_table()
+
+
+# ---------- the fullscreen view ----------
+
+
+class PlagiarismViewScreen(Screen[None]):
+    """Fullscreen plagiarism view pushed from the course dashboard.
+
+    Wraps :class:`PlagiarismScreen` (``p`` / the ``dash-plagiarism`` button).
+    ``escape`` pops back to the dashboard — refused while a plagiarism job is
+    in flight (notify tells the user to cancel with ``x`` first), because the
+    JobHost drain timer dies with the unmounted pane and would strand
+    ``state.active_job``.  After the pop focus returns to ``#dashboard-table``.
+    """
+
+    BINDINGS: ClassVar = [Binding("escape", "close", "Back")]
+
+    def __init__(self, state: AppState, pop_on_escape: bool = False) -> None:
+        super().__init__()
+        self.state = state
+        self.pop_on_escape = pop_on_escape
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield PlagiarismScreen(self.state)
+
+    @override
+    def on_mount(self) -> None:
+        # Seat focus inside the pane (its active table) so up/down and the
+        # pane keys work immediately; deferred so the pane's first render
+        # (rows loaded) has happened.
+        self.call_after_refresh(self._focus_pane_table)
+
+    def _focus_pane_table(self) -> None:
+        self.query_one(PlagiarismScreen)._focus_active_table()
+
+    def action_close(self) -> None:
+        """esc: pop back to the dashboard; refuse while a job runs."""
+        if self.query_one(PlagiarismScreen).job_active:
+            self.app.notify("Job running — press x to cancel first", severity="warning")
+            return
+        if self.pop_on_escape and len(self.app.screen_stack) > 1:
+            self.app.pop_screen()
+            self.app.call_after_refresh(self._focus_dashboard_table)
+
+    def _focus_dashboard_table(self) -> None:
+        table = self.app.query("#dashboard-table").first()
+        if table is not None:
+            table.focus()

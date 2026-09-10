@@ -1,14 +1,17 @@
-"""Runnable headless check for the S4 Plagiarism screen (T2).
+"""Runnable headless check for the S4 Plagiarism screen (T2; v9 fullscreen).
 
-Drives PlagiarismScreen (pushed on a host Screen over TataApp.run_test) on a
-tmp course fixture: one course with two assignments, each carrying
+Drives the fullscreen view (``PlagiarismViewScreen`` pushed over TataApp)
+on a tmp course fixture: one course with two assignments, each carrying
 ``plagiarism/all_pairs.json`` (one pair over the course config display
 threshold, one below; string-valued sims included), plus a course-level
 ``plagiarism/aggregate.json`` (z/p flags).  Covers the four course-scoped
 tabs (Aggregate default, Assignments, Students, Pairs), the embedded
 #cmp-pane compare (no modal pushed — screen stack unchanged), p/a job
 starts (stubbed detect — no real copydetect), the no-course empty state,
-and the missing-aggregate / corrupt-pairs / zero-pairs states.
+the missing-aggregate / corrupt-pairs / zero-pairs states, and the v9 view
+semantics (push seats focus on the pane's active table; esc pops back to
+the dashboard with #dashboard-table focused; esc is refused while a job is
+in flight and `x` cancels a live detect job; #plag-log height 8).
 
 Run: uv run tests/tata_plagiarism_check.py
 """
@@ -25,14 +28,13 @@ from e2e_common import cell, spy_notify, text, wait_for, write_aliases  # isort:
 from src.shared.plagiarism_display import pair_side_name
 from src.tui import plagiarism as plag_mod
 from src.tui.app import TataApp
-from src.tui.plagiarism import PlagiarismScreen
+from src.tui.plagiarism import PlagiarismScreen, PlagiarismViewScreen
 from src.tui.plagiarism_detail import (
     AggregatePairDetailScreen,
     AssignmentDetailScreen,
     AssignmentPairDetailScreen,
     StudentDetailScreen,
 )
-from textual.app import ComposeResult, Screen
 from textual.containers import Horizontal
 from textual.pilot import Pilot
 from textual.widgets import DataTable, RichLog, Static, TabbedContent, Tree
@@ -307,25 +309,12 @@ def _make_detail_fixture(assignments_dir: Path) -> None:
     )
 
 
-class PlagiarismHost(Screen):
-    """Thin host so the Vertical PlagiarismScreen can be pushed as a screen."""
-
-    def __init__(self, state: object) -> None:
-        super().__init__()
-        self._state = state
-
-    def compose(self) -> ComposeResult:
-        yield PlagiarismScreen(self._state)  # type: ignore[arg-type]
-
-
 async def _enter(app: TataApp, pilot: Pilot) -> PlagiarismScreen:
-    app.push_screen(PlagiarismHost(app.state))
+    """Push the fullscreen view and return its wrapped pane."""
+    app.push_screen(PlagiarismViewScreen(app.state, pop_on_escape=True))
     await pilot.pause()
-    # App.query does not descend into pushed screens; query the host itself
-    screen = app.screen.query_one(PlagiarismScreen)
-    screen._focus_active_table()  # type: ignore[attr-defined]
-    await pilot.pause()
-    return screen
+    # App.query does not descend into pushed screens; query the view itself
+    return app.screen.query_one(PlagiarismScreen)
 
 
 def _set_state(app: TataApp) -> None:
@@ -648,6 +637,7 @@ async def _check_jobs(screen: PlagiarismScreen, pilot: Pilot, app: TataApp) -> N
 async def _check_detect_from_assignments_pane(app: TataApp, pilot: Pilot) -> None:
     """M1: at course level state.current_assignment is None; the Assignments
     pane cursor drives single-assignment detect (was dead before the fix)."""
+    outer_view = app.screen  # the view pushed by check_screen
     screen = await _enter(app, pilot)
     _set_state(app)
     app.state.current_assignment = None
@@ -680,6 +670,11 @@ async def _check_detect_from_assignments_pane(app: TataApp, pilot: Pilot) -> Non
     finally:
         plag_mod.detect_plagiarism = orig_detect
         app.notify = orig_notify
+    # this extra view has served its purpose: esc pops it so the checks below
+    # (and the final esc-pop check) work on a single pushed view
+    screen.focus()
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: app.screen is outer_view)
 
 
 def _check_late_alias_resolution(app: TataApp) -> None:
@@ -898,6 +893,85 @@ async def _check_details(app: TataApp, pilot: Pilot) -> None:
     await _check_highlight_regression(screen, pilot, app)
 
 
+async def _check_view_push_pop(app: TataApp, pilot: Pilot) -> None:
+    """v9 view semantics on a fresh push: push seats focus inside the pane
+    (its active table) so up/down navigation works; esc mid-job is refused
+    (stay open, warn to press x) and [x] really cancels a LIVE detection
+    job (stopping + cancel_event + log line — same observable as the Cancel
+    button); a plain esc pops back to the dashboard with focus on
+    #dashboard-table; the pane carries no escape binding that could shadow
+    the view's close."""
+    # close the view left over from the checks above (fresh push below)
+    assert isinstance(app.screen, PlagiarismViewScreen)
+    assert not app.screen.query_one(PlagiarismScreen).job_active
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen))
+
+    app.push_screen(PlagiarismViewScreen(app.state, pop_on_escape=True))
+    await wait_for(pilot, lambda: isinstance(app.screen, PlagiarismViewScreen))
+    view = app.screen
+    pane = view.query_one(PlagiarismScreen)
+    # no pane-level escape binding (widget bindings outrank the Screen's)
+    assert "escape" not in pane._bindings.key_to_bindings, (
+        pane._bindings.key_to_bindings
+    )
+
+    # focus after push: the pane's active table (aggregate has rows here)
+    agg = pane.query_one("#agg-table", DataTable)
+    await wait_for(pilot, lambda: agg.has_focus)
+    # up/down navigation works right away
+    await pilot.press("down")
+    await wait_for(pilot, lambda: agg.cursor_row == 1)
+    await pilot.press("up")
+    await wait_for(pilot, lambda: agg.cursor_row == 0)
+
+    # D9: the framed log keeps its 8-row height
+    log = pane.query_one("#plag-log", RichLog)
+    assert log.region.height == 8, log.region
+
+    # a REAL in-flight detect job: esc is refused (view stays open, warn to
+    # press x) and the advertised [x] key really cancels — the same
+    # observable the #plag-cancel button produces (state 'stopping' +
+    # cancel_event set + 'Cancel requested' line in the log).
+    app.state.current_assignment = app.state.assignments[0]
+    orig_detect = plag_mod.detect_plagiarism
+
+    def slow_detect(config_path: Path, **_kwargs: object) -> dict:
+        time.sleep(1.5)
+        return {"stage": "plagiarism", "success": 1, "errors": 0, "total": 1}
+
+    plag_mod.detect_plagiarism = slow_detect
+    notices, orig_notify = spy_notify(app)
+    try:
+        await pilot.press("p")
+        await wait_for(pilot, lambda: pane._job is not None)
+        job = pane._job
+        assert job is not None
+        assert job["state"] == "running", job
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, PlagiarismViewScreen), "esc popped mid-job"
+        assert any("press x to cancel" in msg for msg, _s in notices), notices
+        # the key the warning names must really reach action_cancel_job
+        await pilot.press("x")
+        await wait_for(pilot, lambda: job["state"] == "stopping")
+        assert job["cancel_event"].is_set(), job
+        assert any("Cancel requested" in str(line) for line in log.lines), [
+            str(line) for line in log.lines
+        ]
+        await wait_for(pilot, lambda: pane._job is None)
+    finally:
+        plag_mod.detect_plagiarism = orig_detect
+        app.notify = orig_notify
+        app.state.current_assignment = None
+
+    # a plain esc pops back; focus returns to the dashboard table
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: not isinstance(app.screen, PlagiarismViewScreen))
+    table = app.query_one("#dashboard-table", DataTable)
+    await wait_for(pilot, lambda: table.has_focus)
+
+
 async def check_screen(app: TataApp, pilot: Pilot) -> None:
     _set_state(app)
     screen = await _enter(app, pilot)
@@ -916,6 +990,7 @@ async def check_screen(app: TataApp, pilot: Pilot) -> None:
     await _check_jobs(screen, pilot, app)
     await _check_detect_from_assignments_pane(app, pilot)
     await _check_details(app, pilot)
+    await _check_view_push_pop(app, pilot)
 
 
 async def main() -> None:

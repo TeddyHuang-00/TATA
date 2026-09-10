@@ -2,11 +2,16 @@
 
 Drives the real DashboardScreen (App.run_test + Pilot) on a tmp course
 layout with a valid assignment config and a partial pipeline state. Covers:
-6 stage buttons + incremental subtitles, config panel, [i] summary, grade
-confirm modal (open/dismiss/confirm), a mocked stage job (worker thread ->
-queue -> RichLog -> rescan), cooperative cancel (x), native '?' help panel,
-esc back to Course. The stage function is monkeypatched with a stub — no real
-grading/LLM call ever happens.
+6 stage buttons with icon labels + visible subtitles (content region AND
+SVG text), the always-visible #ws-status pending row (fixture-consistent
+counts, D8 colours, refresh on rescan/re-entry), the removal of the old
+'Pipeline' prefix / 'incremental' toggle, config panel, grade confirm modal
+(open/dismiss/confirm), a mocked stage job (worker thread -> queue ->
+RichLog -> rescan), cooperative cancel (x), native '?' help panel, esc back
+to Course, a 100x30 short-window layout check that PROVES the log really
+paints (content row + 'Live log' + a written line in the exported SVG), and
+a 120x44 tall-window no-regression guard. The stage function is
+monkeypatched with a stub — no real grading/LLM call ever happens.
 
 Run: uv run tests/tata_workspace_check.py
 """
@@ -14,21 +19,29 @@ Run: uv run tests/tata_workspace_check.py
 from __future__ import annotations
 
 import asyncio
+import html
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
 
 from e2e_common import COURSE, make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
+from rich.text import Text as RichText
 from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file, save_cache_file
-from src.shared.grading import grading_pending, load_assignment_config
-from src.tui import workspace as tw
+from src.shared.grading import (
+    grading_pending,
+    load_assignment_config,
+    pending_grade_submissions,
+)
+from src.shared.processing import pending_preprocess_items
+from src.tui import icons, workspace as tw
 from src.tui.app import AliasEditorModal, TataApp
 from src.tui.score_review import ScoreReviewScreen
 from src.tui.workspace import AssignmentScreen
 from textual.pilot import Pilot
-from textual.widgets import Button, RichLog
+from textual.widgets import Button, RichLog, Static
 
 ASSIGNMENT_CFG = (
     "[grading]\n"
@@ -76,6 +89,28 @@ def _stage_buttons(app: TataApp) -> dict[str, Button]:
     }
 
 
+def _plain(widget: Static) -> RichText:
+    """Display text of a markup Static (content holds the markup source)."""
+    return RichText.from_markup(str(widget.content))
+
+
+def _span_style(text: RichText, needle: str) -> str:
+    """Style tag of the span covering ``needle`` ('' when unstyled)."""
+    start = text.plain.index(needle)
+    end = start + len(needle)
+    for span in text.spans:
+        if span.start <= start and end <= span.end:
+            return str(span.style)
+    return ""
+
+
+def _svg_plain(svg: str) -> str:
+    """Plain text of an exported SVG: join the text runs (Textual splits a
+    line into runs) then unescape entities (spaces are &#160;)."""
+    joined = "".join(re.findall(r"<text[^>]*>(.*?)</text>", svg, re.DOTALL))
+    return html.unescape(joined).replace("\xa0", " ")
+
+
 async def _enter_assignment(app: TataApp, pilot: Pilot) -> None:
     table = app.query_one("#dashboard-table")
     await wait_for(pilot, lambda: table.row_count == 1)
@@ -88,23 +123,20 @@ async def _enter_assignment(app: TataApp, pilot: Pilot) -> None:
     await wait_for(pilot, lambda: app.query_one(AssignmentScreen).display)
 
 
-async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
+def _check_buttons_and_panel(app: TataApp) -> None:
     ws = app.query_one(AssignmentScreen)
     buttons = _stage_buttons(app)
 
     assert len(buttons) == 6
-    assert str(buttons["fetch"].label).startswith("fetch\n")
+    assert str(buttons["fetch"].label).startswith(f"{icons.FETCH} fetch\n")
     assert "2/2 done" in str(buttons["preprocess"].label), buttons["preprocess"].label
     assert "1 pending · 1 done" in str(buttons["grade"].label), buttons["grade"].label
     assert "1/1 scored" in str(buttons["score"].label), buttons["score"].label
     assert "Not run" in str(buttons["analyze"].label), buttons["analyze"].label
-    assert str(buttons["score_review"].label).startswith("score review\n"), buttons[
-        "score_review"
-    ].label
-    # no _sub entry -> single-'…' subtitle fallback
-    assert str(buttons["score_review"].label).rstrip().endswith("…"), buttons[
-        "score_review"
-    ].label
+    # score review now carries a real subtitle, never the '…' fallback
+    assert str(buttons["score_review"].label) == (
+        f"{icons.REVIEW} score review\nview scores"
+    ), buttons["score_review"].label
     assert not ws.query("#stage-plagiarism"), "plagiarism button should be gone"
     assert not hasattr(ws, "action_run_plagiarism")
 
@@ -115,18 +147,112 @@ async def _check_buttons_and_panel(app: TataApp, pilot: Pilot) -> None:
     assert "max_parallel" in text, text
     assert "4" in text, text
 
-    incr = ws.query_one("#ws-incr")
-    assert not incr.display
-    await pilot.press("i")
+
+async def _check_status_row(app: TataApp, pilot: Pilot) -> None:
+    """#ws-status: always visible; counts straight from the shared rules
+    (never re-implement them here); D8 colours (>0 yellow, 0 green, absent
+    dim)."""
+    ws = app.query_one(AssignmentScreen)
+    info = ws._info
+    assert info is not None
+    cfg = info.config_path
+    a_dir = cfg.parent
+    status = ws.query_one("#ws-status", Static)
+    await wait_for(pilot, lambda: status.region.height >= 1)
+    assert status.display, "status row must be always visible"
+
+    pre = len(pending_preprocess_items(cfg))
+    grade = len(pending_grade_submissions(cfg))
+    score = max(info.counts.graded - info.counts.scored, 0)
+
+    st = _plain(status)
+    assert f"{icons.OK} fetch" in st.plain, st.plain
+    assert f"{pre} preprocess pending" in st.plain, st.plain
+    assert f"{grade} grade pending" in st.plain, st.plain
+    assert f"{score} score pending" in st.plain, st.plain
+    assert "analyze Not run" in st.plain, st.plain  # fixture: no meta_analysis.json
+
+    assert _span_style(st, f"{icons.OK} fetch") == "green"
+    assert _span_style(st, f"{pre} preprocess pending") == (
+        "yellow" if pre > 0 else "green"
+    )
+    assert _span_style(st, f"{grade} grade pending") == (
+        "yellow" if grade > 0 else "green"
+    )
+    assert _span_style(st, f"{score} score pending") == (
+        "green" if score == 0 else "yellow"
+    )
+    assert _span_style(st, "analyze Not run") == "dim"
+
+    # fetch state comes from the fetch cache, same rule as the subtitle
+    assert cache_file(a_dir, "fetch").is_file()
+
+
+async def _check_concepts_removed(app: TataApp, pilot: Pilot) -> None:
+    """Feedback 3: the 'Pipeline' prefix and the 'incremental' concept are
+    gone from bindings and from every rendered string.
+
+    The Footer renders the focused widget's bindings, so the exported SVG
+    (composited screen) also covers the key-hint strip.
+    """
+    ws = app.query_one(AssignmentScreen)
+    for binding in ws.BINDINGS:
+        assert binding.key != "i", binding
+        assert "incremental" not in str(binding.description).lower(), binding
+    for widget in ws.query(Static):
+        widget_text = _plain(widget).plain.lower()
+        assert "pipeline" not in widget_text, (widget.id, widget_text)
+        assert "incremental" not in widget_text, (widget.id, widget_text)
+    ws.focus()
     await pilot.pause()
-    assert incr.display
-    line = str(incr.content)
-    assert "To run:" in line, line
-    assert "Skip" not in line, (
-        line
-    )  # F8: formerly double-counted (processed+done+scored)
-    assert "No change:" in line, line
-    await pilot.press("i")
+    svg = _svg_plain(app.export_screenshot()).lower()
+    assert "pipeline" not in svg, "the 'Pipeline' prefix must be gone"
+    assert "incremental" not in svg, "the incremental hint/binding must be gone"
+
+
+async def _check_subtitles_visible(app: TataApp, pilot: Pilot) -> None:
+    """Stage-button subtitles really render: content region has both lines
+    AND the subtitle strings appear in the exported SVG (joined runs)."""
+    buttons = _stage_buttons(app)
+    await wait_for(
+        pilot,
+        lambda: all(btn.content_region.height >= 2 for btn in buttons.values()),
+    )
+    for name, btn in buttons.items():
+        assert btn.content_region.height >= 2, (name, btn.content_region)
+        lines = str(btn.label).split("\n")
+        assert len(lines) == 2, (name, str(btn.label))
+        assert lines[1], (name, lines[1])
+        assert lines[1] != "…", (name, lines[1])
+    svg = _svg_plain(app.export_screenshot())
+    for name, btn in buttons.items():
+        subtitle = str(btn.label).split("\n", 1)[1]
+        assert subtitle in svg, (name, subtitle)
+
+
+async def _check_status_refresh(app: TataApp, pilot: Pilot) -> None:
+    """#ws-status recomputes on rescan (`r`) and on level re-entry."""
+    ws = app.query_one(AssignmentScreen)
+    info = ws._info
+    assert info is not None
+    status = ws.query_one("#ws-status", Static)
+    meta = info.config_path.parent / "logs" / "meta_analysis.json"
+    meta.write_text("{}", encoding="utf-8")
+    try:
+        await pilot.press("r")
+        await wait_for(pilot, lambda: "analyze OK" in _plain(status).plain)
+        assert _span_style(_plain(status), "analyze OK") == "green"
+    finally:
+        meta.unlink()
+    # leave the level and re-enter: render_all runs again from fixture state
+    ws.focus()
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: app.state.dashboard_level == "course")
+    await wait_for(pilot, lambda: app.query_one("#dashboard-table").row_count == 1)
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: app.state.dashboard_level == "assignment")
+    await wait_for(pilot, lambda: "analyze Not run" in _plain(status).plain)
+    assert _span_style(_plain(status), "analyze Not run") == "dim"
 
 
 async def _wait_modal_focused(app: TataApp, pilot: Pilot, button_id: str) -> None:
@@ -295,7 +421,12 @@ async def _check_score_review(app: TataApp, pilot: Pilot) -> None:
 
 
 async def _check_score_review_empty(app: TataApp, pilot: Pilot) -> None:
-    """Empty graded/ -> notify, no push."""
+    """Empty graded/ -> notify, no push; fresh fixture status says not fetched."""
+    ws = app.query_one(AssignmentScreen)
+    status = ws.query_one("#ws-status", Static)
+    st = _plain(status)
+    assert "not fetched" in st.plain, st.plain
+    assert _span_style(st, "not fetched") == "dim"
     notices, orig_notify = spy_notify(app)
     try:
         await pilot.click("#stage-score_review")
@@ -356,7 +487,11 @@ async def _check_help_and_back(app: TataApp, pilot: Pilot) -> None:
 async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     """Full UI-flow walk for the workspace (see module docstring)."""
     await _enter_assignment(app, pilot)
-    await _check_buttons_and_panel(app, pilot)
+    _check_buttons_and_panel(app)
+    await _check_status_row(app, pilot)
+    await _check_concepts_removed(app, pilot)
+    await _check_subtitles_visible(app, pilot)
+    await _check_status_refresh(app, pilot)
     await _check_grade_modal(app, pilot)
     await _check_cancel(app, pilot)
     await _check_button_click(app, pilot)
@@ -365,6 +500,41 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_score_review(app, pilot)
     await _check_analyze_key(app, pilot)
     await _check_help_and_back(app, pilot)
+
+
+async def _check_short_window(app: TataApp, pilot: Pilot) -> None:
+    """100x30: grid keeps auto height (no squashed buttons), the 1fr log
+    paints REAL content (>= 1 content row: region >= 3 = both border rows;
+    the old region-only assertion passed a collapsed log), still fits on
+    screen, subtitles survive the squeeze."""
+    ws = app.query_one(AssignmentScreen)
+    buttons = _stage_buttons(app)
+    await wait_for(
+        pilot,
+        lambda: all(btn.content_region.height >= 2 for btn in buttons.values()),
+    )
+    for name, btn in buttons.items():
+        assert btn.region.height == 4, (name, btn.region)  # measured at 100x30/120x40
+        assert btn.content_region.height >= 2, (name, btn.content_region)
+    status = ws.query_one("#ws-status", Static)
+    assert status.region.height >= 1, status.region
+    log = ws.query_one("#richlog", RichLog)
+    await wait_for(pilot, lambda: log.size.height >= 1)
+    assert log.region.height >= 3, log.region  # 2 border rows + >= 1 content row
+    assert log.size.height >= 1, log.size  # REAL visibility at 100x30 (T6)
+    assert log.region.y + log.region.height <= ws.screen.size.height, (
+        log.region,
+        ws.screen.size,
+    )
+    probe_line = "short-window probe: log paints"
+    log.write(probe_line)
+    await pilot.pause()
+    svg = _svg_plain(app.export_screenshot())
+    assert "Live log" in svg, "the log border title must paint at 100x30"
+    assert probe_line in svg, "a written log line must be visible at 100x30"
+    for name, btn in buttons.items():
+        subtitle = str(btn.label).split("\n", 1)[1]
+        assert subtitle in svg, (name, subtitle)
 
 
 async def main() -> None:
@@ -392,6 +562,21 @@ async def main() -> None:
         app = TataApp(root_dir=root)
         async with app.run_test(size=(120, 40)) as pilot:
             await check_workspace(app, pilot)
+        # short window: layout sanity (grid auto, log 1fr, subtitles visible)
+        app_short = TataApp(root_dir=root)
+        async with app_short.run_test(size=(100, 30)) as pilot_short:
+            await _enter_assignment(app_short, pilot_short)
+            await _check_short_window(app_short, pilot_short)
+        # tall window: the 1fr log keeps at least its pre-reclaim content
+        # height (measured 10 rows at 120x44 before the short-window fix)
+        app_tall = TataApp(root_dir=root)
+        async with app_tall.run_test(size=(120, 44)) as pilot_tall:
+            await _enter_assignment(app_tall, pilot_tall)
+            log_tall = app_tall.query_one(AssignmentScreen).query_one(
+                "#richlog", RichLog
+            )
+            await wait_for(pilot_tall, lambda: log_tall.size.height >= 10)
+            assert log_tall.size.height >= 10, log_tall.size
         # empty-graded guard: fresh root with a graded/ dir but no *.json
         empty_root = root / "empty"
         make_course(

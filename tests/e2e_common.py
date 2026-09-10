@@ -159,7 +159,16 @@ def write_graded(graded_dir: Path, uid: str, rating: str, feedback: str) -> Path
 async def wait_for(
     pilot: Pilot, predicate: Callable[[], bool], timeout: float = 30.0
 ) -> None:
-    """Pause-loop until the predicate is true, else AssertionError."""
+    """Pause-loop until the predicate is true, else AssertionError.
+
+    ``pilot.pause``/``pilot.press`` bottom out in
+    ``textual._wait.wait_for_idle``, which compares PROCESS CPU time against
+    wall clock: while a CPU-bound real worker runs, the process never looks
+    idle and a key press is deferred until the worker finishes (measured:
+    keys land ~0.2 s after a 2.9 s job).  A test that must observe mid-job
+    cancellation needs a sleeping stub worker or a directly posted key event
+    — not ``pilot.press`` — or it can silently go false-green.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         await pilot.pause()

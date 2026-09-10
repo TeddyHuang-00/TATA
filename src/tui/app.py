@@ -1,8 +1,9 @@
 """TATA Workbench — Textual TUI platform shell (T4a).
 
-Three-tab shell (Dashboard / Library / Settings); the S4 plagiarism workspace
-is embedded in the course-level dashboard (lower half of the screen). All UI
-copy is English.
+Two-tab shell (Dashboard / Library); Settings is a fullscreen ``Screen``
+pushed from the dashboard (`,`) at the current dashboard level, and the S4
+plagiarism workspace is a fullscreen ``Screen`` pushed from the course level
+(``p`` / the ``[Plagiarism]`` button). All UI copy is English.
 
 Run: ``uv run python src/tui/app.py``
 """
@@ -21,18 +22,19 @@ from typing import ClassVar, cast, override
 
 import tomlkit
 from rich.markup import escape
+from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.dom import NoMatches
 from textual.widgets import (
+    Button,
     DataTable,
     Footer,
     Header,
     HelpPanel,
     Input,
-    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -50,6 +52,7 @@ from src.shared.canvas_fetch import read_env_state
 from src.shared.cli_options import FetchCliOptions
 from src.shared.config_edit import edit_config
 from src.shared.fetch_pipeline import root_fetch, run_fetch
+from src.tui import icons
 from src.tui.library import LibraryScreen
 from src.tui.modals import (
     AliasEditorModal,
@@ -57,7 +60,7 @@ from src.tui.modals import (
     ImportAssignmentModal,
     ImportCourseModal,
 )
-from src.tui.plagiarism import PlagiarismScreen, run_aggregate_job
+from src.tui.plagiarism import PlagiarismViewScreen
 from src.tui.scan import (
     AssignmentInfo,
     CourseInfo,
@@ -117,6 +120,17 @@ def _fmt_score(value: float | None) -> str:
     return f"{value:.1f}" if value is not None else "-"
 
 
+def _fmt_flagged(count: int) -> Text:
+    """Course-table Flagged cell: dim '-' when none, red count when positive.
+
+    Same vocabulary the plagiarism panes use for their FLAG cells
+    (red = flagged, dim = nothing to show).
+    """
+    if count <= 0:
+        return Text("-", style="dim")
+    return Text(str(count), style="red bold")
+
+
 # State filters (design 01 §5: 1=All 2=Done 3=Partial 4=Not run). The
 # 'flagged' filter was removed (feedback 5): plagiarism flags live in the
 # plagiarism pane only.
@@ -168,10 +182,11 @@ class DashboardScreen(Vertical):
         # course's alias, course level the assignment's. No priority — at
         # assignment level the workspace (AssignmentScreen) owns `a` = Analyze.
         Binding("a", "edit_aliases", "Aliases"),
-        Binding("g", "global_config", "Global config"),
-        Binding("o", "course_config", "Course config"),
+        # `,` = Settings: fullscreen view for the current dashboard level
+        # (same key at every level; replaces the old g/o shortcuts).
+        Binding("comma", "open_settings", "Settings"),
         Binding("F", "fetch_all", "Fetch all"),
-        Binding("p", "plagiarism_run", "Plagiarism"),
+        Binding("p", "open_plagiarism", "Plagiarism"),
         Binding("s", "score_review", "Score review"),
         Binding("1", "filter_all", "Filter: All"),
         Binding("2", "filter_done", "Filter: Done"),
@@ -200,14 +215,19 @@ class DashboardScreen(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(id="topbar", markup=True)
         yield Static(id="breadcrumb", markup=True)
+        # Action row: `[⚙ Settings]` at all three levels (`,`); the
+        # `[Plagiarism]` button is course-level only (toggled in render_level).
+        actions = Horizontal(
+            Button(f"{icons.GEAR} Settings", id="dash-settings"),
+            Button(f"{icons.PLAGIARISM} Plagiarism", id="dash-plagiarism"),
+            id="dash-actions",
+        )
+        actions.styles.height = "auto"  # Horizontal defaults to 1fr
+        yield actions
         yield Input(placeholder="Search…", id="search-input")
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
         yield AssignmentScreen(self.state)
-        # S4 embed: the plagiarism workspace lives at course level, under the
-        # assignment table; visible there only (see render_level).
-        self._plag = PlagiarismScreen(self.state)
-        yield self._plag
         progress: Static = Static(id="dash-progress", markup=True)
         progress.display = False  # fetch-all panel; shown by fetch-all only
         yield progress
@@ -216,6 +236,29 @@ class DashboardScreen(Vertical):
     def on_mount(self) -> None:
         self.state.refresh_courses()
         self.render_level()
+
+    def refresh_from_state(self) -> None:
+        """Reload assignments + re-render (state changed under the dashboard).
+
+        Called on dashboard tab activation and when a fullscreen view
+        (Settings) pops back after possible config edits: reload keeps
+        ``current_assignment`` pointing at the fresh scan object, exactly
+        like ``workspace._rescan_after_job``.
+        """
+        state = self.state
+        if state.current_course is not None:
+            state.load_assignments(state.current_course)
+            current = state.current_assignment
+            if current is not None:
+                fresh = {a.dir_name: a for a in state.assignments}
+                state.current_assignment = fresh.get(current.dir_name, current)
+        self.render_level()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dash-settings":
+            self.action_open_settings()
+        elif event.button.id == "dash-plagiarism":
+            self.action_open_plagiarism()
 
     # ---------- rendering ----------
 
@@ -234,15 +277,15 @@ class DashboardScreen(Vertical):
             if state.env_state.get("has_env")
             else "Canvas: ? (.env missing)"
         )
-        # Embed split: at course level the table becomes the upper half and
-        # the plagiarism pane takes the rest; elsewhere the table fills.
-        table.styles.height = "40%" if state.dashboard_level == "course" else "1fr"
+        # D6: no level chip here — level identity lives in #breadcrumb only.
+        topbar.update(f"[b]TATA[/b] · {canvas}")
+        # The `[Plagiarism]` button is a course-level entry point; Settings
+        # stays visible at all three levels.
+        self.query_one("#dash-plagiarism", Button).display = (
+            state.dashboard_level == "course"
+        )
 
         if state.dashboard_level == "global":
-            topbar.update(
-                f"[b]TATA[/b] · Dashboard [Global]   {canvas}   "
-                f"Courses: {len(state.courses)}"
-            )
             breadcrumb.update("Global")
             table.add_columns(
                 "Course",
@@ -284,21 +327,23 @@ class DashboardScreen(Vertical):
             course_name = course_display_name(
                 state.assignments_dir, course.dir_name, course.course_id
             )
-            topbar.update(
-                f"[b]TATA[/b] · Dashboard [Course: {escape(course_name)}]   {canvas}"
-                + (
-                    f"   Filter: {_FILTER_LABELS[self._filter]}"
-                    if self._filter is not None
-                    else ""
-                )
+            # F6: persistent dim indicator of the active 1-4 state filter
+            # (absent for All). Appended to the breadcrumb — the only
+            # always-on course-level line; #dash-status carries transient job
+            # text and would clobber it.
+            filter_note = (
+                f" [dim]filter: {_FILTER_LABELS[self._filter]}[/dim]"
+                if self._filter is not None
+                else ""
             )
-            breadcrumb.update(f"Global / [b]{escape(course_name)}[/b]")
+            breadcrumb.update(f"Global / [b]{escape(course_name)}[/b]{filter_note}")
             table.add_columns(
                 "Assignment",
                 "ID",
                 "Raw",
                 "Proc",
                 "Grad",
+                "Flagged",
                 "Avg",
                 "State",
                 "Last run",
@@ -318,6 +363,7 @@ class DashboardScreen(Vertical):
                     str(a.counts.raw),
                     str(a.counts.processed),
                     str(a.counts.graded),
+                    _fmt_flagged(a.flagged_pairs),
                     _fmt_score(a.score_summary),
                     fmt_state(a),
                     fmt_last_run(a.last_run),
@@ -347,9 +393,6 @@ class DashboardScreen(Vertical):
                 if course is not None
                 else ""
             )
-            topbar.update(
-                f"[b]TATA[/b] · Dashboard [Assignment: {escape(a_name)}]   {canvas}"
-            )
             breadcrumb.update(
                 f"Global / {escape(course_name)} / [b]{escape(a_name)}[/b]"
             )
@@ -370,12 +413,6 @@ class DashboardScreen(Vertical):
             and self._fetch_progress is not None
             and (self.state.active_job == "fetch-all" or self._fetch_done)
         )
-        # Embedded plagiarism pane: course level only. reload_all() re-reads
-        # the course's pairs/aggregate JSON — navigation entry, rescan and
-        # the p-key job's after() all funnel through this single call.
-        self._plag.display = state.dashboard_level == "course"
-        if self._plag.display:
-            self._plag.reload_all()
         self._restore_cursor(table)
         self._refocus()
 
@@ -506,9 +543,10 @@ class DashboardScreen(Vertical):
             2: a.counts.raw,
             3: a.counts.processed,
             4: a.counts.graded,
-            5: a.score_summary if a.score_summary is not None else -1.0,
-            6: state_key(a),
-            7: a.last_run if a.last_run is not None else -1.0,
+            5: a.flagged_pairs,
+            6: a.score_summary if a.score_summary is not None else -1.0,
+            7: state_key(a),
+            8: a.last_run if a.last_run is not None else -1.0,
         }
         return values.get(col, 0)
 
@@ -877,7 +915,7 @@ class DashboardScreen(Vertical):
                 lines.append(f"[green]✓ {label} ({target['seconds']:.1f}s)[/green]")
             elif target["state"] == "failed":
                 # Escape markup brackets; keep the line short (no paths).
-                err = (target["err"] or "").replace("[", r"\[")[:60]
+                err = escape(target["err"] or "")[:60]
                 lines.append(f"[red]✗ {label} — {err}[/red]")
             else:
                 lines.append(f"[dim]○ {label}[/dim]")
@@ -890,50 +928,21 @@ class DashboardScreen(Vertical):
                 f"Fetching {done}/{len(self._fetch_progress)}…"
             )
 
-    def action_plagiarism_run(self) -> None:
-        if self.state.dashboard_level != "course" or self.state.current_course is None:
-            return
-        if self._job is not None:
-            self.app.notify("A job is already running", severity="warning")
-            return
-        self.app.push_screen(
-            ConfirmationModal(
-                "Plagiarism",
-                "Run plagiarism + aggregate for all assignments in this course?",
-                [("Run", "run")],
-            ),
-            callback=self._on_plagiarism_confirmed,
-        )
-
-    def _on_plagiarism_confirmed(self, value: object) -> None:
-        if value != "run" or self.state.current_course is None:
-            return
-        course = self.state.current_course
-
-        def job() -> None:
-            run_aggregate_job(course.config_path)
-
-        def after() -> None:
-            # render_level (via _rescan_course) reloads the embedded pane
-            self._rescan_course()
-
-        self._start_job("plagiarism", job, after=after)
-
-    def action_global_config(self) -> None:
-        if self.state.dashboard_level != "global":
-            return
-        self._open_settings("global")
-
-    def action_course_config(self) -> None:
+    def action_open_plagiarism(self) -> None:
+        """Course level ``p`` / `[Plagiarism]`: push the fullscreen view."""
         if self.state.dashboard_level != "course":
             return
-        self._open_settings("course")
+        self.app.push_screen(PlagiarismViewScreen(self.state, pop_on_escape=True))
 
-    def _open_settings(self, ctx: str) -> None:
-        settings = self.app.query_one(SettingsScreen)
-        with suppress(Exception):
-            settings.set_context(ctx)  # may run before SettingsScreen.on_mount
-        self.app.switch_tab("tab-settings")
+    def action_open_settings(self) -> None:
+        """Open the fullscreen Settings view for the current dashboard level.
+
+        The level is passed at construction, so the screen can never show a
+        stale course/assignment (feedback v9 item 2).
+        """
+        self.app.push_screen(
+            SettingsScreen(self.state, self.state.dashboard_level, pop_on_escape=True)
+        )
 
     def action_score_review(self) -> None:
         if self.state.dashboard_level != "course":
@@ -1052,7 +1061,11 @@ class DashboardScreen(Vertical):
 
 
 class TataApp(App[None]):
-    """TATA Workbench shell: Header + 3 work tabs + Footer."""
+    """TATA Workbench shell: Header + 2 work tabs + Footer.
+
+    Settings is not a tab: it is a fullscreen ``Screen`` pushed from the
+    dashboard (`,`) for the current dashboard level.
+    """
 
     TITLE = "TATA Workbench"
     CSS_PATH = "styles/app.tcss"
@@ -1083,20 +1096,12 @@ class TataApp(App[None]):
                 yield DashboardScreen(self.state)
             with TabPane("Library", id="tab-library"):
                 yield LibraryScreen(self.state)
-            with TabPane("Settings", id="tab-settings"):
-                yield SettingsScreen(self.state)
         yield Footer()
 
     def on_mount(self) -> None:
-        # SettingsScreen.on_mount focuses its ctx-select, which makes the
-        # TabbedContent activate the hidden settings pane (and drop focus).
-        # After mount settles, re-activate the Dashboard tab and give the
-        # table focus so the dashboard keys work immediately. Only switch
-        # when needed: switch_tab blurs first (set_focus(None)) to dodge
-        # Textual's TabPane.Focused re-activation, and an unconditional
-        # blur mid-startup would eat keys a user/tests press right after
-        # mount (settings seed is now display-guarded, so normally the
-        # dashboard tab never left).
+        # A Focus event inside a hidden TabPane can make Textual activate
+        # that pane; after mount settles, re-activate the Dashboard tab and
+        # give its table focus so the dashboard keys work immediately.
         def _restore() -> None:
             with suppress(Exception):
                 tabs = self.query_one("#shell-tabs", TabbedContent)
@@ -1107,11 +1112,10 @@ class TataApp(App[None]):
         self.call_after_refresh(_restore)
 
     def switch_tab(self, name: str) -> None:
-        """Activate a TabPane by id (tab-dashboard / tab-library / tab-settings)."""
+        """Activate a TabPane by id (tab-dashboard / tab-library)."""
         # Blur the current pane's focused widget BEFORE activating: Textual's
         # TabbedContent._on_tab_pane_focused re-activates the old pane when a
-        # Focus event from a widget inside it lands after .active is set —
-        # that made the global-layer `g` key a silent no-op.
+        # Focus event from a widget inside it lands after .active is set.
         self.set_focus(None)
         self.query_one("#shell-tabs", TabbedContent).active = name
         # Seat focus inside the pane that is now visible; helpers are no-ops
@@ -1120,64 +1124,19 @@ class TataApp(App[None]):
             self.query_one(DashboardScreen)._refocus()
         elif name == "tab-library":
             self.query_one(LibraryScreen)._focus_default()
-        elif name == "tab-settings":
-            settings = self.query_one(SettingsScreen)
-            with suppress(Exception):
-                settings.query_one("#ctx-select", Select).focus()
-
-    def _derive_ctx(self) -> str:
-        """Settings context matching the current dashboard level."""
-        state = self.state
-        if (
-            state.dashboard_level == "assignment"
-            and state.current_assignment is not None
-        ):
-            return "assignment"
-        if state.dashboard_level == "course" and state.current_course is not None:
-            return "course"
-        return "global"
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
     ) -> None:
         """Refresh the pane that just became visible. Fires on mount too —
         the dashboard branch is idempotent (DashboardScreen.on_mount renders
-        again after mount); the settings/library branches are guarded against
-        pre-mount exceptions."""
+        again after mount); the library branch is guarded against pre-mount
+        exceptions."""
         pane_id = event.pane.id
         if pane_id == "tab-dashboard":
             dashboard = self.query_one(DashboardScreen)
             with suppress(Exception):
-                state = self.state
-                if state.current_course is not None:
-                    state.load_assignments(state.current_course)
-                    # load_assignments replaces the list: keep
-                    # current_assignment pointing at the fresh object (same
-                    # pattern as workspace._rescan_after_job) so the
-                    # workspace renders current counts/config.
-                    current = state.current_assignment
-                    if current is not None:
-                        fresh = {a.dir_name: a for a in state.assignments}
-                        state.current_assignment = fresh.get(current.dir_name, current)
-                dashboard.render_level()
-        elif pane_id == "tab-settings":
-            settings = self.query_one(SettingsScreen)
-            with suppress(Exception):
-                # ponytail: force reload on tab activation; unsaved Settings
-                # edits are dropped (matches Ctrl+S workflow)
-                if (
-                    settings._ctx_manual
-                    and settings._ctx in settings.available_contexts()
-                ):
-                    # keep the user's manual context pick (re-armed so it
-                    # survives repeated switch-away-and-back)
-                    settings.set_context(settings._ctx, force=True, manual=True)
-                else:
-                    # manual pick went stale (e.g. assignment level left for
-                    # course): clear the flag so set_context won't swallow it
-                    # again, then fall back to the dashboard-derived context
-                    settings._ctx_manual = False
-                    settings.set_context(self._derive_ctx(), force=True)
+                dashboard.refresh_from_state()
         elif pane_id == "tab-library":
             library = self.query_one(LibraryScreen)
             with suppress(Exception):

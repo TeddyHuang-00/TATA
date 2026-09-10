@@ -13,8 +13,8 @@ Worker threads never touch widgets.
 
 Honesty notes over the design (design 99 accepted trade-offs):
 - The stage functions are not modified and print no done/total events, so
-  determinate progress comes from polling the same rules the incremental
-  scan uses once per tick: file counts (processed/scored) and the shared
+  determinate progress comes from polling the same rules the scan uses
+  once per tick: file counts (processed/scored) and the shared
   hash-cache rule for grade (the cache updates per submission during a run).
   When the count is unknown (fetch/analyze) the bar is indeterminate.
 - Synchronous stage functions cannot be killed: ``cancel_event.set()`` puts
@@ -41,7 +41,6 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, RichLog, Static
 
-from src.shared.aliases import assignment_display_name
 from src.shared.analysis import analyze_assignment
 from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file
@@ -54,6 +53,7 @@ from src.shared.grading import (
 )
 from src.shared.processing import pending_preprocess_items, preprocess_assignment
 from src.shared.scoring import score_assignment
+from src.tui import icons
 from src.tui.jobs import JobHost
 from src.tui.scan import AssignmentInfo, count_files, count_recursive
 from src.tui.score_review import open_score_review
@@ -83,9 +83,9 @@ def is_displayed(widget: Widget) -> bool:
     return widget.screen is widget.app.screen
 
 
-# State vocabulary (design 99 §2). The ``flagged`` pipeline state was removed
+# State vocabulary (design 99 §2). The ``flagged`` state was removed
 # (feedback 5): plagiarism flags live in the plagiarism pane only (display
-# threshold), never in the pipeline state badge.
+# threshold), never in the workspace state badge.
 _STATE_LABELS = {
     "not_run": "Not run",
     "partial": "Partial",
@@ -99,12 +99,12 @@ _BADGE_COLOR = {
 }
 
 _STAGE_KEYS = (
-    ("fetch", "fetch"),
-    ("preprocess", "preprocess"),
-    ("grade", "grade"),
-    ("score", "score"),
-    ("analyze", "analyze"),
-    ("score review", "score_review"),
+    ("fetch", "fetch", icons.FETCH),
+    ("preprocess", "preprocess", icons.PREPROCESS),
+    ("grade", "grade", icons.GRADE),
+    ("score", "score", icons.SCORE),
+    ("analyze", "analyze", icons.ANALYZE),
+    ("score review", "score_review", icons.REVIEW),
 )
 
 
@@ -140,7 +140,7 @@ def state_key(a: AssignmentInfo) -> str:
 
 
 def fmt_state(a: AssignmentInfo) -> str:
-    """Counts-based pipeline state label (design 99 §2 vocabulary)."""
+    """Counts-based state label (design 99 §2 vocabulary)."""
     return _STATE_LABELS[state_key(a)]
 
 
@@ -200,38 +200,33 @@ def _is_fetched(assignment_dir: Path) -> bool:
     return cache_file(assignment_dir, "fetch").is_file()
 
 
-def _incremental_line(info: AssignmentInfo) -> str:
-    """'To run / No change' summary shown by the [i] toggle."""
-    a_dir = info.config_path.parent
-    raw, processed, graded, scored = (
-        info.counts.raw,
-        info.counts.processed,
-        info.counts.graded,
-        info.counts.scored,
-    )
-    pre_pending = _pre_pending(info.config_path)
-    grade_pending = _grade_pending(info.config_path)
-    score_pending = max(graded - scored, 0)
-    to_run = {
-        "fetch": 0 if _is_fetched(a_dir) else 1,
-        "pre": pre_pending,
-        "grade": grade_pending,
-        "score": score_pending,
-    }
-    no_change = sum(
-        1
-        for source, pending in (
-            (raw, pre_pending),
-            (processed, grade_pending),
-            (graded, score_pending),
-        )
-        if source > 0 and pending == 0
-    )
-    return (
-        f"To run: fetch {to_run['fetch']} · pre {to_run['pre']}"
-        f" · grade {to_run['grade']} · score {to_run['score']}"
-        f"  |  No change: {no_change}"
-    )
+def _status_line(
+    *,
+    fetched: bool,
+    pre_pending: int,
+    grade_pending: int,
+    score_pending: int,
+    analyzed: bool,
+) -> str:
+    """Always-visible pending-status row (feedback 3; design D5/D8).
+
+    One segment per stage, ' · '-joined: fetch state (OK glyph when the
+    fetch cache exists), the three pending counts the user asked for, and
+    analyze. Colours: count > 0 yellow, count 0 green; missing fetch /
+    analyze dim.
+    """
+
+    def count(n: int, label: str) -> str:
+        color = "yellow" if n > 0 else "green"
+        return f"[{color}]{n} {label}[/{color}]"
+
+    return " · ".join((
+        f"[green]{icons.OK} fetch[/green]" if fetched else "[dim]not fetched[/dim]",
+        count(pre_pending, "preprocess pending"),
+        count(grade_pending, "grade pending"),
+        count(score_pending, "score pending"),
+        ("[green]analyze OK[/green]" if analyzed else "[dim]analyze Not run[/dim]"),
+    ))
 
 
 def _run_fetch_job(config_path: Path) -> None:
@@ -312,7 +307,6 @@ class AssignmentScreen(JobHost):
         Binding("a", "run_analyze", "Analyze"),
         Binding("x", "cancel_job", "Cancel job"),
         Binding("e", "edit_config", "Edit config"),
-        Binding("i", "toggle_incr", "Incremental"),
         Binding("F", "toggle_config", "Config panel"),
     ]
 
@@ -322,7 +316,6 @@ class AssignmentScreen(JobHost):
         self._info: AssignmentInfo | None = None
         self._job: dict | None = None  # JobHandle
         self._config_error: str | None = None
-        self._incr_on = False
         self._sub: dict[str, str] = {}
         self._total: dict[str, int | None] = {}
         self._pending = 0
@@ -335,12 +328,12 @@ class AssignmentScreen(JobHost):
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="ws-topbar", markup=True)
-        yield Static(id="ws-incr", markup=True)
+        yield Static(id="ws-status", markup=True)
         with Horizontal(id="ws-main"):
             with Grid(id="stage-grid"):
-                for label, key in _STAGE_KEYS:
+                for label, key, icon in _STAGE_KEYS:
                     yield Button(
-                        f"{label}\n{'…'}", id=f"stage-{key}", classes="stage-btn"
+                        f"{icon} {label}\n{'…'}", id=f"stage-{key}", classes="stage-btn"
                     )
             with Vertical(id="config-panel"):
                 yield Static("Parsing config…", id="config-body", markup=True)
@@ -359,7 +352,8 @@ class AssignmentScreen(JobHost):
 
     def on_mount(self) -> None:
         self._buttons = {
-            key: self.query_one(f"#stage-{key}", Button) for _, key in _STAGE_KEYS
+            key: self.query_one(f"#stage-{key}", Button)
+            for _, key, _icon in _STAGE_KEYS
         }
         self.query_one("#config-panel", Vertical).border_title = "Config"
         self.query_one("#richlog", RichLog).border_title = "Live log"
@@ -433,6 +427,7 @@ class AssignmentScreen(JobHost):
                 if (a_dir / "logs" / "meta_analysis.json").is_file()
                 else "Not run"
             ),
+            "score review": "view scores",
         }
         self._total = {
             "fetch": None,
@@ -444,7 +439,7 @@ class AssignmentScreen(JobHost):
         self._render_topbar()
         self._render_buttons()
         self._render_config()
-        self._render_incr()
+        self._render_status()
         self._render_busy()
 
     def _render_topbar(self) -> None:
@@ -453,11 +448,11 @@ class AssignmentScreen(JobHost):
         key = state_key(a)
         color = _BADGE_COLOR[key]
         badge = f"[{color}]{_STATE_LABELS[key]}[/{color}]"
+        # Feedback 3: just ID · state · last run — the breadcrumb carries
+        # the assignment name.
         self.query_one("#ws-topbar", Static).update(
-            f"Pipeline · [b]{escape(assignment_display_name(self.state.assignments_dir, self.state.current_course.dir_name if self.state.current_course is not None else '', a.dir_name, a.assignment_id))}[/b]"
-            f"  ·  ID {a.assignment_id or '-'}"
+            f"ID {a.assignment_id or '-'}"
             f"  ·  {badge}  ·  last run {fmt_last_run(a.last_run)}"
-            "   [i]Incremental"
         )
 
     def _render_buttons(self) -> None:
@@ -474,9 +469,9 @@ class AssignmentScreen(JobHost):
         self.query_one("#stage-grid", Grid).display = True
         self.query_one("#ws-empty", Static).display = False
         busy = self._job is not None
-        for stage, key in _STAGE_KEYS:
+        for stage, key, icon in _STAGE_KEYS:
             btn = self._buttons[key]
-            btn.label = f"{stage}\n{self._sub.get(stage, '…')}"
+            btn.label = f"{icon} {stage}\n{self._sub.get(stage, '…')}"
             btn.disabled = busy
 
     def _render_config(self) -> None:
@@ -506,12 +501,24 @@ class AssignmentScreen(JobHost):
             ))
         )
 
-    def _render_incr(self) -> None:
+    def _render_status(self) -> None:
+        """Recompute the always-visible pending row (feedback 3).
+
+        Same trigger points as the subtitles: render_all runs on level
+        entry (open_assignment), rescan and job completion.
+        """
         info = self._info
         assert info is not None
-        incr = self.query_one("#ws-incr", Static)
-        incr.update(_incremental_line(info))
-        incr.display = self._incr_on
+        a_dir = info.config_path.parent
+        self.query_one("#ws-status", Static).update(
+            _status_line(
+                fetched=_is_fetched(a_dir),
+                pre_pending=self._pre,
+                grade_pending=self._pending,
+                score_pending=max(info.counts.graded - info.counts.scored, 0),
+                analyzed=(a_dir / "logs" / "meta_analysis.json").is_file(),
+            )
+        )
 
     # ---------- stage actions ----------
 
@@ -652,10 +659,6 @@ class AssignmentScreen(JobHost):
         self.render_all()
         self.app.notify("Config reloaded", severity="information")
 
-    def action_toggle_incr(self) -> None:
-        self._incr_on = not self._incr_on
-        self._render_incr()
-
     def action_toggle_config(self) -> None:
         panel = self.query_one("#config-panel", Vertical)
         panel.display = not panel.display
@@ -708,7 +711,7 @@ class AssignmentScreen(JobHost):
 
     @override
     def poll_progress(self, job: dict) -> None:
-        """Per-tick progress polls the same counters the incremental scan uses."""
+        """Per-tick progress polls the same counters the scan uses."""
         if job["total"]:
             new_done = self._stage_done(job["stage"])
             if new_done != job["progress"]:
