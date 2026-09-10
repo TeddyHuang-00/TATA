@@ -1,4 +1,4 @@
 base_url = 'http://localhost:11434/v1'
 api_key = 'ollama'
 model = 'qwen3.8:latest'
-mode = 'tool_call'
+mode = 'markdown_json_mode'
