@@ -14,10 +14,14 @@ carried is gated by an M0 snapshot (``valid_preprocess`` / ``valid_grading`` /
 production rules (``grading_pending``, ``preprocess_item_hashes``,
 ``embedding_input_hash``) — never reimplemented. Without a snapshot only fetch
 entries are carried (existence check); the hash-bearing caches are left to
-recompute. ``dry_run=True`` computes and reports only. Re-runs are idempotent:
-payloads derive from the legacy files plus the snapshot, so a second run
-rewrites identical bytes (a pre-existing ``.cache/`` file is replaced by the
-carried subset, never merged).
+recompute. ``dry_run=True`` computes and reports only. Re-runs stay
+consistent in either state: while the legacy files exist a second run
+carries the same subsets and rewrites identical bytes; once they are gone
+(``raw/.fetch-cache.json`` cleaned up) the preprocess hashes fall back to
+the existing ``.cache/fetch.json`` — the same dict production reads — so
+folder submissions stay cached instead of flipping back to pending. A
+pre-existing ``.cache/`` file is replaced by the carried subset, never
+merged.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ import sys
 from pathlib import Path
 
 from .assignment_config import load_assignment_file, resolve_assignment_paths
-from .caching import cache_file, save_cache_file
+from .caching import cache_file, load_cache_file, save_cache_file
 from .grading import grading_pending, load_assignment_config
 from .pipeline import preprocess_item_hashes
 from .plagiarism import embedding_input_hash
@@ -93,9 +97,10 @@ def _migrate_preprocess(
 ) -> tuple[dict | None, dict, list[str]]:
     """Carry snapshot-valid stems with ``{hash, src}`` from the production rule.
 
-    ``fetch_payload`` is the fetch data about to land in ``.cache/fetch.json``
-    (folder hashes include fetch stamps; the production file must see the same
-    dict after the migration writes it).
+    ``fetch_payload`` is the fetch dict production will read after this run —
+    the carried payload when there is one (it lands in ``.cache/fetch.json``),
+    else the existing file's payload; folder hashes include fetch stamps, so
+    it must be that exact dict.
     """
     warnings: list[str] = []
     try:
@@ -170,16 +175,23 @@ def _migrate_embedding(
                 "embedding: snapshot says fresh but the legacy file has no pairs; skipped"
             ],
         )
-    cfg_model = load_assignment_file(config_path)
-    processed_dir = resolve_assignment_paths(
-        cfg_model, config_path.parent
-    ).processed_dir
-    payload = {
-        "hash": embedding_input_hash(
-            processed_dir, cfg_model.plagiarism.embedding_model
-        ),
-        "pairs": pairs,
-    }
+    try:
+        cfg_model = load_assignment_file(config_path)
+        processed_dir = resolve_assignment_paths(
+            cfg_model, config_path.parent
+        ).processed_dir
+        payload = {
+            "hash": embedding_input_hash(
+                processed_dir, cfg_model.plagiarism.embedding_model
+            ),
+            "pairs": pairs,
+        }
+    except Exception as exc:  # report, never abort the migration
+        return (
+            None,
+            {"carried": False, "pairs": 0, "reason": "error"},
+            [f"embedding: {type(exc).__name__}: {exc}"],
+        )
     return payload, {"carried": True, "pairs": len(pairs), "reason": "fresh"}, []
 
 
@@ -227,11 +239,21 @@ def migrate_assignment_caches(  # ruff: ignore[too-many-locals]
     fetch_payload, fetch_report = _migrate_fetch(assignment_dir, old["fetch"])
 
     if entry is not None:
+        # The preprocess hash rule must see the fetch dict production will
+        # read after this run: the carried payload when a legacy fetch file
+        # existed (it is written), else the existing .cache/fetch.json
+        # (nothing is written), else {}. Passing {} unconditionally flips
+        # every folder submission back to pending on a post-cleanup re-run.
+        fetch_for_hashes = (
+            fetch_payload
+            if fetch_payload is not None
+            else load_cache_file(cache_file(assignment_dir, "fetch"))
+        )
         pre_payload, pre_report, stage_warnings = _migrate_preprocess(
             config_path,
             old["preprocess"],
             list(entry.get("valid_preprocess") or []),
-            fetch_payload or {},
+            fetch_for_hashes,
         )
         grading_payload, grading_report, more_warnings = _migrate_grading(
             config_path, old["grading"], list(entry.get("valid_grading") or [])
