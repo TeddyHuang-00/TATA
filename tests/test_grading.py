@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from instructor import Mode
+from src.shared import grading as grading_mod
 from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import (
+    _GRADE_HOOK_MOUNTS,
     _build_grading_messages,
     build_client,
     grade_assignment,
@@ -364,6 +367,22 @@ def test_hook_script_byte_change_invalidates(
 
     script.write_text(_HOOK_NOOP + "\n# tweak\n", encoding="utf-8")
     assert [p.stem for p in pending_grade_submissions(config_path)] == ["100001"]
+
+
+def test_grade_hook_mounts_list_covers_every_invoked_mount() -> None:
+    """Invariant: every mount grading.py invokes is in _GRADE_HOOK_MOUNTS — a
+    fifth ``hook_runtime.run("<mount>")`` call added without updating the
+    static list would silently drop that hook's config/script bytes from the
+    grading hash (cache never invalidates on the edit it should track).
+
+    Textual scan on purpose (the call shape is fixed); the non-empty guard
+    makes a rename of ``hook_runtime`` fail loudly instead of passing
+    vacuously. Update this scan together with the rename.
+    """
+    source = Path(grading_mod.__file__).read_text(encoding="utf-8")
+    invoked = set(re.findall(r'hook_runtime\.run\(\s*"([a-z_]+)"', source))
+    assert invoked, "scan found no hook_runtime.run() calls — pattern drifted"
+    assert invoked <= set(_GRADE_HOOK_MOUNTS)
 
 
 def test_grading_hash_stable_across_calls(

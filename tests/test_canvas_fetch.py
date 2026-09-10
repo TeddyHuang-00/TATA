@@ -535,9 +535,13 @@ def test_assignment_description_conversion_failure_degrades(
 
 def test_fetch_corrupt_or_foreign_cache_treated_as_empty(tmp_path: Path) -> None:
     """A broken / wrong-fmt cache file must not crash the fetch; it reads as
-    empty, so every item is downloaded again (correct fallback)."""
-    broken_payloads = ["{not json", json.dumps({"fmt": 99, "data": {}})]
-    for i, broken in enumerate(broken_payloads):
+    empty, so every item is downloaded again (correct fallback).
+
+    The foreign-fmt case carries a NON-empty payload whose entries match the
+    on-disk file and its remote stamp: if the fmt gate were dropped, those
+    entries would wrongly count as cached and skip the re-download, so the
+    downloads assert below pins the gate itself, not just the JSON parse."""
+    for i in range(2):
         case = tmp_path / f"case{i}"
         out = case / "raw"
         uid = 200 + i
@@ -552,13 +556,16 @@ def test_fetch_corrupt_or_foreign_cache_treated_as_empty(tmp_path: Path) -> None
         canvas = StubCanvas(StubAssignment(subs))
         fetch_assignment(canvas, 1, 2, out)
         cache_path = cache_file(case, "fetch")
-        assert load_cache_file(cache_path) == {f"{uid}.docx": "2026-01-01T00:00:00Z"}
+        entry = {f"{uid}.docx": "2026-01-01T00:00:00Z"}
+        assert load_cache_file(cache_path) == entry
 
+        # Case 0: unparseable JSON. Case 1: foreign fmt wrapping `entry`.
+        broken = "{not json" if i == 0 else json.dumps({"fmt": 99, "data": entry})
         cache_path.write_text(broken, encoding="utf-8")
         StubAtt.downloads = 0
         fetch_assignment(canvas, 1, 2, out)  # must not raise
         assert StubAtt.downloads == 1  # empty cache -> full re-download
-        assert load_cache_file(cache_path) == {f"{uid}.docx": "2026-01-01T00:00:00Z"}
+        assert load_cache_file(cache_path) == entry
 
 
 def test_preprocess_hash_tracks_fetch_cache_entries(tmp_path: Path) -> None:
