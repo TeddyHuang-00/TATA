@@ -703,3 +703,73 @@ def test_grade_cancel_mid_run_cancels_queued_futures(
     assert result["success"] == 2
     assert result["total"] == 2
     assert result["errors"] == 0
+
+
+def test_grade_cancel_during_encode_skips_the_submit_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N3 (v10 round 3): a cancel observed while encoding one submission's
+    screenshots stops the submit pass at the next boundary — the remaining
+    submissions are neither encoded nor submitted, so no text-only grade
+    can slip past the visual-evaluation cache check. Mutating the loop-top
+    check in ``grade_assignment`` must fail this test."""
+    config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
+    a_dir = tmp_path / "data" / "c1" / "a1"
+    for uid in ("100002", "100003"):
+        (a_dir / "processed" / f"{uid}.md").write_text("# answer\n", encoding="utf-8")
+    shots = a_dir / "processed" / "screenshots"
+    shots.mkdir()
+    for uid in ("100001", "100002", "100003"):
+        (shots / f"{uid}_p1.png").write_bytes(b"page")
+
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+
+    cancel_event = threading.Event()
+    submitting = False  # set once build_client returns: the submit phase
+    encoded: list[str] = []
+
+    real_build_client = grading_mod.build_client
+    real_submission_images = grading_mod._submission_images
+
+    def spy_build_client(name: str) -> object:
+        nonlocal submitting
+        submitting = True
+        return real_build_client(name)
+
+    def spy_submission_images(
+        cfg: grading_mod.AssignmentConfig, stem: str
+    ) -> list[Path]:
+        if submitting:
+            encoded.append(stem)
+            if len(encoded) == 1:
+                cancel_event.set()  # the user presses x during the first encode
+        return real_submission_images(cfg, stem)
+
+    monkeypatch.setattr(grading_mod, "build_client", spy_build_client)
+    monkeypatch.setattr(grading_mod, "_submission_images", spy_submission_images)
+
+    submits: list[object] = []
+    real_executor = grading_mod.ThreadPoolExecutor
+
+    class CountingExecutor(real_executor):  # type: ignore[misc, valid-type]
+        def submit(  # type: ignore[override]
+            self, fn: object, *args: object, **kwargs: object
+        ) -> object:
+            submits.append(fn)
+            return super().submit(fn, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(grading_mod, "ThreadPoolExecutor", CountingExecutor)
+
+    result = grade_assignment(config_path, cancel_event=cancel_event)
+
+    assert encoded == ["100001"], f"only the in-flight encode ran: {encoded}"
+    assert len(submits) == 1, f"only the in-flight submission queued: {submits}"
+    assert result == {
+        "stage": "grade",
+        "success": 0,
+        "errors": 0,
+        "total": 0,
+        "success_rate": 0,
+    }
+    assert not list((a_dir / "graded").glob("*.json"))  # nothing new on disk

@@ -34,12 +34,14 @@ def _write_notebook(path: Path) -> None:
         "cells": [
             {
                 "cell_type": "markdown",
+                "id": "b2c3d4e5",
                 "metadata": {},
                 "source": ["# Preview Check", "hello from markdown cell"],
             },
             {
                 "cell_type": "code",
                 "execution_count": None,
+                "id": "f6a7b8c9",
                 "metadata": {},
                 "outputs": [],
                 "source": ["print(42)"],

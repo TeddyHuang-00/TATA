@@ -95,6 +95,7 @@ def _minimal_notebook() -> str:
             {
                 "cell_type": "code",
                 "execution_count": None,
+                "id": "a1b2c3d4",
                 "metadata": {},
                 "outputs": [],
                 "source": ["print(1)"],

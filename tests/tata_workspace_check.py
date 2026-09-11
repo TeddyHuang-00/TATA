@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import html
 import os
+import queue
 import re
 import tempfile
 import time
@@ -458,6 +459,36 @@ async def _check_progress_row(app: TataApp, pilot: Pilot) -> None:
     assert state["exited_early"]
 
 
+async def _check_foreign_elapsed(app: TataApp, pilot: Pilot) -> None:
+    """C4 (round 3): the busy-row stopwatch is not ours-gated. A job dict for
+    another assignment (the user switched away mid-job) still advances
+    elapsed_tick and repaints the clock text when _tick runs."""
+    ws = app.query_one(AssignmentScreen)
+    job = {
+        "stage": "grade",
+        "queue": queue.Queue(),
+        "dir_name": "a-foreign",
+        "started_at": time.monotonic() - 2.0,
+        "elapsed_tick": 7,
+        "state": "running",
+        "text": "1/2",
+        "total": 2,
+    }
+    assert not ws._job_is_ours(job)  # dir_name points at another assignment
+    ws._job = job
+    ws._render_busy()
+    try:
+        ws._tick()
+        assert job["elapsed_tick"] == 2, job  # stale 7 replaced, not frozen
+        text = ws.query_one("#ws-progress-text", Static)
+        assert str(text.content) == "1/2 · 00:02", text.content
+    finally:
+        ws._job = None
+        ws._render_busy()
+        ws.focus_stage()  # the same seat focus_stage gives back after a job
+    await pilot.pause()
+
+
 async def _check_editor_warning(app: TataApp, pilot: Pilot) -> None:
     """F5: e with EDITOR unset -> warning notify (no fake 'Config reloaded')."""
     notices, orig_notify = spy_notify(app)
@@ -589,6 +620,7 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_cancel(app, pilot)
     await _check_button_click(app, pilot)
     await _check_progress_row(app, pilot)
+    await _check_foreign_elapsed(app, pilot)
     await _check_editor_warning(app, pilot)
     await _check_fetch_gate(app, pilot)
     await _check_score_review(app, pilot)
