@@ -51,7 +51,7 @@ class AssignmentSection(BaseModel):
         return (base_dir / (self.logs_dir or "logs")).resolve()
 
     def resolve_reference_file(self, base_dir: Path) -> Path | None:
-        if self.reference_file is None:
+        if self.reference_file is None or not self.reference_file.strip():
             return None
         return (base_dir / self.reference_file).resolve()
 

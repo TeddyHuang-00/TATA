@@ -114,18 +114,48 @@ def _write_extracted_code(input_path: Path, output_path: Path) -> None:
     output_path.write_text(code, encoding="utf-8")
 
 
+def _unset_as_default(value: str, default: str) -> str:
+    """Empty/whitespace counts as unset -> the field's default value.
+
+    Joining ``""`` onto a base path resolves to the base dir itself, so a
+    literal ``template_file = ""`` made the assignment directory the template
+    and the stage died with "Unsupported input type for extraction"; the same
+    normalisation applies to every path-valued ``[plagiarism]`` key. A
+    non-empty value is returned stripped of surrounding whitespace.
+    """
+    return value.strip() or default
+
+
 def _load_plagiarism_config(config_path: Path) -> PlagiarismConfig:
     cfg = load_assignment_file(config_path)
     paths = resolve_assignment_paths(cfg, config_path.parent)
     ensure_assignment_dirs(paths)
 
     plagiarism = cfg.plagiarism
-    output_dir = (config_path.parent / plagiarism.output_dir).resolve()
-    submissions_dir = (output_dir / plagiarism.submissions_subdir).resolve()
-    template_dir = (output_dir / plagiarism.template_subdir).resolve()
-    report_file = (output_dir / plagiarism.report_file).resolve()
-    full_pairs_file = (output_dir / plagiarism.full_pairs_file).resolve()
-    template_file = (config_path.parent / plagiarism.template_file).resolve()
+    defaults = PlagiarismSection()
+    output_dir = (
+        config_path.parent
+        / _unset_as_default(plagiarism.output_dir, defaults.output_dir)
+    ).resolve()
+    submissions_dir = (
+        output_dir
+        / _unset_as_default(plagiarism.submissions_subdir, defaults.submissions_subdir)
+    ).resolve()
+    template_dir = (
+        output_dir
+        / _unset_as_default(plagiarism.template_subdir, defaults.template_subdir)
+    ).resolve()
+    report_file = (
+        output_dir / _unset_as_default(plagiarism.report_file, defaults.report_file)
+    ).resolve()
+    full_pairs_file = (
+        output_dir
+        / _unset_as_default(plagiarism.full_pairs_file, defaults.full_pairs_file)
+    ).resolve()
+    template_file = (
+        config_path.parent
+        / _unset_as_default(plagiarism.template_file, defaults.template_file)
+    ).resolve()
 
     return PlagiarismConfig(
         assignment_dir=config_path.parent.resolve(),
@@ -248,12 +278,24 @@ def _run_code_plagiarism(
 
     extracted_success = 0
     extracted_errors = 0
-    has_template = cfg.template_file.exists()
+    # is_file + a supported suffix: a directory or a non-.ipynb/.py file at
+    # the template location cannot be extracted — degrade to the no-template
+    # branch instead of letting the extraction raise.
+    template_file = cfg.template_file
+    has_template = template_file.is_file() and template_file.suffix.lower() in {
+        ".ipynb",
+        ".py",
+    }
     if has_template:
-        _write_extracted_code(cfg.template_file, cfg.template_dir / "template.py")
+        _write_extracted_code(template_file, cfg.template_dir / "template.py")
+    elif template_file.is_file():
+        print(
+            f"[plagiarism] template type not supported ({template_file}); "
+            "running without boilerplate removal"
+        )
     else:
         print(
-            f"[plagiarism] template not found ({cfg.template_file}); "
+            f"[plagiarism] template not found ({template_file}); "
             "running without boilerplate removal"
         )
 

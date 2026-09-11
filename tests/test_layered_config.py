@@ -11,6 +11,7 @@ from src.shared.assignment_config import (
     find_root_config,
     is_root_config,
     load_assignment_file,
+    resolve_assignment_paths,
 )
 
 
@@ -117,3 +118,19 @@ def test_processing_input_format_accepts_image_and_pdf() -> None:
     for val in ("image", "pdf", ["ipynb", "image"]):
         model = ProcessingSection.model_validate({"input_format": val})
         assert model.input_format == val
+
+
+def test_empty_reference_file_resolves_to_none(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path], grading_config: str
+) -> None:
+    """assignment.reference_file = "" counts as unset: joined to the base dir
+    it would resolve to the assignment dir itself (a bogus reference), while
+    every caller branches on None for "no reference" mode."""
+    write_tree(
+        tmp_path,
+        "data/a/config.toml",
+        grading_config + '[assignment]\nreference_file = ""\n',
+    )
+    cfg = load_assignment_file(tmp_path / "data" / "a" / "config.toml")
+    paths = resolve_assignment_paths(cfg, tmp_path / "data" / "a")
+    assert paths.reference_file is None

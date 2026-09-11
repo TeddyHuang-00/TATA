@@ -10,11 +10,13 @@ import numpy as np
 import pytest
 from copydetect import CopyDetector
 from src.shared import plagiarism as plagiarism_mod
+from src.shared.assignment_config import PlagiarismSection
 from src.shared.caching import cache_file, load_cache_file
 from src.shared.plagiarism import (
     PlagiarismConfig,
     _blend_rows,
     _embedding_pairs,
+    _load_plagiarism_config,
     _pair_key,
     _run_embedding,
     _write_full_pair_data,
@@ -382,6 +384,190 @@ def test_cancelled_course_run_skips_the_aggregate_pass(
             "total": 0,
             "success_rate": 0,
         }
+
+
+# -- template_file "" / non-file: treated as unset, never crashes extraction ---
+
+
+def _empty_template_config(root: Path) -> None:
+    """Two notebook submissions + an assignment config whose [plagiarism]
+    template_file is the empty string (the reported bug shape)."""
+    (root / "raw").mkdir()
+    for uid in ("100001", "100002"):
+        (root / "raw" / f"{uid}.ipynb").write_text(
+            _minimal_notebook(), encoding="utf-8"
+        )
+    (root / "config.toml").write_text(
+        "[grading]\n"
+        "rubric = 'rubrics/exam.toml'\n"
+        "system_prompt = 'prompt/system.md'\n"
+        "provider = 'deepseek'\n"
+        "[plagiarism]\n"
+        "template_file = ''\n",
+        encoding="utf-8",
+    )
+
+
+def test_empty_template_file_uses_the_default_template(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """template_file = "" counts as unset (the default template.ipynb beside
+    the config). Before the fix "" resolved to the config's own directory —
+    which exists() — and the stage died with "Unsupported input type for
+    extraction: <assignment dir>"."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _empty_template_config(root)
+        (root / "template.ipynb").write_text(_minimal_notebook(), encoding="utf-8")
+
+        summary = detect_plagiarism(root / "config.toml")
+
+        assert summary is not None, "empty template_file must not abort the run"
+        assert summary["success"] == 2, summary
+        extracted = root / "plagiarism" / "template" / "template.py"
+        assert "print(1)" in extracted.read_text(encoding="utf-8")
+        assert "template not found" not in capsys.readouterr().out
+
+
+def test_empty_template_file_without_template_runs_without_removal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty template_file with no template.ipynb beside the config
+    degrades to the existing "running without boilerplate removal" path
+    instead of raising."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _empty_template_config(root)
+
+        summary = detect_plagiarism(root / "config.toml")
+
+        assert summary is not None, "empty template_file must not abort the run"
+        assert summary["success"] == 2, summary
+        out = capsys.readouterr().out
+        assert "running without boilerplate removal" in out, out
+
+
+def test_directory_template_path_runs_without_removal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A non-file path (directory) at the template location degrades the same
+    way — the is_file() guard replaces exists(), which is true for a dir."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _empty_template_config(root)
+        (root / "config.toml").write_text(
+            (root / "config.toml")
+            .read_text(encoding="utf-8")
+            .replace("template_file = ''", 'template_file = "raw"'),
+            encoding="utf-8",
+        )
+
+        summary = detect_plagiarism(root / "config.toml")
+
+        assert summary is not None
+        assert summary["success"] == 2, summary
+        assert "running without boilerplate removal" in capsys.readouterr().out
+
+
+def test_existing_unsupported_template_type_runs_without_removal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A template at an existing path with an unsupported suffix (notes.txt)
+    is no more extractable than a missing one: the stage degrades to the
+    no-template branch (naming the path) instead of dying in extraction with
+    the "Unsupported input type for extraction" error the empty string used
+    to trigger."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _empty_template_config(root)
+        (root / "config.toml").write_text(
+            (root / "config.toml")
+            .read_text(encoding="utf-8")
+            .replace("template_file = ''", 'template_file = "notes.txt"'),
+            encoding="utf-8",
+        )
+        (root / "notes.txt").write_text("plain notes, not a notebook", encoding="utf-8")
+
+        summary = detect_plagiarism(root / "config.toml")
+
+        assert summary is not None, "unsupported template type must not abort the run"
+        assert summary["success"] == 2, summary
+        out = capsys.readouterr().out
+        assert "running without boilerplate removal" in out, out
+        assert "notes.txt" in out, out
+
+
+def test_empty_full_pairs_file_uses_the_default() -> None:
+    """Same-class: every path-valued [plagiarism] key normalizes through one
+    helper. full_pairs_file = "" would otherwise resolve to the plagiarism
+    output dir itself and the pair-data write would fail."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _empty_template_config(root)
+        (root / "config.toml").write_text(
+            (root / "config.toml")
+            .read_text(encoding="utf-8")
+            .replace("template_file = ''", 'full_pairs_file = ""'),
+            encoding="utf-8",
+        )
+
+        summary = detect_plagiarism(root / "config.toml")
+
+        assert summary is not None
+        assert summary["success"] == 2, summary
+        pairs = json.loads(
+            (root / "plagiarism" / "all_pairs.json").read_text(encoding="utf-8")
+        )
+        assert pairs["pair_count"] == 1, pairs
+
+
+def test_all_six_path_keys_treat_empty_and_whitespace_as_unset() -> None:
+    """Batch A's read-side normalization covers exactly these six path-valued
+    keys: "" and pure whitespace both resolve to the field default under
+    their own base dir — never the assignment directory itself (the reported
+    crash shape)."""
+    defaults = PlagiarismSection()
+    with tempfile.TemporaryDirectory() as tmp:
+        assignment_dir = Path(tmp) / "course" / "100001"
+        assignment_dir.mkdir(parents=True)
+        config_path = assignment_dir / "config.toml"
+        out_dir = assignment_dir / defaults.output_dir  # output_dir stays unset
+        expected = {
+            "output_dir": out_dir,
+            "template_file": assignment_dir / defaults.template_file,
+            "submissions_subdir": out_dir / defaults.submissions_subdir,
+            "template_subdir": out_dir / defaults.template_subdir,
+            "report_file": out_dir / defaults.report_file,
+            "full_pairs_file": out_dir / defaults.full_pairs_file,
+        }
+
+        def resolved_paths(cfg: PlagiarismConfig) -> dict[str, Path]:
+            return {
+                "output_dir": cfg.output_dir,
+                "template_file": cfg.template_file,
+                "submissions_subdir": cfg.submissions_dir,
+                "template_subdir": cfg.template_dir,
+                "report_file": cfg.report_file,
+                "full_pairs_file": cfg.full_pairs_file,
+            }
+
+        for field, want in expected.items():
+            for value in ("", "   "):
+                config_path.write_text(
+                    "[grading]\n"
+                    "rubric = 'rubrics/exam.toml'\n"
+                    "system_prompt = 'prompt/system.md'\n"
+                    "provider = 'deepseek'\n"
+                    "[plagiarism]\n"
+                    f'{field} = "{value}"\n',
+                    encoding="utf-8",
+                )
+                cfg = _load_plagiarism_config(config_path)
+                actual = resolved_paths(cfg)[field]
+                assert actual == want.resolve(), f"{field}={value!r} -> {actual}"
+                assert actual != assignment_dir.resolve(), (
+                    f"{field}={value!r} collapsed to the assignment directory"
+                )
 
 
 # -- B4: embedding cache at <assignment>/.cache/embedding.json, hash freshness --

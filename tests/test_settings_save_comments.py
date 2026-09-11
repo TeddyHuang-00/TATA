@@ -48,3 +48,23 @@ def test_checkbox_bool_writes_bare_true(tmp_path: Path) -> None:
     text = cfg.read_text(encoding="utf-8")
     assert "remove_base64_images = true" in text
     assert 'remove_base64_images = "true"' not in text
+
+
+def test_save_empty_string_unsets_the_key(tmp_path: Path) -> None:
+    """Clearing a text field saves as unset: the key is removed (same as the
+    per-field reset), not written as ``= ""``. A ``template_file = ""`` would
+    resolve to the config's own directory and the plagiarism extraction dies
+    with "Unsupported input type for extraction"."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "# keep this comment\n"
+        "[plagiarism]\n"
+        'template_file = "template.ipynb"\n'
+        "display_threshold = 0.75\n",
+        encoding="utf-8",
+    )
+    edit_config(cfg, {"plagiarism": {"template_file": ""}})
+    text = cfg.read_text(encoding="utf-8")
+    assert "template_file" not in text
+    assert "# keep this comment" in text  # comment survives the round-trip
+    assert "display_threshold = 0.75" in text  # sibling key survives

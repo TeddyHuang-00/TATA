@@ -75,9 +75,15 @@ def edit_config(
     The original text is parsed, so comments, formatting and unknown keys
     survive (a whole-file rebuild would destroy user comments) — only the
     edited or deleted keys change. Missing or unparseable files start from an
-    empty document; None values are never written. A section emptied by a
-    delete is dropped from the file. Writes with a trailing newline and
-    returns True (raises OSError on write failure).
+    empty document; None values are never written, and an empty/whitespace
+    string value counts as unset: its key is removed (empty == omitted, so
+    consumers fall back to the default or the inherited layer) instead of
+    being written — a literal ``""`` would be read as a value, and for
+    path-valued keys it resolves to the config's own directory (the
+    ``template_file = ""`` -> "Unsupported input type for extraction" bug).
+    A section emptied by a delete or an unset edit is dropped from the file.
+    Writes with a trailing newline and returns True (raises OSError on write
+    failure).
     """
     try:
         doc = tomlkit.parse(path.read_text(encoding="utf-8"))
@@ -97,9 +103,14 @@ def edit_config(
             doc[section] = tomlkit.table()
             table = doc[section]
         for key, value in values.items():
+            if isinstance(value, str) and not value.strip():
+                table.pop(key, None)  # empty string = unset, not a value
+                continue
             if value is None:
                 continue
             table[key] = value
+        if len(table) == 0:
+            doc.pop(section, None)
     out = tomlkit.dumps(doc)
     if not out.endswith("\n"):
         out += "\n"

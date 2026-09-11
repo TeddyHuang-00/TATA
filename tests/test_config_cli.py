@@ -192,3 +192,22 @@ def test_weight_sum_still_applies_to_plagiarism_edits(tmp_path: Path) -> None:
     )
     assert proc.returncode == 1
     assert "plagiarism weights" in proc.stderr
+
+
+def test_set_empty_string_unsets_the_key(tmp_path: Path) -> None:
+    """Empty value == unset: `config set ... template_file ""` removes the key
+    (consumers fall back to the schema default) instead of writing `= ""` —
+    an empty template_file resolves to the config's own directory and the
+    plagiarism stage dies with "Unsupported input type for extraction".
+    The section is dropped once the delete empties it."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        ASSIGNMENT_CONFIG + '\n[plagiarism]\ntemplate_file = "template.ipynb"\n',
+        encoding="utf-8",
+    )
+    proc = _run_main("config", "set", "-c", str(cfg), "plagiarism.template_file", "")
+    assert proc.returncode == 0, proc.stderr
+    text = cfg.read_text(encoding="utf-8")
+    assert "template_file" not in text
+    assert "[plagiarism]" not in text  # emptied section is dropped too
+    assert 'custom_field = "user made"' in text  # unrelated keys survive
