@@ -96,7 +96,9 @@ uv run tui
 ```
 
 The window has three tabs at the top: Dashboard, Library, and Settings.
-Click a tab to switch (or press Tab / Shift+Tab). Follow these six steps:
+Click a tab to switch (or press Tab / Shift+Tab). Press `ctrl+p` anywhere to
+open the command palette and fuzzy-search the current view's actions (for
+example `gra` to run Grade). Follow these six steps:
 
 1. **Project keys.** Go to the Settings tab, then the Canvas sub-tab. Fill
    in your Canvas URL and your token, click **Save .env** (a plain text file

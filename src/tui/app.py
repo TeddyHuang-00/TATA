@@ -54,6 +54,7 @@ from src.shared.cli_options import FetchCliOptions
 from src.shared.config_edit import edit_config
 from src.shared.fetch_pipeline import root_fetch, run_fetch
 from src.tui import icons
+from src.tui.commands import TataCommands
 from src.tui.library import LibraryScreen
 from src.tui.modals import (
     AliasEditorModal,
@@ -1109,9 +1110,20 @@ class TataApp(App[None]):
 
     TITLE = "TATA Workbench"
     CSS_PATH = "styles/app.tcss"
+    # App-level command palette provider (feedback v10 item 3): ctrl+p opens
+    # the native palette with the current view's actions. The spread keeps
+    # App.COMMANDS (Theme/Quit/Keys/Screenshot) — dropping it silences every
+    # system command.
+    COMMANDS: ClassVar = {*App.COMMANDS, TataCommands}
     BINDINGS: ClassVar = [
         Binding("q", "quit", "Quit"),
         Binding("?", "toggle_help", "Keys"),
+        # Custom binding replaces the default ctrl+p injection (Textual dedups
+        # by action name) so the Footer's pinned palette key reads "Palette";
+        # `show=False` avoids a second Footer hint (Textual always pins the
+        # palette key at the right). priority keeps it working while an Input
+        # has focus.
+        Binding("ctrl+p", "command_palette", "Palette", show=False, priority=True),
     ]
 
     def __init__(self, root_dir: Path | None = None) -> None:

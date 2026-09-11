@@ -17,13 +17,14 @@ check:
 plagiarism:
     uv run main.py plagiarism -c data/config.toml --aggregate -o data/plagiarism-report.txt
 
-[doc("Run all 12 headless TUI check scripts")]
+[doc("Run all 13 headless TUI check scripts")]
 test-e2e:
     uv run python tests/tata_app_check.py
     uv run python tests/tata_dash_check.py
     uv run python tests/tata_fetchall_check.py
     uv run python tests/tata_library_check.py
     uv run python tests/tata_modal_check.py
+    uv run python tests/tata_palette_check.py
     uv run python tests/tata_plagiarism_check.py
     uv run python tests/tata_rubric_check.py
     uv run python tests/tata_settings_check.py
