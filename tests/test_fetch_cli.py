@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import tomllib
 from pathlib import Path
 
@@ -174,6 +175,80 @@ def test_fetch_entries_uses_list_ids(
         (111111, 11, str((tmp_path / "data/11/raw").resolve())),
         (111111, 12, str((tmp_path / "data/12/raw").resolve())),
     ]
+
+
+def test_fetch_entries_stops_on_pre_set_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Cooperative cancel (v10 batch 2): a pre-set cancel_event is checked
+    before the first entry — fetch_assignment is never called."""
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
+    from src.shared.assignment_config import FetchSection
+
+    cfg = FetchSection.model_validate({
+        "course_id": 111111,
+        "assignments": [
+            {"id": 11},
+            {"id": 12},
+        ],
+    })
+    calls: list[tuple[int, int, str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_assignment",
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
+    )
+    cancel_event = threading.Event()
+    cancel_event.set()
+
+    main_mod.fetch_entries(
+        object(),
+        111111,
+        tmp_path / "data" / "config.toml",
+        cfg,
+        cancel_event=cancel_event,
+    )
+
+    assert calls == [], "fetch_assignment must not run on a pre-set cancel event"
+
+
+def test_run_fetch_single_stops_before_env_on_pre_set_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Cooperative cancel (v10 batch 2): the single-fetch path returns before
+    load_env / the Canvas client — the load_env guard proves neither ran."""
+    main_mod = __import__("src.shared.fetch_pipeline", fromlist=["_"])
+
+    course = tmp_path / "data" / "111111"
+    course.mkdir(parents=True)
+    cfg_path = course / "config.toml"
+    cfg_path.write_text("[fetch]\ncourse_id = 111111\n", encoding="utf-8")
+
+    calls: list[tuple[int, int, str]] = []
+
+    def guard() -> tuple[str, str]:
+        msg = "load_env must not run on a pre-set cancel event"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(main_mod, "load_env", guard)
+    monkeypatch.setattr(
+        main_mod,
+        "fetch_assignment",
+        lambda canvas, cid, aid, out: calls.append((cid, aid, str(out))),
+    )
+    cancel_event = threading.Event()
+    cancel_event.set()
+
+    main_mod.run_fetch(
+        FetchCliOptions(course=111111, assignment=222333, config=cfg_path),
+        cancel_event=cancel_event,
+    )
+
+    assert calls == []
+    # nothing fetched -> nothing remembered in the course config
+    assert "assignments" not in tomllib.loads(cfg_path.read_text())["fetch"]
 
 
 def test_retry_finds_course_config_list(

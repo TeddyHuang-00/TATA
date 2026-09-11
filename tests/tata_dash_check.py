@@ -6,7 +6,9 @@ Covers: c import-course gate (.env) + modal cancel, c import-assignment modal
 dashboard levels (course/global here, assignment in the s-guard check; the old
 g/o shortcuts are gone), p / [Plagiarism] push the fullscreen plagiarism view
 (esc pops with focus back on #dashboard-table, esc mid-job is refused), 1-4
-state filter, tab switch. The course table (1fr, with its Flagged column) and
+state filter, tab switch, v10 item 1 head-row alignment (breadcrumb +
+#dash-actions regions at 120x40 and the SVG text layer on one painted line).
+The course table (1fr, with its Flagged column) and
 the view's push/esc semantics replace the old embedded-pane section.
 
 Run: uv run tests/tata_dash_check.py
@@ -15,7 +17,9 @@ Run: uv run tests/tata_dash_check.py
 from __future__ import annotations
 
 import asyncio
+import html
 import queue
+import re
 import shutil
 import tempfile
 from collections.abc import Callable, Iterator
@@ -48,7 +52,7 @@ from src.tui.plagiarism_detail import AssignmentPairDetailScreen
 from src.tui.score_review import ScoreReviewScreen
 from src.tui.settings import SettingsScreen
 from src.tui.workspace import ConfirmationModal
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
@@ -79,6 +83,50 @@ def _assert_modal_gone(app: TataApp, modal_type: type) -> None:
 def _footer_keys(app: TataApp) -> list[str]:
     """Descriptions of the Footer's rendered key hints (v10 item 6)."""
     return [str(key.description) for key in app.screen.query(FooterKey)]
+
+
+def _svg_lines(svg: str) -> dict[float, str]:
+    """Text of an exported SVG per line, keyed by the SVG y coordinate.
+
+    Same parsing as ``tata_workspace_check._svg_plain`` (Textual splits a
+    line into style runs — one ``<text>`` per run — and spaces are
+    ``&#160;``), kept per y here so two widgets' painted lines can be
+    compared: runs on the same terminal line share the y attribute.
+    """
+    parts: dict[float, list[str]] = {}
+    for attrs, content in re.findall(r"<text([^>]*)>(.*?)</text>", svg, re.DOTALL):
+        y = float(re.search(r'y="([\d.]+)"', attrs).group(1))
+        parts.setdefault(y, []).append(html.unescape(content).replace("\xa0", " "))
+    return {y: "".join(chunks) for y, chunks in parts.items()}
+
+
+async def _check_head_row_layout(pilot: Pilot, app: TataApp) -> None:
+    """v10 item 1 alignment at 120x40 (mutation guard):
+
+    ``#breadcrumb`` and ``#dash-actions`` sit on the same head row, the
+    actions hug the right edge of the screen, and the exported SVG paints
+    the breadcrumb text and the Settings button text on the same line
+    (``#breadcrumb { width: 1fr }`` is what keeps the row split like this;
+    mutating it to ``auto`` drops the actions off the right edge).
+    """
+    await pilot.pause()
+    breadcrumb = app.query_one("#breadcrumb", Static)
+    actions = app.query_one("#dash-actions", Horizontal)
+    assert breadcrumb.region.y == actions.region.y, (
+        breadcrumb.region,
+        actions.region,
+    )
+    assert actions.region.x + actions.region.width == app.screen.size.width, (
+        actions.region,
+        app.screen.size,
+    )
+    # Text layer: the breadcrumb text and the `[⚙ Settings]` button text
+    # share one painted line (the Footer's own "Settings" hint lives on a
+    # lower line, so the match must be the head line).
+    plain = RichText.from_markup(text(breadcrumb)).plain
+    lines = _svg_lines(app.export_screenshot())
+    head_y = next(y for y, line in lines.items() if plain in line)
+    assert "Settings" in lines[head_y], (head_y, lines[head_y])
 
 
 async def _check_import_course_gate_without_env() -> None:
@@ -825,6 +873,7 @@ async def main() -> None:
             app = TataApp(root_dir=root)
             async with app.run_test(size=(120, 40)) as pilot:
                 table = app.query_one("#dashboard-table", DataTable)
+                await _check_head_row_layout(pilot, app)
                 table.focus()
                 await pilot.press("enter")
                 await pilot.pause()
