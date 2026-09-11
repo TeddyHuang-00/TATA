@@ -72,6 +72,8 @@ Current mount points:
 
 The payload is always a JSON object. Below are the fields sent by each lifecycle point.
 
+An after-stage hook (`after_preprocess`, `after_grade`, `after_score`, `after_plagiarism`) additionally carries `cancelled` — `true` when the run was stopped by a cancel event (cooperative cancel, v10 batch 2: the stage's item loops check the event at boundaries; work already in flight finishes).
+
 ## Preprocess
 
 before_preprocess:
@@ -106,6 +108,7 @@ after_preprocess:
 - processed_dir
 - processed_count
 - failed_count
+- cancelled
 
 ## Grade
 
@@ -144,6 +147,7 @@ after_grade:
 - error_count
 - graded_dir
 - errors_log
+- cancelled
 
 ## Score
 
@@ -159,6 +163,7 @@ after_score:
 - graded_dir
 - scored_count
 - error_count
+- cancelled
 
 ## Analyze
 
@@ -190,6 +195,7 @@ after_plagiarism:
 - template_dir
 - success_count
 - error_count
+- cancelled
 
 ## Hook function IO examples (naive)
 

@@ -385,6 +385,7 @@ def score_assignment(  # ruff: ignore[too-many-locals]
                 "graded_dir": str(graded_dir),
                 "scored_count": scored_count,
                 "error_count": error_count,
+                "cancelled": cancel_event is not None and cancel_event.is_set(),
             },
         )
 

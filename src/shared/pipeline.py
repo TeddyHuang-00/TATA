@@ -921,6 +921,7 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
                 "processed_dir": str(processed_dir),
                 "processed_count": processed_count,
                 "failed_count": failed_count,
+                "cancelled": cancel_event is not None and cancel_event.is_set(),
             },
         )
 

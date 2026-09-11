@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from copydetect import CopyDetector
+from src.shared import plagiarism as plagiarism_mod
 from src.shared.caching import cache_file, load_cache_file
 from src.shared.plagiarism import (
     PlagiarismConfig,
@@ -230,6 +231,149 @@ def test_detect_plagiarism_stops_before_first_assignment_when_cancelled(
         summary = detect_plagiarism(root / "config.toml", cancel_event=cancel_event)
 
         assert calls == [], "no assignment may run after a pre-set cancel event"
+        assert summary == {
+            "stage": "plagiarism",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
+
+
+# -- v10 round 2 (M1): a cancelled run never writes a truncated report --------
+
+
+def test_cancelled_run_stops_before_the_pair_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """M1 (v10 round 2): a cancel that breaks the extraction loop must stop
+    before the detector pass — the previous all_pairs.json/report.html stay
+    byte-identical (the truncated pass used to overwrite them) and no new
+    report file appears."""
+    constructed: list[dict] = []
+
+    class FakeDetector:
+        """Stand-in that would rewrite both report files if ever reached."""
+
+        def __init__(self, **kwargs: object) -> None:
+            constructed.append(kwargs)
+            self.out_file = kwargs["out_file"]
+            self.test_files: list[str] = []
+            self.ref_files: list[str] = []
+            self.similarity_matrix: list = []
+            self.token_overlap_matrix: list = []
+
+        def run(self) -> None:
+            pass
+
+        def generate_html_report(self) -> None:
+            Path(str(self.out_file)).write_text("REWRITTEN", encoding="utf-8")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "raw").mkdir()
+        for uid in ("100001", "100002", "100003"):
+            (root / "raw" / f"{uid}.ipynb").write_text(
+                _minimal_notebook(), encoding="utf-8"
+            )
+        (root / "config.toml").write_text(
+            "[grading]\nrubric = 'rubrics/exam.toml'\n"
+            "system_prompt = 'prompt/system.md'\n"
+            "provider = 'deepseek'\n"
+            "max_parallel_tasks = 4\n"
+            "[plagiarism]\ndisplay_threshold = 0.9\n",
+            encoding="utf-8",
+        )
+        plag_dir = root / "plagiarism"
+        plag_dir.mkdir()
+        pairs_file = plag_dir / "all_pairs.json"
+        report_file = plag_dir / "report.html"
+        pairs_file.write_text(
+            json.dumps({
+                "version": 1,
+                "pair_count": 1,
+                "pairs": [{"max_similarity_pct": 95.0}],
+            }),
+            encoding="utf-8",
+        )
+        report_file.write_text("complete report from the last run", encoding="utf-8")
+        before = {p.name: p.read_bytes() for p in plag_dir.iterdir() if p.is_file()}
+
+        cancel_event = threading.Event()
+        real_write = plagiarism_mod._write_extracted_code
+        extracted: list[str] = []
+
+        def stop_after_first(input_path: Path, output_path: Path) -> None:
+            real_write(input_path, output_path)
+            extracted.append(input_path.name)
+            cancel_event.set()
+
+        monkeypatch.setattr(plagiarism_mod, "_write_extracted_code", stop_after_first)
+        monkeypatch.setattr(plagiarism_mod, "CopyDetector", FakeDetector)
+
+        summary = detect_plagiarism(root / "config.toml", cancel_event=cancel_event)
+
+        assert extracted == ["100001.ipynb"], extracted  # cancelled mid-extraction
+        assert constructed == [], "the pair pass must not start after a cancel"
+        assert summary == {
+            "stage": "plagiarism",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
+        after = {p.name: p.read_bytes() for p in plag_dir.iterdir() if p.is_file()}
+        assert after == before, "existing reports must stay byte-identical"
+        assert "stopped before the pair pass" in capsys.readouterr().out
+
+
+def test_cancelled_course_run_skips_the_aggregate_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M1 (v10 round 2): a cancel observed mid-course stops the aggregate —
+    neither the core `_aggregate_report` nor the TUI `run_aggregate_job`
+    writes anything after the cancel."""
+    from src.tui.plagiarism import run_aggregate_job
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for name in ("a1", "a2"):
+            (root / name).mkdir()
+            (root / name / "config.toml").write_text("", encoding="utf-8")
+        (root / "config.toml").write_text("[fetch]\n", encoding="utf-8")
+        cancel_event = threading.Event()
+        ran: list[str] = []
+
+        def fake_run(cfg: Path, *, cancel_event: threading.Event | None = None) -> dict:
+            ran.append(cfg.parent.name)
+            if cancel_event is not None:
+                cancel_event.set()  # user cancels while the first assignment runs
+            return {
+                "stage": "plagiarism",
+                "success": 0,
+                "errors": 0,
+                "total": 0,
+                "success_rate": 0,
+            }
+
+        aggregate_calls: list[tuple] = []
+        json_writes: list[Path] = []
+
+        def spy_aggregate(*args: object, **kwargs: object) -> None:
+            aggregate_calls.append(args)
+
+        monkeypatch.setattr(plagiarism_mod, "_run_assignment", fake_run)
+        monkeypatch.setattr(plagiarism_mod, "_aggregate_report", spy_aggregate)
+        monkeypatch.setattr(
+            "src.tui.plagiarism._write_aggregate_json", json_writes.append
+        )
+
+        summary = run_aggregate_job(root / "config.toml", cancel_event=cancel_event)
+
+        assert ran == ["a1"], ran  # the loop stopped at the next boundary
+        assert aggregate_calls == [], "truncated aggregate must not run"
+        assert json_writes == [], "cancelled aggregate must not rewrite the JSON"
         assert summary == {
             "stage": "plagiarism",
             "success": 0,

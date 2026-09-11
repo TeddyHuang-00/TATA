@@ -451,9 +451,11 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
     cancel_event: threading.Event | None = None,
 ) -> dict | None:
     """Grade pending submissions; a set ``cancel_event`` (TUI jobs) short
-    circuits before submitting and stops submitting after the current batch
-    (queued submissions dropped, in-flight LLM calls finish — the honest
-    ceiling; synchronous calls cannot be killed)."""
+    circuits before submitting and stops at the next submission boundary —
+    the screenshot encode + submit pass checks the event per submission, so a
+    cancel during encoding drops the remaining submissions; queued futures
+    are dropped at the next result boundary and in-flight LLM calls finish
+    (the honest ceiling; synchronous calls cannot be killed)."""
     cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
@@ -581,21 +583,29 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
         ]
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        future_to_submission = {
-            executor.submit(
-                _run_single_grading_task,
-                submission,
-                client=client,
-                model_name=model_name,
-                response_model=response_model,
-                system_prompt=system_prompt,
-                reference_text=reference_text,
-                hook_runtime=hook_runtime,
-                assignment_config_path=config_path,
-                images=_images_for(submission),
-            ): submission
-            for submission in pending_submissions
-        }
+        future_to_submission = {}
+        for submission in pending_submissions:
+            if cancel_event is not None and cancel_event.is_set():
+                # Cancel observed while encoding an earlier submission's
+                # screenshots: the remaining submissions are neither encoded
+                # nor submitted (a text-only grade must not pass the
+                # visual-evaluation cache check).
+                print("[cancelled] grade stopped — remaining submissions not submitted")
+                break
+            future_to_submission[
+                executor.submit(
+                    _run_single_grading_task,
+                    submission,
+                    client=client,
+                    model_name=model_name,
+                    response_model=response_model,
+                    system_prompt=system_prompt,
+                    reference_text=reference_text,
+                    hook_runtime=hook_runtime,
+                    assignment_config_path=config_path,
+                    images=_images_for(submission),
+                )
+            ] = submission
 
         for future in as_completed(future_to_submission):
             if cancel_event is not None and cancel_event.is_set():
@@ -641,6 +651,7 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
                 "error_count": error_count,
                 "graded_dir": str(cfg.graded_dir),
                 "errors_log": str(error_log_file),
+                "cancelled": cancel_event is not None and cancel_event.is_set(),
             },
         )
 

@@ -225,9 +225,11 @@ def _run_code_plagiarism(
 ) -> dict:
     """Copydetect over code extracted from notebook/python submissions.
 
-    A set ``cancel_event`` stops the extraction loop at the next submission;
-    ``detector.run()`` is one library call and cannot be interrupted (the
-    honest ceiling).
+    A set ``cancel_event`` stops the extraction loop at the next submission
+    and, when observed after the loop, skips the pair pass entirely (no
+    detector run, no report/pair-data write — a truncated report must not
+    overwrite the previous complete one); ``detector.run()`` itself is one
+    library call and cannot be interrupted (the honest ceiling).
     """
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     cfg.submissions_dir.mkdir(parents=True, exist_ok=True)
@@ -267,6 +269,18 @@ def _run_code_plagiarism(
             print(f"[error] Failed to extract {submission_file.name}: {exc}")
             extracted_errors += 1
 
+    if cancel_event is not None and cancel_event.is_set():
+        # The extraction loop was stopped early: the pair pass would write a
+        # truncated report over the previous complete one — don't start it.
+        print("[cancelled] plagiarism stopped before the pair pass")
+        return {
+            "stage": "plagiarism",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
+
     detector = CopyDetector(
         test_dirs=[str(cfg.submissions_dir)],
         boilerplate_dirs=[str(cfg.template_dir)],
@@ -298,6 +312,7 @@ def _run_code_plagiarism(
                 "template_dir": str(cfg.template_dir),
                 "success_count": extracted_success,
                 "error_count": extracted_errors,
+                "cancelled": cancel_event is not None and cancel_event.is_set(),
             },
         )
 
@@ -596,7 +611,8 @@ def detect_plagiarism(
     ``quiet`` suppresses the stdout text report (TUI jobs; the pane reads
     aggregate.json instead).
     ``cancel_event`` (TUI jobs) stops the per-assignment loop at the next
-    assignment boundary.
+    assignment boundary and skips the aggregate pass when set — a cancelled
+    run never writes a truncated report over a complete one.
     """
     resolved = config_path.resolve()
     is_root = is_root_config(resolved)
@@ -630,13 +646,18 @@ def detect_plagiarism(
             except (ValueError, FileNotFoundError) as exc:
                 print(f"[plagiarism] skipped {assignment_cfg.parent.name}: {exc}")
         if aggregate:
-            _aggregate_report(
-                resolved.parent,
-                root_plagiarism_section(resolved),
-                output,
-                assignment_dirs=listed,
-                quiet=quiet,
-            )
+            if cancel_event is not None and cancel_event.is_set():
+                # Truncated pair set: skip the aggregate pass (would overwrite
+                # the last complete report with a partial ranking).
+                print("[cancelled] plagiarism stopped before the aggregate pass")
+            else:
+                _aggregate_report(
+                    resolved.parent,
+                    root_plagiarism_section(resolved),
+                    output,
+                    assignment_dirs=listed,
+                    quiet=quiet,
+                )
         return _combine_summaries(summaries)
 
     summary = _run_assignment(resolved, cancel_event=cancel_event)
