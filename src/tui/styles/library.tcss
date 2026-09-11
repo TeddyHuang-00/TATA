@@ -10,8 +10,9 @@ RubricsPane > ScrollableContainer {
     padding: 0 0 1 0;
 }
 #rb-file-row {
-    height: 3;
+    height: 5;  /* 3-row Select + 2 border rows (D9 panel framing) */
     padding: 0;
+    border: round $primary;
 }
 #rb-file {
     height: 3;
@@ -31,6 +32,7 @@ RubricsPane > ScrollableContainer {
 #rb-criteria {
     height: 12;
     margin: 0 0 1 0;
+    border: round $primary;  /* D9 panel framing (criteria list surface) */
 }
 #rb-form {
     height: auto;
@@ -73,8 +75,9 @@ PromptsPane {
     padding: 0 0 1 0;
 }
 #pr-file-row {
-    height: 3;
+    height: 5;  /* 3-row Select + 2 border rows (D9 panel framing) */
     padding: 0;
+    border: round $primary;
 }
 #pr-file {
     height: 3;
@@ -93,6 +96,7 @@ PromptsPane {
 #pr-text {
     height: 1fr;
     margin: 0 0 1 0;
+    border: round $primary;  /* D9 panel framing (prompt editor surface) */
 }
 #pr-actions {
     height: auto;
@@ -113,8 +117,9 @@ ProvidersPane > ScrollableContainer {
     padding: 0 0 1 0;
 }
 #pv-file-row {
-    height: 3;
+    height: 5;  /* 3-row Select + 2 border rows (D9 panel framing) */
     padding: 0;
+    border: round $primary;
 }
 #pv-name {
     height: 3;
@@ -132,6 +137,7 @@ ProvidersPane > ScrollableContainer {
 }
 #pv-form {
     height: auto;
+    border: round $primary;  /* D9 panel framing (provider fields surface) */
 }
 #pv-actions {
     height: auto;

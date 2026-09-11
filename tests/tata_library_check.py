@@ -14,7 +14,10 @@ Mounts the full :class:`src.tui.app.TataApp` over a tmp fixture
 - the Providers pane (over a tmp ``data/providers/`` folder via
   ``providers_dir`` injection — never the real one): add, edit, delete with
   reference count, and test connection (shared client builder patched; captures the
-  resolved base_url/api_key/model; success and failure paths).
+  resolved base_url/api_key/model; success and failure paths);
+- v9 D9 framing: each pane's file list area and editor/details area is a
+  single ``round $primary`` panel, and the 3-row file Selects stay fully
+  visible inside their frames at the smallest shell size (100x30).
 
 Run: uv run tests/tata_library_check.py
 """
@@ -46,6 +49,7 @@ from src.tui.providers_pane import ProvidersPane
 from src.tui.rubrics_pane import AutoGenModal, FileNameModal, RubricsPane
 from src.tui.workspace import ConfirmationModal
 from textual.app import App, ComposeResult
+from textual.color import Color
 from textual.pilot import Pilot
 from textual.widgets import (
     Button,
@@ -162,6 +166,55 @@ async def _check_shell_and_rubrics(root: Path) -> None:
         rubrics = library.query_one(RubricsPane)
         assert rubrics.query_one("#rb-file", Select).value == "sample.toml"
         assert rubrics.query_one("#rb-criteria").row_count == 1
+
+
+async def _check_panel_frames(root: Path) -> None:
+    """v9 D9 framing: every pane's file list area and editor/details area is a
+    single ``round $primary`` panel, and the framed file rows keep the 3-row
+    Selects fully visible at the smallest shell size (100x30)."""
+    app = TataApp(root_dir=root)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_for(pilot, lambda: app.query_one("#shell-tabs").display)
+        app.switch_tab("tab-library")
+        await pilot.pause()
+        library = app.query_one(LibraryScreen)
+        sub_tabs = library.query_one("#library-tabs", TabbedContent)
+        primary = Color.parse(app.get_css_variables()["primary"])
+        # all six framed regions carry exactly one round $primary border
+        for selector in (
+            "#rb-file-row",
+            "#rb-criteria",
+            "#pr-file-row",
+            "#pr-text",
+            "#pv-file-row",
+            "#pv-form",
+        ):
+            widget = library.query_one(selector)
+            edges = (
+                widget.styles.border_top,
+                widget.styles.border_right,
+                widget.styles.border_bottom,
+                widget.styles.border_left,
+            )
+            assert all(edge[0] == "round" for edge in edges), (selector, edges)
+            assert all(edge[1] == primary for edge in edges), (selector, edges)
+        # the framed file row leaves the whole 3-row Select inside the frame
+        for tab_id, row_selector, select_selector in (
+            ("tab-rubrics", "#rb-file-row", "#rb-file"),
+            ("tab-prompts", "#pr-file-row", "#pr-file"),
+            ("tab-providers", "#pv-file-row", "#pv-name"),
+        ):
+            sub_tabs.active = tab_id
+            await pilot.pause()
+            row = library.query_one(row_selector)
+            select = library.query_one(select_selector)
+            assert select.region.height == 3, (select_selector, select.region)
+            assert select.region.width == 40, (select_selector, select.region)
+            assert row.content_region.contains_region(select.region), (
+                row_selector,
+                row.content_region,
+                select.region,
+            )
 
 
 async def _check_prompt_edit_save(root: Path) -> None:
@@ -1111,6 +1164,7 @@ async def main() -> None:
         root = Path(tmp)
         _build_fixture(root)
         await _check_shell_and_rubrics(root)
+        await _check_panel_frames(root)
         await _check_prompt_edit_save(root)
         await _check_prompt_create_delete(root)
         await _check_prompt_rename(root)

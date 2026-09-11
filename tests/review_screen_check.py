@@ -20,7 +20,13 @@ from pathlib import Path
 from e2e_common import write_aliases, write_graded  # isort: skip - seeds repo-root sys.path before src imports
 from src.shared.cli_options import ScoreReviewCliOptions
 from src.tui.score_review import ScoreReviewScreen, Viewer, find_raw_file
+from textual import events
 from textual.app import App, ComposeResult
+from textual.color import Color
+from textual.geometry import Size
+from textual.pilot import Pilot
+from textual.screen import Screen
+from textual.widget import Widget
 from textual.widgets import Select, Static
 
 
@@ -79,6 +85,10 @@ async def main() -> None:
             listing = review.query_one("#criteria-list", Static)
             assert "good work" in str(listing.content), str(listing.content)
 
+            # D9 framing: both columns are single round $primary panels in the
+            # wide and in the stacked (narrow) layout (shared score_review.tcss)
+            await _check_panel_frames(app, review, pilot)
+
             # bindings still live inside the pushed screen (next student)
             await pilot.press("right")
             assert review.index == 1, review.index
@@ -98,6 +108,12 @@ async def main() -> None:
             assert len(viewer.screen.students) == 3
             listing = viewer.screen.query_one("#criteria-list", Static)
             assert "good work" in str(listing.content)
+            # the CLI viewer path gets the same framed criteria panel
+            _assert_round_primary_frame(
+                viewer.screen.query_one("#criteria-scroll"),
+                Color.parse(viewer.get_css_variables()["primary"]),
+                "cli-criteria",
+            )
 
             # esc is a no-op in the CLI shell: the stack below is the App's own
             # default Screen, not a platform screen to pop back to.
@@ -112,6 +128,37 @@ async def main() -> None:
         _check_find_raw_file(Path(tmp))
 
     print("review screen check OK")
+
+
+def _assert_round_primary_frame(panel: Widget, primary: Color, name: str) -> None:
+    """All four panel edges are a single ``round $primary`` border (D9)."""
+    edges = (
+        panel.styles.border_top,
+        panel.styles.border_right,
+        panel.styles.border_bottom,
+        panel.styles.border_left,
+    )
+    for edge in edges:
+        assert edge[0] == "round", (name, edges)
+        assert edge[1] == primary, (name, edges)
+
+
+async def _check_panel_frames(app: App, review: Screen, pilot: Pilot) -> None:
+    """Both columns are identical round ``$primary`` frames, in the wide and
+    in the stacked (narrow) layout — no edge may be dropped."""
+    primary = Color.parse(app.get_css_variables()["primary"])
+    criteria = review.query_one("#criteria-scroll")
+    _assert_round_primary_frame(criteria, primary, "criteria")
+    _assert_round_primary_frame(review.query_one("#preview-panel"), primary, "preview")
+    # narrow drops nothing: the old border-right:none override is gone
+    review.on_resize(events.Resize(size=Size(80, 40), virtual_size=Size(80, 40)))
+    await pilot.pause()
+    content_h = review.query_one("#content-horizontal")
+    assert content_h.has_class("narrow"), "narrow class not applied"
+    assert criteria.styles.border_right[0] == "round", criteria.styles.border_right
+    review.on_resize(events.Resize(size=Size(120, 40), virtual_size=Size(120, 40)))
+    await pilot.pause()
+    assert not content_h.has_class("narrow"), "wide class not restored"
 
 
 def _check_find_raw_file(tmp: Path) -> None:
