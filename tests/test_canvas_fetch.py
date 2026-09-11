@@ -528,7 +528,7 @@ def test_assignment_description_conversion_failure_degrades(
             msg = "boom"
             raise RuntimeError(msg)
 
-    monkeypatch.setattr("src.shared.canvas_fetch.MarkItDown", Boom)
+    monkeypatch.setattr("markitdown.MarkItDown", Boom)
     fetch_assignment(StubCanvas(StubAssignment([], description="<p>hi</p>")), 1, 2, out)
     assert (out.parent / "assignment.md").read_text(encoding="utf-8") == "<p>hi</p>"
 

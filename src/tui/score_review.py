@@ -27,7 +27,6 @@ from textual.widgets import (
     Select,
     Static,
 )
-from textual_serve.server import Server
 
 from src.shared.aliases import student_display_name
 from src.shared.cli_options import ScoreReviewCliOptions
@@ -440,6 +439,8 @@ class Viewer(App):
 
 def _serve_web(score_dir: Path) -> None:
     """Run the viewer under textual-serve (http://localhost:8000)."""
+    from textual_serve.server import Server  # ruff: ignore[import-outside-top-level]
+
     command = f"uv run cli view {shlex.quote(str(score_dir))}"
     Server(command).serve()
 

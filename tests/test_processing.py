@@ -1054,7 +1054,7 @@ def test_render_screenshots_ipynb_passes_template_config(
         def from_filename(self, path: str) -> tuple[str, dict]:
             return "# nb\n", {}
 
-    monkeypatch.setattr("src.shared.screenshots.MarkdownExporter", FakeExporter)
+    monkeypatch.setattr("nbconvert.MarkdownExporter", FakeExporter)
     nb = tmp_path / "nb.ipynb"
     nb.write_text("{}", encoding="utf-8")
 

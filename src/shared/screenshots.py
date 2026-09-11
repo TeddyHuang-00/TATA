@@ -10,7 +10,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from nbconvert import MarkdownExporter
 from PIL import Image, ImageOps
 
 from .assignment_config import InputFormat
@@ -133,6 +132,8 @@ def _render_screenshots(  # ruff: ignore[too-many-return-statements, too-many-ar
                 kwargs["template_name"] = template_name
             if template_dir:
                 kwargs["extra_template_basedirs"] = [str(template_dir)]
+            from nbconvert import MarkdownExporter  # ruff: ignore[import-outside-top-level]
+
             text, _ = MarkdownExporter(**kwargs).from_filename(str(input_file))
             n_images = _extract_embedded_images(
                 text, output_stem, shots_dir, img_offset=img_offset

@@ -11,8 +11,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import anydoc
-from markitdown import MarkItDown, StreamInfo
-from nbconvert import MarkdownExporter
 
 from .assignment_config import InputFormat
 
@@ -226,6 +224,8 @@ def convert_ipynb_to_markdown(
     template_dir: Path | None = None,
 ) -> None:
     """Convert Jupyter notebook to markdown using nbconvert MarkdownExporter (in-process)."""
+    from nbconvert import MarkdownExporter  # ruff: ignore[import-outside-top-level]
+
     kwargs: dict = {}
     if template_name:
         kwargs["template_name"] = template_name
@@ -244,6 +244,8 @@ def convert_ipynb_to_markdown(
 
 def convert_html_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert HTML to markdown using markitdown (in-process)."""
+    from markitdown import MarkItDown, StreamInfo  # ruff: ignore[import-outside-top-level]
+
     # Canvas text entries may arrive as .txt while containing HTML; tell
     # markitdown the real extension so it picks its HTML converter.
     stream_info = StreamInfo(extension=".html")
@@ -264,6 +266,8 @@ def _convert_markdown(input_path: Path, output_path: Path) -> None:
 
 def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert docx to markdown with firecrawl-anydoc, falling back to markitdown (both in-process)."""
+    from markitdown import MarkItDown  # ruff: ignore[import-outside-top-level]
+
     try:
         content = anydoc.to_markdown(input_path)
     except Exception as anydoc_exc:
@@ -280,6 +284,8 @@ def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
 
 def convert_pptx_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert pptx to markdown with firecrawl-anydoc, falling back to markitdown (both in-process)."""
+    from markitdown import MarkItDown  # ruff: ignore[import-outside-top-level]
+
     try:
         content = anydoc.to_markdown(input_path)
     except Exception as anydoc_exc:
@@ -297,6 +303,8 @@ def convert_pptx_to_markdown(input_path: Path, output_path: Path) -> None:
 def convert_pdf_to_markdown(input_path: Path, output_path: Path) -> None:
     """Convert PDF to markdown with firecrawl-anydoc (in-process); scanned
     pages trigger automatic hosted OCR (Firecrawl Parse)."""
+    from markitdown import MarkItDown  # ruff: ignore[import-outside-top-level]
+
     try:
         # Local parse first; scanned pages raise NeedsOcrError, which anydoc
         # handles internally by re-sending the document to hosted OCR.

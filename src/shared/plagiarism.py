@@ -5,15 +5,12 @@ import threading
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import nbformat
 import numpy as np
-from copydetect import CopyDetector
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None  # type: ignore[assignment]
+if TYPE_CHECKING:
+    from copydetect import CopyDetector
 
 from .assignment_config import (
     FetchSection,
@@ -90,6 +87,8 @@ def _safe_output_name(file_path: Path, base_dir: Path) -> str:
 
 
 def _extract_notebook_code(input_path: Path) -> str:
+    import nbformat  # ruff: ignore[import-outside-top-level]
+
     with input_path.open("r", encoding="utf-8") as file:
         notebook = nbformat.read(file, as_version=4)
     code_cells = [
@@ -323,6 +322,8 @@ def _run_code_plagiarism(
             "success_rate": 0,
         }
 
+    from copydetect import CopyDetector  # ruff: ignore[import-outside-top-level]
+
     detector = CopyDetector(
         test_dirs=[str(cfg.submissions_dir)],
         boilerplate_dirs=[str(cfg.template_dir)],
@@ -442,7 +443,9 @@ def _run_embedding(cfg: PlagiarismConfig) -> bool:
     input_hash = embedding_input_hash(cfg.processed_dir, cfg.embedding_model)
     if load_cache_file(cache_path).get("hash") == input_hash:
         return True
-    if SentenceTransformer is None:
+    try:
+        from sentence_transformers import SentenceTransformer  # ruff: ignore[import-outside-top-level]
+    except ImportError:
         print(
             "[plagiarism] sentence-transformers unavailable; "
             "copydetect-only (no embedding blend)"
@@ -493,6 +496,8 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
     had too many false positives on short essays).
     """
     _run_embedding(cfg)
+
+    from copydetect import CopyDetector  # ruff: ignore[import-outside-top-level]
 
     detector = CopyDetector(
         test_dirs=[str(cfg.processed_dir)],

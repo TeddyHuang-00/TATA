@@ -40,7 +40,6 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
 )
-from textual_serve.server import Server
 
 from src import REPO_ROOT
 from src.shared.aliases import (
@@ -1208,6 +1207,8 @@ class TataApp(App[None]):
 def run() -> None:
     """Entry for the ``tui`` script; ``--web`` serves it over HTTP (textual-serve)."""
     if "--web" in sys.argv[1:]:
+        from textual_serve.server import Server  # ruff: ignore[import-outside-top-level]
+
         Server("uv run tui").serve()
         return
     TataApp().run()

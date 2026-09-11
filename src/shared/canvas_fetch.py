@@ -16,7 +16,6 @@ from typing import Any
 import dotenv
 import tomlkit
 from canvasapi import Canvas
-from markitdown import MarkItDown, StreamInfo
 
 from src.shared.aliases import upsert_student_aliases
 from src.shared.caching import cache_file, load_cache_file, save_cache_file
@@ -96,6 +95,8 @@ def _save_assignment_description(assignment: object, out: Path) -> None:
     description = getattr(assignment, "description", None)
     if not description:
         return
+    from markitdown import MarkItDown, StreamInfo  # ruff: ignore[import-outside-top-level]
+
     try:
         markdown = (
             MarkItDown()

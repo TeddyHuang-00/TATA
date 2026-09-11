@@ -9,8 +9,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from markitdown import MarkItDown
-from nbconvert import MarkdownExporter
 from pydantic import AliasChoices, BaseModel, Field
 
 from .assignment_config import (
@@ -295,6 +293,9 @@ def build_client(provider_name: str) -> tuple[Any, str]:
 
 
 def _read_reference_text(reference_file: Path) -> str:
+    from markitdown import MarkItDown  # ruff: ignore[import-outside-top-level]
+    from nbconvert import MarkdownExporter  # ruff: ignore[import-outside-top-level]
+
     suffix = reference_file.suffix.lower()
 
     if suffix == ".md":

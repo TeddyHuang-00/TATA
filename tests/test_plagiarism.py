@@ -129,7 +129,7 @@ def test_code_detector_disables_autoopen(monkeypatch: pytest.MonkeyPatch) -> Non
         def generate_html_report(self) -> None:
             pass
 
-    monkeypatch.setattr("src.shared.plagiarism.CopyDetector", FakeDetector)
+    monkeypatch.setattr("copydetect.CopyDetector", FakeDetector)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "raw").mkdir()
@@ -313,7 +313,7 @@ def test_cancelled_run_stops_before_the_pair_pass(
             cancel_event.set()
 
         monkeypatch.setattr(plagiarism_mod, "_write_extracted_code", stop_after_first)
-        monkeypatch.setattr(plagiarism_mod, "CopyDetector", FakeDetector)
+        monkeypatch.setattr("copydetect.CopyDetector", FakeDetector)
 
         summary = detect_plagiarism(root / "config.toml", cancel_event=cancel_event)
 
@@ -617,7 +617,7 @@ def fake_embedder(monkeypatch: pytest.MonkeyPatch) -> list[int]:
             calls.append(len(texts))
             return (np.arange(1, len(texts) + 1) / 10).reshape(-1, 1).astype(np.float32)
 
-    monkeypatch.setattr("src.shared.plagiarism.SentenceTransformer", FakeModel)
+    monkeypatch.setattr("sentence_transformers.SentenceTransformer", FakeModel)
     return calls
 
 
