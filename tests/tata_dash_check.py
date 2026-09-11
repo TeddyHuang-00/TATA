@@ -52,6 +52,7 @@ from textual.containers import Vertical
 from textual.coordinate import Coordinate
 from textual.pilot import Pilot
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
+from textual.widgets._footer import FooterKey
 
 
 def _fix(root: Path, *, env: bool = False) -> None:
@@ -73,6 +74,11 @@ def _fix(root: Path, *, env: bool = False) -> None:
 
 def _assert_modal_gone(app: TataApp, modal_type: type) -> None:
     assert not isinstance(app.screen, modal_type), app.screen
+
+
+def _footer_keys(app: TataApp) -> list[str]:
+    """Descriptions of the Footer's rendered key hints (v10 item 6)."""
+    return [str(key.description) for key in app.screen.query(FooterKey)]
 
 
 async def _check_import_course_gate_without_env() -> None:
@@ -330,8 +336,9 @@ async def _check_plagiarism_course(pilot: Pilot, app: TataApp) -> None:
     assert cell(table, 1, 5) == "-", cell(table, 1, 5)
     assert str(table.get_cell_at(Coordinate(0, 5)).style) == "red bold"
     assert str(table.get_cell_at(Coordinate(1, 5)).style) == "dim"
-    # 1fr table: measured 24 rows at 120x40 (no embed split any more)
-    assert table.region.height == 24, table.region
+    # 1fr table: measured 25 rows at 120x40 (v10 item 1 merged the action row
+    # into the breadcrumb line, reclaiming one row)
+    assert table.region.height == 25, table.region
 
 
 async def _check_pane_row_enter(
@@ -473,7 +480,9 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     """1-4 filter (the 5/Flagged filter was removed): 3 -> partial (the
     fixture's state), 2 -> empty; pressing 5 is a no-op now. The active
     filter also shows as a persistent dim breadcrumb suffix (F6), absent
-    for All."""
+    for All. v10 item 6: the footer only advertises keys that work at the
+    current level (1-4 / F / p / s are course-only; `c` has no assignment
+    branch)."""
     app.switch_tab("tab-dashboard")
     await pilot.pause()
     # enter course again
@@ -503,6 +512,33 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     assert table.row_count == 2
     assert app.query_one(DashboardScreen)._filter is None
     assert "filter:" not in text(breadcrumb), text(breadcrumb)
+
+    # course-level footer: the 4 filter keys (+ F/p/s) are advertised
+    assert sum("Filter" in key for key in _footer_keys(app)) == 4, _footer_keys(app)
+    assert {"Fetch all", "Plagiarism", "Score review"} <= set(_footer_keys(app))
+    # global level: the course-only keys are not advertised, `c` stays
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: app.state.dashboard_level == "global")
+    await wait_for(pilot, lambda: not any("Filter" in key for key in _footer_keys(app)))
+    keys = _footer_keys(app)
+    assert "Fetch all" not in keys, keys
+    assert "Plagiarism" not in keys, keys
+    assert "Score review" not in keys, keys
+    assert "Import" in keys, keys
+    # assignment level: filter keys and `c` (no assignment branch) are gone
+    table.focus()
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: app.state.dashboard_level == "course")
+    await wait_for(
+        pilot, lambda: sum("Filter" in key for key in _footer_keys(app)) == 4
+    )
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: app.state.dashboard_level == "assignment")
+    await wait_for(pilot, lambda: not any("Filter" in key for key in _footer_keys(app)))
+    assert "Import" not in _footer_keys(app), _footer_keys(app)
+    # back to course for the checks that follow
+    await pilot.press("escape")
+    await wait_for(pilot, lambda: app.state.dashboard_level == "course")
 
 
 async def _check_search_sort(pilot: Pilot, app: TataApp) -> None:

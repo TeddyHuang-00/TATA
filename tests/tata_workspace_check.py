@@ -224,6 +224,10 @@ async def _check_subtitles_visible(app: TataApp, pilot: Pilot) -> None:
         assert len(lines) == 2, (name, str(btn.label))
         assert lines[1], (name, lines[1])
         assert lines[1] != "…", (name, lines[1])
+    # v10 item 2: the subtitle is dim markup inside the label (the main line
+    # keeps the normal button colour); the span covers the subtitle text.
+    fetch_spans = buttons["fetch"].label.spans
+    assert any(str(span.style) == "dim" for span in fetch_spans), fetch_spans
     svg = _svg_plain(app.export_screenshot())
     for name, btn in buttons.items():
         subtitle = str(btn.label).split("\n", 1)[1]

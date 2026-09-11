@@ -471,7 +471,11 @@ class AssignmentScreen(JobHost):
         busy = self._job is not None
         for stage, key, icon in _STAGE_KEYS:
             btn = self._buttons[key]
-            btn.label = f"{icon} {stage}\n{self._sub.get(stage, '…')}"
+            # Subtitle markup: dim grey vs the normal main label (feedback
+            # v10 item 2); Button labels parse markup (Textual 8.2.x).
+            btn.label = (
+                f"{icon} {stage}\n[dim]{escape(self._sub.get(stage, '…'))}[/dim]"
+            )
             btn.disabled = busy
 
     def _render_config(self) -> None:
@@ -662,18 +666,6 @@ class AssignmentScreen(JobHost):
     def action_toggle_config(self) -> None:
         panel = self.query_one("#config-panel", Vertical)
         panel.display = not panel.display
-
-    def action_rescan(self) -> None:
-        state = self.state
-        if state.current_course is not None:
-            state.load_assignments(state.current_course)
-            if self._info is not None:
-                for a in state.assignments:
-                    if a.dir_name == self._info.dir_name:
-                        self._info = a
-                        break
-        self.render_all()
-        self.app.notify("Rescan complete", severity="information")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dispatch stage buttons / cancel to the matching action."""

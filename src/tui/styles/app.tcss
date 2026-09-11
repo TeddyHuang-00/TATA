@@ -14,9 +14,19 @@ Screen {
 }
 
 #breadcrumb {
-    height: auto;
+    width: 1fr;  /* take the row minus the right-aligned #dash-actions */
+    height: 3;  /* match the button row; text centred (buttons centre too) */
+    content-align-vertical: middle;
     padding: 0 1;
     color: $text-muted;
+}
+
+#dash-head {
+    height: auto;  /* Horizontal defaults to 1fr */
+}
+
+#dash-actions {
+    width: auto;  /* hug the right edge inside #dash-head */
 }
 
 /* ---- dashboard table ---- */

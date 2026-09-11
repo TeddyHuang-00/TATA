@@ -170,7 +170,11 @@ class _FocusableStatic(Static):
     can_focus = True
 
 
-class DashboardScreen(Vertical):
+# DashboardScreen sits at the PLR0904 budget of 20 public methods (compose/
+# on_mount/on_button_pressed are the Textual widget API, the rest are the
+# action_* handlers); check_action is a required DOMNode hook — split the
+# class if the count grows further.
+class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
     """S1 Dashboard: view stack switching on ``state.dashboard_level``."""
 
     BINDINGS: ClassVar = [
@@ -214,16 +218,19 @@ class DashboardScreen(Vertical):
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="topbar", markup=True)
-        yield Static(id="breadcrumb", markup=True)
-        # Action row: `[⚙ Settings]` at all three levels (`,`); the
-        # `[Plagiarism]` button is course-level only (toggled in render_level).
+        # Breadcrumb + action row share one line (feedback v10 item 1): the
+        # `[⚙ Settings]` button at all three levels (`,`); `[Plagiarism]` is
+        # course-level only (toggled in render_level). #dash-head needs
+        # height auto — Horizontal defaults to 1fr and would clip the row.
         actions = Horizontal(
             Button(f"{icons.GEAR} Settings", id="dash-settings"),
             Button(f"{icons.PLAGIARISM} Plagiarism", id="dash-plagiarism"),
             id="dash-actions",
         )
         actions.styles.height = "auto"  # Horizontal defaults to 1fr
-        yield actions
+        with Horizontal(id="dash-head"):
+            yield Static(id="breadcrumb", markup=True)
+            yield actions
         yield Input(placeholder="Search…", id="search-input")
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
@@ -415,6 +422,10 @@ class DashboardScreen(Vertical):
         )
         self._restore_cursor(table)
         self._refocus()
+        # Level changed: rebuild the Footer's key list — keys with no target
+        # at this level are gated by check_action, and the footer only
+        # recomputes on focus changes or an explicit refresh_bindings.
+        self.refresh_bindings()
 
     def _remember_selection(self) -> None:
         """Remember this level's selected row (dir_name) before navigation or
@@ -970,6 +981,23 @@ class DashboardScreen(Vertical):
         self._filter = value
         self.render_level()
         self.app.notify(f"Filter: {_FILTER_LABELS[value]}", severity="information")
+
+    def check_action(self, action: str, _parameters: tuple[object, ...]) -> bool | None:
+        """Hide actions with no target at this level (feedback v10 item 6).
+
+        Same pattern as ``SettingsScreen.check_action``. The 1-4 state filter,
+        fetch-all (F), the plagiarism view (p) and score review (s) only
+        apply to the course level (their guards live there), and import (c)
+        has no assignment-level branch — the footer must not advertise dead
+        keys (``False`` = disabled + hidden from footer/help).
+        """
+        if action.startswith("filter_"):
+            return self.state.dashboard_level == "course"
+        if action in {"fetch_all", "open_plagiarism", "score_review"}:
+            return self.state.dashboard_level == "course"
+        if action == "import_item":
+            return self.state.dashboard_level != "assignment"
+        return True
 
     # ---------- minimal job protocol (ponytail: status text only, no queue) ----------
 
