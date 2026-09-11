@@ -9,7 +9,8 @@ and checks Textual's native palette overlay wired to ``TataCommands``:
   assignment, Settings, Plagiarism view, Score review — exactly matches the
   implemented rows, and the level scoping agrees with batch 1's
   ``check_action`` (the 1-4 filters and F/p/s are course-only, import is
-  absent at the assignment level);
+  absent at the assignment level; Settings ``,`` and Rescan ``r`` apply at
+  every level, including the assignment workspace);
 - selecting a hit really runs that view's action: typing "gra" raises the
   Grade confirmation modal (escape -> no job started), and a spy proves "fet"
   runs Fetch — not the last entry (partial vs late-bound lambda);
@@ -66,6 +67,8 @@ WORKSPACE_ROWS = [
     "Cancel running job  x",
     "Edit config  e",
     "Toggle config  shift+f",
+    "Settings  ,",
+    "Rescan  r",
 ]
 SETTINGS_ROWS = ["Save  ctrl+s", "Reset  r", "Edit config  e", "Test Canvas  t"]
 PLAGIARISM_ROWS = ["Run detection  p", "Run aggregate  a", "Cancel job  x", "Reload  r"]

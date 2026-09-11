@@ -12,7 +12,8 @@ from (``Provider.screen`` is the calling screen, Textual passes
 Contexts, all reusing existing actions (zero new logic):
 
 - assignment workspace (dashboard level ``assignment``): the six stages,
-  config edit/toggle, cancel;
+  config edit/toggle, cancel, plus the dashboard-level Settings (``,``) and
+  Rescan (``r``) that also work at this level;
 - dashboard ``global`` / ``course``: import, settings, rescan, fetch-all,
   plagiarism view, score review, the 1-4 state filters (course only);
 - ``SettingsScreen`` / ``PlagiarismViewScreen`` / ``ScoreReviewScreen``:
@@ -186,5 +187,9 @@ class TataCommands(Provider):
                 ("Cancel running job", "x", workspace, "cancel_job"),
                 ("Edit config", "e", workspace, "edit_config"),
                 ("Toggle config", "shift+f", workspace, "toggle_config"),
+                # `,`/`r` also work at the assignment level (dashboard
+                # bindings, not gated by check_action); the footer lists them.
+                ("Settings", ",", dashboard, "open_settings"),
+                ("Rescan", "r", dashboard, "rescan"),
             ],
         )

@@ -615,6 +615,13 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         self.render_level()
 
     def action_go_up(self) -> None:
+        # Safe to leave mid-job (intentionally unlike the plagiarism view,
+        # which refuses esc while its job runs): this screen is never
+        # unmounted — going up only flips `dashboard_level` and
+        # render_level hides the workspace via display=False, so the JobHost
+        # drain timer keeps running and still releases state.active_job when
+        # the worker's ('done', …) marker lands (probe: job kept running
+        # after esc; ws._job / active_job released on finish).
         state = self.state
         self._remember_selection()
         self._sort = None  # level change resets sort to default name asc
