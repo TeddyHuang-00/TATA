@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -522,7 +523,11 @@ def preprocess_item_hashes(
     return hashes
 
 
-def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
+def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
+    assignment_config_path: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict | None:
     """Preprocess all raw files for an assignment into processed markdown.
 
     Top-level raw entries are per-student: a file (single submission) or a
@@ -530,6 +535,9 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
     ``<folder>.md`` with a per-file header (``file:``, ``submitted:`` when the
     stamp is known), and before/after_preprocess_file hooks fire per input
     file with output_file set to the final concatenated file.
+
+    ``cancel_event`` (TUI jobs): checked at each item boundary — on a set
+    event the loop stops before the next item (finished items stay cached).
     """
     cfg = load_assignment_file(assignment_config_path)
     processing = cfg.processing
@@ -653,6 +661,9 @@ def preprocess_assignment(assignment_config_path: Path) -> dict | None:  # ruff:
     failed_count = 0
 
     for item in items:
+        if cancel_event is not None and cancel_event.is_set():
+            print("[cancelled] preprocess stopped — finished items are cached")
+            break
         files = item_files_by[item]
         if not files:
             if item.is_dir():

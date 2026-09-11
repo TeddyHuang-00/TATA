@@ -124,6 +124,12 @@ Screen {
     height: auto;
 }
 
+/* Textual's inner Bar defaults to width: 32 (widgets/_progress_bar.py) —
+   stretch it across the whole track (v10 batch 2). */
+#ws-progress > ProgressBar > Bar {
+    width: 1fr;
+}
+
 #ws-cancel {
     width: auto;
     margin: 0 0 0 1;

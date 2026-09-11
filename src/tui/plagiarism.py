@@ -18,10 +18,12 @@ main thread drains it into the RichLog.  ``[p]`` detects the current
 assignment, ``[a]`` runs the course aggregate.
 
 Cancellation is cooperative, like the workspace (design 99 §3.1): the
-detect/aggregate functions are synchronous and cannot be interrupted — ``x``
-marks the job "stopping" (cancel event set) and the summary is then reported
-as "Cancelled", but the run finishes anyway and its outputs
-(``all_pairs.json`` / ``aggregate.json``) are still written.
+detect/aggregate functions are synchronous and cannot be interrupted
+mid-call, but the job's cancel event reaches them and their item loops
+check it at boundaries (v10 batch 2) — ``x`` marks the job "stopping"
+(cancel event set), the run unwinds at the next assignment/submission
+boundary and the summary is then reported as "Cancelled".  ``detector.run``
+itself is one library call and finishes regardless (honest ceiling).
 
 Data sources (course-scoped; no dependence on ``state.current_assignment``):
 - pairs: ``<assignment>/plagiarism/all_pairs.json`` per assignment in
@@ -36,6 +38,7 @@ Data sources (course-scoped; no dependence on ``state.current_assignment``):
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
 
@@ -219,15 +222,23 @@ def _write_aggregate_json(course_config: Path) -> Path:
 # ---------- job worker functions (called on worker threads) ----------
 
 
-def _run_detect_job(config_path: Path) -> dict | None:
+def _run_detect_job(
+    config_path: Path, *, cancel_event: threading.Event | None = None
+) -> dict | None:
     """Single-assignment copydetect run (no aggregate); quiet: the pane
     reads all_pairs.json, not the text report."""
-    return detect_plagiarism(config_path, aggregate=False, quiet=True)
+    return detect_plagiarism(
+        config_path, aggregate=False, quiet=True, cancel_event=cancel_event
+    )
 
 
-def run_aggregate_job(config_path: Path) -> dict | None:
+def run_aggregate_job(
+    config_path: Path, *, cancel_event: threading.Event | None = None
+) -> dict | None:
     """Course aggregate: detect_plagiarism (quiet) + JSON for the pane."""
-    summary = detect_plagiarism(config_path, aggregate=True, quiet=True)
+    summary = detect_plagiarism(
+        config_path, aggregate=True, quiet=True, cancel_event=cancel_event
+    )
     try:
         _write_aggregate_json(config_path)
     except Exception as exc:
@@ -847,7 +858,7 @@ class PlagiarismScreen(JobHost):
     def job_active(self) -> bool:
         """True while a detect/aggregate job is in flight — including the
         "stopping" window, since cancellation is cooperative (the worker
-        runs to completion; see the module docstring).
+        unwinds at the next item boundary; see the module docstring).
 
         The view's esc guard reads this (and stays open — unmounting mid-job
         would strand the JobHost drain timer and ``state.active_job``).
@@ -862,7 +873,9 @@ class PlagiarismScreen(JobHost):
             return
         job["cancel_event"].set()
         job["state"] = "stopping"
-        self._log_line("Cancel requested — current item finishes, no new tasks start")
+        self._log_line(
+            "Cancel requested — queued items dropped, in-flight item finishes"
+        )
         self._render_busy()
 
     def action_run_detect(self) -> None:

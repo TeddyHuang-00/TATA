@@ -558,6 +558,7 @@ def _fake_detect(
     aggregate: bool = False,
     output: Path | None = None,
     quiet: bool = False,
+    cancel_event: object | None = None,
 ) -> dict:
     _detect_calls.append({
         "path": config_path,

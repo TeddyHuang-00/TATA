@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
@@ -219,8 +220,15 @@ def _run_code_plagiarism(
     cfg: PlagiarismConfig,
     assignment_config_path: Path,
     hook_runtime: HookRuntime | None,
+    *,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
-    """Copydetect over code extracted from notebook/python submissions."""
+    """Copydetect over code extracted from notebook/python submissions.
+
+    A set ``cancel_event`` stops the extraction loop at the next submission;
+    ``detector.run()`` is one library call and cannot be interrupted (the
+    honest ceiling).
+    """
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     cfg.submissions_dir.mkdir(parents=True, exist_ok=True)
     cfg.template_dir.mkdir(parents=True, exist_ok=True)
@@ -248,6 +256,9 @@ def _run_code_plagiarism(
         )
 
     for submission_file in _find_submissions(cfg):
+        if cancel_event is not None and cancel_event.is_set():
+            print("[cancelled] plagiarism stopped — remaining submissions skipped")
+            break
         try:
             output_name = _safe_output_name(submission_file, cfg.raw_dir)
             _write_extracted_code(submission_file, cfg.submissions_dir / output_name)
@@ -524,7 +535,9 @@ def _aggregate_report(
     print(f"[plagiarism] aggregate report -> {output}")
 
 
-def _run_assignment(config_path: Path) -> dict:
+def _run_assignment(
+    config_path: Path, *, cancel_event: threading.Event | None = None
+) -> dict:
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
         cfg_model,
@@ -533,7 +546,9 @@ def _run_assignment(config_path: Path) -> dict:
     cfg = _load_plagiarism_config(config_path)
 
     if _find_submissions(cfg):
-        return _run_code_plagiarism(cfg, config_path, hook_runtime)
+        return _run_code_plagiarism(
+            cfg, config_path, hook_runtime, cancel_event=cancel_event
+        )
     md_files = (
         list(cfg.processed_dir.glob("*.md")) if cfg.processed_dir.exists() else []
     )
@@ -571,6 +586,7 @@ def detect_plagiarism(
     aggregate: bool = False,
     output: Path | None = None,
     quiet: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> dict | None:
     """Run plagiarism for one assignment, or for all under the root config.
 
@@ -579,6 +595,8 @@ def detect_plagiarism(
     the cross-assignment z-score report over the assignments root.
     ``quiet`` suppresses the stdout text report (TUI jobs; the pane reads
     aggregate.json instead).
+    ``cancel_event`` (TUI jobs) stops the per-assignment loop at the next
+    assignment boundary.
     """
     resolved = config_path.resolve()
     is_root = is_root_config(resolved)
@@ -602,8 +620,13 @@ def detect_plagiarism(
             if listed is not None
             else resolved.parent.glob("*/config.toml")
         ):
+            if cancel_event is not None and cancel_event.is_set():
+                print("[cancelled] plagiarism stopped — remaining assignments skipped")
+                break
             try:
-                summaries.append(_run_assignment(assignment_cfg))
+                summaries.append(
+                    _run_assignment(assignment_cfg, cancel_event=cancel_event)
+                )
             except (ValueError, FileNotFoundError) as exc:
                 print(f"[plagiarism] skipped {assignment_cfg.parent.name}: {exc}")
         if aggregate:
@@ -616,7 +639,7 @@ def detect_plagiarism(
             )
         return _combine_summaries(summaries)
 
-    summary = _run_assignment(resolved)
+    summary = _run_assignment(resolved, cancel_event=cancel_event)
     if aggregate:
         _aggregate_report(
             resolved.parent.parent,

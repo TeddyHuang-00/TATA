@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -181,7 +182,7 @@ def test_aggregate_quiet_suppresses_stdout_report(
         (root / "config.toml").write_text("[fetch]\n", encoding="utf-8")
         monkeypatch.setattr(
             "src.shared.plagiarism._run_assignment",
-            lambda cfg: {
+            lambda cfg, **_kwargs: {
                 "stage": "plagiarism",
                 "success": 0,
                 "errors": 0,
@@ -197,6 +198,45 @@ def test_aggregate_quiet_suppresses_stdout_report(
         detect_plagiarism(root / "config.toml", aggregate=True, quiet=False)
         out = capsys.readouterr().out
         assert "Cross-Assignment Aggregate" in out, out
+
+
+def test_detect_plagiarism_stops_before_first_assignment_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cooperative cancel (v10 batch 2): a pre-set cancel_event stops the
+    per-assignment loop before any assignment runs (zero summary)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for name in ("a1", "a2"):
+            (root / name).mkdir()
+            (root / name / "config.toml").write_text("", encoding="utf-8")
+        (root / "config.toml").write_text("[fetch]\n", encoding="utf-8")
+        calls: list[Path] = []
+
+        def fake_run(cfg: Path, **_kwargs: object) -> dict:
+            calls.append(cfg)
+            return {
+                "stage": "plagiarism",
+                "success": 0,
+                "errors": 0,
+                "total": 0,
+                "success_rate": 0,
+            }
+
+        monkeypatch.setattr("src.shared.plagiarism._run_assignment", fake_run)
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        summary = detect_plagiarism(root / "config.toml", cancel_event=cancel_event)
+
+        assert calls == [], "no assignment may run after a pre-set cancel event"
+        assert summary == {
+            "stage": "plagiarism",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
 
 
 # -- B4: embedding cache at <assignment>/.cache/embedding.json, hash freshness --

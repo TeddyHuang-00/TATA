@@ -11,6 +11,7 @@ and course-list primitives it is built from.
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 from canvasapi import Canvas
@@ -130,12 +131,21 @@ def fetch_entries(  # ruff: ignore[too-many-arguments]
     *,
     assignment_filter: int | None = None,
     seen: set[tuple[int, int]] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Fetch every [[fetch.assignments]] entry of a root config. With a
     shared ``seen`` set (retry loop) an entry already fetched for its
     (course_id, assignment_id) is skipped — global and course configs may
-    both carry the same assignment in a mixed tree."""
+    both carry the same assignment in a mixed tree.
+
+    A set ``cancel_event`` (TUI jobs) stops before the next entry:
+    ``fetch_assignment`` is one Canvas call, so the item boundary is the
+    honest cancellation point.
+    """
     for entry in cfg.assignments:
+        if cancel_event is not None and cancel_event.is_set():
+            print("[cancelled] fetch stopped — remaining assignments skipped")
+            return
         if assignment_filter is not None and entry.id != assignment_filter:
             continue
         if seen is not None:
@@ -150,12 +160,13 @@ def fetch_entries(  # ruff: ignore[too-many-arguments]
         fetch_assignment(canvas, course_id, entry.id, out)
 
 
-def fetch_course(
+def fetch_course(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     canvas: Canvas,
     config_path: Path,
     course_filter: int | None,
     assignment_filter: int | None,
     seen: set[tuple[int, int]] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> bool:
     """Fetch one course config's [[fetch.assignments]] list; False when it
     does not carry a usable list (or was filtered out by course_filter).
@@ -176,11 +187,16 @@ def fetch_course(
         cfg,
         assignment_filter=assignment_filter,
         seen=seen,
+        cancel_event=cancel_event,
     )
     return True
 
 
-def retry_fetch(course_filter: int | None, assignment_filter: int | None) -> None:
+def retry_fetch(
+    course_filter: int | None,
+    assignment_filter: int | None,
+    cancel_event: threading.Event | None = None,
+) -> None:
     root = repo_root()
     base_url, token = load_env()
     canvas = make_canvas_client(base_url, token)
@@ -196,7 +212,14 @@ def retry_fetch(course_filter: int | None, assignment_filter: int | None) -> Non
     seen: set[tuple[int, int]] = set()
     fetched_any = False
     for config_path in course_configs:
-        if fetch_course(canvas, config_path, course_filter, assignment_filter, seen):
+        if fetch_course(
+            canvas,
+            config_path,
+            course_filter,
+            assignment_filter,
+            seen,
+            cancel_event=cancel_event,
+        ):
             fetched_any = True
     if fetched_any:
         # Course-level lists are the source of truth.
@@ -251,9 +274,14 @@ def ask_number(prompt: str, count: int, default: int) -> int:
         print(f"Enter a number between 1 and {count}.")
 
 
-def run_fetch(args: FetchCliOptions) -> None:
+def run_fetch(
+    args: FetchCliOptions, *, cancel_event: threading.Event | None = None
+) -> None:
+    """Run the ``fetch`` subcommand (retry / root-config list / single fetch /
+    interactive pick). ``cancel_event`` (TUI jobs) is checked at entry-list
+    boundaries; a single fetch checks it once before its one Canvas call."""
     if args.retry:
-        retry_fetch(args.course, args.assignment)
+        retry_fetch(args.course, args.assignment, cancel_event=cancel_event)
         return
 
     cfg_path, cfg = load_config(args.config)
@@ -269,7 +297,7 @@ def run_fetch(args: FetchCliOptions) -> None:
         assert cfg_path is not None  # cfg non-None implies a config was found
         base_url, token = load_env()
         canvas = make_canvas_client(base_url, token)
-        fetch_entries(canvas, cfg.course_id, cfg_path, cfg)
+        fetch_entries(canvas, cfg.course_id, cfg_path, cfg, cancel_event=cancel_event)
         return
 
     course_id = (
@@ -318,6 +346,10 @@ def run_fetch(args: FetchCliOptions) -> None:
         out = (cfg_path.parent / str(assignment_id) / "raw").resolve()
     else:
         out = (cfg_path.parent / "raw").resolve()
+
+    if cancel_event is not None and cancel_event.is_set():
+        print("[cancelled] fetch stopped — nothing fetched")
+        return
 
     base_url, token = load_env()
     canvas = make_canvas_client(base_url, token)

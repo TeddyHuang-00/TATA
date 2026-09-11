@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
@@ -443,7 +444,16 @@ def _run_single_grading_task(  # ruff: ignore[too-many-arguments]
         return submission.name, "", error_message
 
 
-def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None:  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
+def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, too-many-locals]
+    config_path: Path,
+    *,
+    force: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> dict | None:
+    """Grade pending submissions; a set ``cancel_event`` (TUI jobs) short
+    circuits before submitting and stops submitting after the current batch
+    (queued submissions dropped, in-flight LLM calls finish — the honest
+    ceiling; synchronous calls cannot be killed)."""
     cfg = load_assignment_config(config_path)
     cfg_model = load_assignment_file(config_path)
     hook_runtime = HookRuntime.from_config(
@@ -527,6 +537,16 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
             "success_rate": 0,
         }
 
+    if cancel_event is not None and cancel_event.is_set():
+        print("[cancelled] grade stopped before submitting — nothing queued")
+        return {
+            "stage": "grade",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
+
     client, model_name = build_client(cfg.provider_name)
     worker_count = min(cfg.max_parallel_tasks, len(pending_submissions))
 
@@ -578,6 +598,15 @@ def grade_assignment(config_path: Path, *, force: bool = False) -> dict | None: 
         }
 
         for future in as_completed(future_to_submission):
+            if cancel_event is not None and cancel_event.is_set():
+                # Cancel queued (not yet started) submissions; running calls
+                # finish (the executor's own shutdown waits for them).
+                executor.shutdown(cancel_futures=True)
+                print(
+                    "[cancelled] grade stopped — queued submissions dropped, "
+                    "in-flight calls finish"
+                )
+                break
             submission = future_to_submission[future]
             output_file = cfg.graded_dir / f"{submission.stem}.json"
 

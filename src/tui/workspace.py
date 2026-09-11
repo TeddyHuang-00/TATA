@@ -17,10 +17,12 @@ Honesty notes over the design (design 99 accepted trade-offs):
   once per tick: file counts (processed/scored) and the shared
   hash-cache rule for grade (the cache updates per submission during a run).
   When the count is unknown (fetch/analyze) the bar is indeterminate.
-- Synchronous stage functions cannot be killed: ``cancel_event.set()`` puts
-  the UI in "Stopping…" and the job's result is dropped when the function
-  returns (the shared cache rules make the next run incremental). No new
-  job starts while one runs (exclusive worker group).
+- Synchronous stage functions cannot be killed mid-call, but cancellation
+  is cooperative (v10 batch 2): the job's ``cancel_event`` is passed into
+  the stage function and its item loops check it at boundaries, so a cancel
+  stops new items from starting while calls already in flight finish (for
+  grade: up to ``max_parallel_tasks`` LLM calls). The shared cache rules
+  make the next run incremental.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, override
@@ -229,10 +232,12 @@ def _status_line(
     ))
 
 
-def _run_fetch_job(config_path: Path) -> None:
+def _run_fetch_job(
+    config_path: Path, *, cancel_event: threading.Event | None = None
+) -> None:
     """Fetch one assignment via src.shared.fetch_pipeline.run_fetch (the
     same function the CLI ``fetch`` subcommand calls)."""
-    run_fetch(FetchCliOptions(config=config_path))
+    run_fetch(FetchCliOptions(config=config_path), cancel_event=cancel_event)
 
 
 # ---------- modals ----------
@@ -337,10 +342,6 @@ class AssignmentScreen(JobHost):
                     )
             with Vertical(id="config-panel"):
                 yield Static("Parsing config…", id="config-body", markup=True)
-        with Horizontal(id="ws-progress"):
-            yield Static("", id="ws-progress-text", markup=True)
-            yield ProgressBar(show_eta=False)
-            yield Button("Cancel", id="ws-cancel", variant="warning")
         yield RichLog(
             markup=True,
             wrap=True,
@@ -348,6 +349,12 @@ class AssignmentScreen(JobHost):
             auto_scroll=True,
             id="richlog",
         )
+        # Progress row below the log (v10 batch 2): bar with native ETA +
+        # elapsed in #ws-progress-text.
+        with Horizontal(id="ws-progress"):
+            yield Static("", id="ws-progress-text", markup=True)
+            yield ProgressBar(show_eta=True)
+            yield Button("Cancel", id="ws-cancel", variant="warning")
         yield Static(id="ws-empty", markup=True)
 
     def on_mount(self) -> None:
@@ -640,7 +647,9 @@ class AssignmentScreen(JobHost):
             return
         job["cancel_event"].set()
         job["state"] = "stopping"
-        self._log_line("Cancel requested — current item finishes, no new tasks start")
+        self._log_line(
+            "Cancel requested — queued items dropped, in-flight item finishes"
+        )
         self._render_busy()
 
     def action_edit_config(self) -> None:
@@ -695,6 +704,9 @@ class AssignmentScreen(JobHost):
         total = job.get("total")
         bar.total = total
         bar.progress = job.get("progress", 0) if total else 0
+        # ETA is only meaningful with a known total: hide the "--:--:--"
+        # placeholder for the indeterminate fetch/analyze jobs.
+        bar.query_one("ETAStatus").display = total is not None
 
     @override
     def _job_is_ours(self, job: dict) -> bool:

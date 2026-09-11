@@ -169,7 +169,7 @@ async def _check_import_assignment_modal(pilot: Pilot, app: TataApp) -> None:
     calls: list[FetchCliOptions] = []
     orig_fetch = tata_app_mod.run_fetch
 
-    def fake_fetch(args: FetchCliOptions) -> None:
+    def fake_fetch(args: FetchCliOptions, **_kwargs: object) -> None:
         calls.append(args)
 
     tata_app_mod.run_fetch = fake_fetch

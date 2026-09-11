@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -280,8 +281,17 @@ def score_submission(  # ruff: ignore[too-many-branches]
     return total_score, "\n".join(summary_lines)
 
 
-def score_assignment(assignment_config_path: Path) -> dict | None:  # ruff: ignore[too-many-locals]
-    """Score all graded submissions for an assignment."""
+def score_assignment(  # ruff: ignore[too-many-locals]
+    assignment_config_path: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict | None:
+    """Score all graded submissions for an assignment.
+
+    ``cancel_event`` (TUI jobs): checked at each file boundary — on a set
+    event the loop stops before the next submission; finished summaries
+    are already written.
+    """
     cfg = load_assignment_file(assignment_config_path)
     grading = cfg.grading
     scoring = cfg.scoring
@@ -335,6 +345,9 @@ def score_assignment(assignment_config_path: Path) -> dict | None:  # ruff: igno
     error_count = 0
 
     for graded_file in graded_files:
+        if cancel_event is not None and cancel_event.is_set():
+            print("[cancelled] score stopped — remaining submissions skipped")
+            break
         try:  # ruff: ignore[too-many-statements-in-try-clause]
             # Load grading response
             grading_data = json.loads(graded_file.read_text(encoding="utf-8"))

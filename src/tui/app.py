@@ -11,6 +11,7 @@ Run: ``uv run python src/tui/app.py``
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from collections.abc import Callable, MutableMapping
 from contextlib import suppress
@@ -762,13 +763,16 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
             self.render_level()  # display names may have changed
 
     @staticmethod
-    def _fetch_one(course: CourseInfo, aid: int) -> None:
+    def _fetch_one(
+        course: CourseInfo, aid: int, *, cancel_event: threading.Event | None = None
+    ) -> None:
         run_fetch(
             FetchCliOptions(
                 course=course.course_id,
                 assignment=aid,
                 config=course.config_path,
-            )
+            ),
+            cancel_event=cancel_event,
         )
         # M3: record the assignment in the course config's [[fetch.assignments]]
         # so fetch-all (F) picks it up later. fetch_pipeline.remember does not
@@ -877,8 +881,15 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         course_id = cfg.course_id
         config_path = course.config_path
 
-        def job() -> None:  # worker thread
+        def job(*, cancel_event: threading.Event | None = None) -> None:
+            # worker thread; the dashboard's minimal job runner calls fn()
+            # without arguments (no cancel UI at this level), but the
+            # cancel_event parameter is part of the shared stage-callable
+            # contract (src.tui.jobs) and is forwarded when set.
             for i, entry in enumerate(entries):
+                if cancel_event is not None and cancel_event.is_set():
+                    print("[cancelled] fetch-all stopped — remaining skipped")
+                    break
                 self._mark_fetch(i, "running")
                 t0 = time.monotonic()
                 try:
@@ -887,7 +898,8 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
                             course=course_id,
                             assignment=entry.id,
                             config=config_path,
-                        )
+                        ),
+                        cancel_event=cancel_event,
                     )
                     self._mark_fetch(i, "done", seconds=time.monotonic() - t0)
                 except BaseException as exc:  # per-target failure: keep going

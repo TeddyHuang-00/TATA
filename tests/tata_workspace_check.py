@@ -7,11 +7,15 @@ SVG text), the always-visible #ws-status pending row (fixture-consistent
 counts, D8 colours, refresh on rescan/re-entry), the removal of the old
 'Pipeline' prefix / 'incremental' toggle, config panel, grade confirm modal
 (open/dismiss/confirm), a mocked stage job (worker thread -> queue ->
-RichLog -> rescan), cooperative cancel (x), native '?' help panel, esc back
-to Course, a 100x30 short-window layout check that PROVES the log really
-paints (content row + 'Live log' + a written line in the exported SVG), and
-a 120x44 tall-window no-regression guard. The stage function is
-monkeypatched with a stub — no real grading/LLM call ever happens.
+RichLog -> rescan), cooperative cancel (x) with a polling stub — the job
+really exits early and the cancelled log line lands (v10 batch 2), the
+progress row under the log with a stretched inner Bar, native ETA and the
+elapsed clock (v10 batch 2), native '?' help panel, esc back to Course, a
+100x30 short-window layout check that PROVES the log really paints (content
+row + 'Live log' + a written line in the exported SVG) and that the
+mid-job progress row fits below it, and a 120x44 tall-window no-regression
+guard. The stage function is monkeypatched with a stub — no real
+grading/LLM call ever happens.
 
 Run: uv run tests/tata_workspace_check.py
 """
@@ -24,6 +28,7 @@ import os
 import re
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from e2e_common import COURSE, make_course, spy_notify, wait_for  # isort: skip - seeds repo-root sys.path before src imports
@@ -40,8 +45,51 @@ from src.tui import icons, workspace as tw
 from src.tui.app import AliasEditorModal, TataApp
 from src.tui.score_review import ScoreReviewScreen
 from src.tui.workspace import AssignmentScreen
+from textual.containers import Horizontal
 from textual.pilot import Pilot
-from textual.widgets import Button, RichLog, Static
+from textual.widgets import Button, ProgressBar, RichLog, Static
+
+ZERO_GRADE = {
+    "stage": "grading",
+    "success": 0,
+    "errors": 0,
+    "total": 0,
+    "success_rate": 0.0,
+}
+
+
+def _polling_grade(seconds: float) -> tuple[Callable[..., dict], dict]:
+    """Sleeping stage stub that honors cancel_event (v10 batch 2).
+
+    Returns (fn, state); ``state["exited_early"]`` flips when the stub
+    observed the set event before the full sleep (proves cooperative exit,
+    not just an early done marker).
+    """
+    state = {"exited_early": False}
+
+    def stub(
+        config_path: Path,
+        *,
+        force: bool = False,
+        cancel_event: object | None = None,
+    ) -> dict:
+        steps = max(1, int(seconds / 0.05))
+        for _ in range(steps):
+            if cancel_event is not None and cancel_event.is_set():  # type: ignore[attr-defined]
+                state["exited_early"] = True
+                return dict(ZERO_GRADE)
+            time.sleep(0.05)
+        print("[done] 100001")
+        return {
+            "stage": "grading",
+            "success": 1,
+            "errors": 0,
+            "total": 1,
+            "success_rate": 100.0,
+        }
+
+    return stub, state
+
 
 ASSIGNMENT_CFG = (
     "[grading]\n"
@@ -281,7 +329,12 @@ async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
     assert ws._job is None
 
     # slow stub so the check can observe the running JobHandle; no real grading
-    def fake_grade(config_path: Path, *, force: bool = False) -> dict:
+    def fake_grade(
+        config_path: Path,
+        *,
+        force: bool = False,
+        cancel_event: object | None = None,
+    ) -> dict:
         time.sleep(0.4)
         print("[done] 100001")
         return {
@@ -309,30 +362,36 @@ async def _check_grade_modal(app: TataApp, pilot: Pilot) -> None:
 
 
 async def _check_cancel(app: TataApp, pilot: Pilot) -> None:
+    """Cooperative cancel (v10 batch 2): the stub really observes the event
+    and exits early, the job slot releases well before the stub's full
+    sleep, and the cancelled log line lands."""
     ws = app.query_one(AssignmentScreen)
     log = ws.query_one("#richlog", RichLog)
 
-    def slow_grade(config_path: Path, *, force: bool = False) -> dict:
-        time.sleep(2.0)
-        return {
-            "stage": "grading",
-            "success": 1,
-            "errors": 0,
-            "total": 1,
-            "success_rate": 100.0,
-        }
-
-    tw.grade_assignment = slow_grade
+    stub, state = _polling_grade(2.0)
+    tw.grade_assignment = stub
     await pilot.press("g")
     await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
     await wait_for(pilot, lambda: ws._job is not None)
+    t0 = time.monotonic()
     await pilot.press("x")
     await pilot.pause()
-    assert ws._job["state"] == "stopping"  # cancel_event set, UI in Stopping
+    # the worker may already have exited within one poll interval
+    if ws._job is not None:
+        assert ws._job["state"] == "stopping", ws._job  # cancel set, UI stopping
     await wait_for(pilot, lambda: ws._job is None)
+    release = time.monotonic() - t0
+    assert release < 1.0, release  # 2.0 s stub: early exit, not a full sleep
+    assert state["exited_early"], "the stub never observed the cancel event"
     lines = [str(line) for line in log.lines]
-    assert any("Cancel requested" in line for line in lines), lines
+    assert any(
+        "Cancel requested — queued items dropped, in-flight item finishes" in line
+        for line in lines
+    ), lines
+    assert any(
+        "Job cancelled — progress saved (cache based)" in line for line in lines
+    ), lines
 
 
 async def _check_button_click(app: TataApp, pilot: Pilot) -> None:
@@ -340,17 +399,8 @@ async def _check_button_click(app: TataApp, pilot: Pilot) -> None:
     ws = app.query_one(AssignmentScreen)
     log = ws.query_one("#richlog", RichLog)
 
-    def slow_grade(config_path: Path, *, force: bool = False) -> dict:
-        time.sleep(2.0)
-        return {
-            "stage": "grading",
-            "success": 1,
-            "errors": 0,
-            "total": 1,
-            "success_rate": 100.0,
-        }
-
-    tw.grade_assignment = slow_grade
+    stub, state = _polling_grade(2.0)
+    tw.grade_assignment = stub
     await pilot.click("#stage-grade")
     await pilot.pause()
     assert isinstance(ws.app.screen, tw.ConfirmationModal), ws.app.screen
@@ -361,12 +411,51 @@ async def _check_button_click(app: TataApp, pilot: Pilot) -> None:
     await _wait_modal_focused(app, pilot, "normal")
     await pilot.press("enter")
     await wait_for(pilot, lambda: ws._job is not None)
+    t0 = time.monotonic()
     await pilot.click("#ws-cancel")
     await pilot.pause()
-    assert ws._job["state"] == "stopping"
+    if ws._job is not None:
+        assert ws._job["state"] == "stopping", ws._job
     await wait_for(pilot, lambda: ws._job is None)
+    assert time.monotonic() - t0 < 1.0
+    assert state["exited_early"], "the stub never observed the cancel event"
     lines = [str(line) for line in log.lines]
     assert any("Cancel requested" in line for line in lines), lines
+
+
+async def _check_progress_row(app: TataApp, pilot: Pilot) -> None:
+    """v10 batch 2: the progress row renders below the log, its inner Bar
+    stretches past Textual's 32-cell default, the native ETA status exists,
+    and #ws-progress-text carries a ticking elapsed clock (sleeping stub)."""
+    ws = app.query_one(AssignmentScreen)
+    progress = ws.query_one("#ws-progress", Horizontal)
+    log = ws.query_one("#richlog", RichLog)
+    bar = ws.query_one("#ws-progress > ProgressBar", ProgressBar)
+    text = ws.query_one("#ws-progress-text", Static)
+    assert bar.show_eta is True
+
+    stub, state = _polling_grade(3.0)
+    tw.grade_assignment = stub
+    await pilot.press("g")
+    await _wait_modal_focused(app, pilot, "normal")
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: ws._job is not None)
+
+    await wait_for(pilot, lambda: progress.region.y > log.region.y)
+    assert progress.region.y + progress.region.height <= ws.screen.size.height
+    inner = bar.query_one("Bar")
+    await wait_for(pilot, lambda: inner.size.width > 32)
+    assert bar.query_one("ETAStatus") is not None  # native ETA present
+    await wait_for(
+        pilot, lambda: bool(re.search(r" · \d{2}:\d{2}$", str(text.content)))
+    )
+    stamped = str(text.content)
+    # the elapsed clock repaints on the integer-second change (~1 s)
+    await wait_for(pilot, lambda: str(text.content) != stamped, timeout=5)
+
+    await pilot.press("x")
+    await wait_for(pilot, lambda: ws._job is None)
+    assert state["exited_early"]
 
 
 async def _check_editor_warning(app: TataApp, pilot: Pilot) -> None:
@@ -499,6 +588,7 @@ async def check_workspace(app: TataApp, pilot: Pilot) -> None:
     await _check_grade_modal(app, pilot)
     await _check_cancel(app, pilot)
     await _check_button_click(app, pilot)
+    await _check_progress_row(app, pilot)
     await _check_editor_warning(app, pilot)
     await _check_fetch_gate(app, pilot)
     await _check_score_review(app, pilot)
@@ -510,7 +600,8 @@ async def _check_short_window(app: TataApp, pilot: Pilot) -> None:
     """100x30: grid keeps auto height (no squashed buttons), the 1fr log
     paints REAL content (>= 1 content row: region >= 3 = both border rows;
     the old region-only assertion passed a collapsed log), still fits on
-    screen, subtitles survive the squeeze."""
+    screen, subtitles survive the squeeze, and the mid-job progress row
+    (v10 batch 2) sits below the log without clipping."""
     ws = app.query_one(AssignmentScreen)
     buttons = _stage_buttons(app)
     await wait_for(
@@ -539,6 +630,29 @@ async def _check_short_window(app: TataApp, pilot: Pilot) -> None:
     for name, btn in buttons.items():
         subtitle = str(btn.label).split("\n", 1)[1]
         assert subtitle in svg, (name, subtitle)
+
+    # v10 batch 2: mid-job the progress row must sit BELOW the log and the
+    # whole stack must still fit 100x30 (no clipping). The 3-row bar row
+    # (Cancel button height) costs the 1fr log its content row at this
+    # shortest window — the frame stays (both border rows).
+    progress = ws.query_one("#ws-progress", Horizontal)
+    stub, state = _polling_grade(2.0)
+    tw.grade_assignment = stub
+    await pilot.press("g")
+    await _wait_modal_focused(app, pilot, "normal")
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: ws._job is not None)
+    await wait_for(pilot, lambda: progress.display)
+    assert progress.region.y > log.region.y, (progress.region, log.region)
+    assert progress.region.y + progress.region.height <= ws.screen.size.height, (
+        progress.region,
+        ws.screen.size,
+    )
+    assert progress.region.height >= 1, progress.region
+    assert log.region.height >= 2, log.region  # frame intact (see docstring)
+    await pilot.press("x")
+    await wait_for(pilot, lambda: ws._job is None)
+    assert state["exited_early"]
 
 
 async def main() -> None:

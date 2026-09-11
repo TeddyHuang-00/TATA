@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import re
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -605,3 +607,99 @@ class TestBuildClient:
 
             call_kwargs = mock_openai.call_args.kwargs
             assert "temperature" not in call_kwargs
+
+
+def test_grade_cancel_before_submit_returns_immediately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cooperative cancel (v10 batch 2): a pre-set event short-circuits
+    before any submission is queued — zero summary, no LLM call."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+    cancel_event = threading.Event()
+    cancel_event.set()
+
+    result = grade_assignment(config_path, cancel_event=cancel_event)
+
+    assert result == {
+        "stage": "grade",
+        "success": 0,
+        "errors": 0,
+        "total": 0,
+        "success_rate": 0,
+    }
+    assert calls == [], "no LLM call may happen on a pre-set cancel event"
+
+
+def test_grade_cancel_mid_run_cancels_queued_futures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cooperative cancel mid-run: the in-flight call finishes (honest
+    ceiling), the results processed so far are returned, and submissions
+    still queued when the run reacts are cancelled (``cancel_futures``) —
+    with the slow tail tasks the single worker cannot drain the queue
+    before the main loop's shutdown lands.
+
+    The one racy slot is the item a freed worker grabs at the exact
+    completion instant; the assertion only requires that everything beyond
+    that slot never starts.
+    """
+    config_path = _setup_grade_env(tmp_path)
+    a_dir = tmp_path / "data" / "c1" / "a1"
+    for uid in ("100002", "100003", "100004", "100005"):
+        (a_dir / "processed" / f"{uid}.md").write_text("# answer\n", encoding="utf-8")
+    (a_dir / "config.toml").write_text(
+        (a_dir / "config.toml").read_text(encoding="utf-8")
+        + "max_parallel_tasks = 1\n",
+        encoding="utf-8",
+    )
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+
+    cancel_event = threading.Event()
+    started: list[str] = []
+    slow_done: list[str] = []
+
+    def fake_task(submission: Path, **_kwargs: object) -> tuple[str, str, None]:
+        started.append(submission.stem)
+        if submission.stem >= "100003":  # slow tail: held "in flight" 0.5 s
+            time.sleep(0.5)
+            slow_done.append(submission.stem)
+        return submission.name, json.dumps({"C1": {"rating": "correct"}}), None
+
+    monkeypatch.setattr(grading_mod, "_run_single_grading_task", fake_task)
+
+    result_box: list[dict | None] = []
+    worker = threading.Thread(
+        target=lambda: result_box.append(
+            grade_assignment(config_path, cancel_event=cancel_event)
+        )
+    )
+    worker.start()
+    deadline = time.monotonic() + 10
+    # wait until the main loop processed the first two results and the worker
+    # sits inside the third submission, then cancel
+    for uid in ("100001", "100002"):
+        graded = a_dir / "graded" / f"{uid}.json"
+        while not graded.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert graded.exists(), f"the completed {uid} must be written"
+    while "100003" not in started and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert "100003" in started, "the in-flight task never started"
+    cancel_event.set()
+    worker.join(timeout=10)
+    assert not worker.is_alive()
+    assert "100003" in slow_done, "the in-flight call must be allowed to finish"
+    assert started[:3] == ["100001", "100002", "100003"], started
+    assert "100005" not in started, started  # queued behind the in-flight batch
+    assert sorted(p.stem for p in (a_dir / "graded").glob("*.json")) == [
+        "100001",
+        "100002",
+    ]  # post-cancel results are dropped, incl. the finished in-flight one
+    result = result_box[0]
+    assert result is not None
+    assert result["success"] == 2
+    assert result["total"] == 2
+    assert result["errors"] == 0

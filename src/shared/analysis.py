@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import statistics
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -240,7 +241,25 @@ def _build_markdown_report(result: dict[str, Any]) -> str:
     return "\n".join(md_lines)
 
 
-def analyze_assignment(assignment_config_path: Path) -> dict | None:
+def analyze_assignment(
+    assignment_config_path: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict | None:
+    """Analyze graded submissions into meta_analysis.{json,md}.
+
+    One computation pass (no item loop): a set ``cancel_event`` (TUI jobs)
+    short-circuits before the pass with a zero summary.
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        print("[cancelled] analyze stopped before computing")
+        return {
+            "stage": "analyze",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
     cfg = load_assignment_file(assignment_config_path)
     hook_runtime = HookRuntime.from_config(
         cfg,

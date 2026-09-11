@@ -18,8 +18,16 @@ touch widgets.
 their widget ids / message texts and override the hooks below only where
 behavior genuinely differs.  Do NOT change the job dict key set, the
 ``run_worker(thread=True, group='stage', exclusive=True)`` arguments, the
-queue drain semantics, the cancel semantics, or the shared
-``state.active_job`` slot logic.
+queue drain semantics, or the shared ``state.active_job`` slot logic —
+except deliberately: the v10 batch-2 cancel contract (below) is the one
+sanctioned extension.
+
+Cancellation is cooperative (v10 batch 2): the worker passes the job's
+``cancel_event`` to the stage function as the ``cancel_event=`` keyword and
+the stage loops check it at item boundaries (stop launching new items; calls
+already in flight finish — the honest ceiling, synchronous calls cannot be
+killed).  The UI release path is unchanged: the drain timer consumes the
+``('done', …)`` marker and releases ``state.active_job`` unconditionally.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from __future__ import annotations
 import contextlib
 import queue
 import threading
+import time
 from functools import partial
 from pathlib import Path
 from typing import ClassVar
@@ -36,6 +45,17 @@ from textual.containers import Vertical
 from textual.widgets import Button, RichLog, Static
 
 from src.shared.fetch_pipeline import format_job_summary
+
+# ---------- display helpers ----------
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    """Elapsed clock for the busy row: ``mm:ss`` under an hour, else ``h:mm:ss``."""
+    hours, rem = divmod(int(seconds), 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
 
 
 # ---------- log queue writer ----------
@@ -72,8 +92,10 @@ def run_stage_worker(job: dict) -> None:
     """Worker thread body for one stage job (design 99 §3.1).
 
     Reads a JobHandle dict; redirects the stage function's stdout/stderr into
-    the handle's log queue and pushes a ``("done", summary)`` marker at the
-    end. Never touches widgets — the main thread drains the queue.
+    the handle's log queue, passes the job's ``cancel_event`` to the stage
+    function as a keyword argument (stage loops check it at item boundaries),
+    and pushes a ``("done", summary)`` marker at the end. Never touches
+    widgets — the main thread drains the queue.
     """
     writer = _LineQueueWriter(job["queue"])
     with (
@@ -81,7 +103,11 @@ def run_stage_worker(job: dict) -> None:
         contextlib.redirect_stderr(writer),
     ):
         try:
-            summary = job["fn"](job["config_path"], **job["kwargs"])
+            summary = job["fn"](
+                job["config_path"],
+                cancel_event=job["cancel_event"],
+                **job["kwargs"],
+            )
         except BaseException as exc:  # SystemExit from fetch's non-tty exit included
             job["queue"].put(("log", f"[error] {type(exc).__name__}: {exc}"))
             summary = {
@@ -108,6 +134,14 @@ class JobHost(Vertical):
     ``_start_job`` takes the config explicitly, or ``config_path=None`` when
     the screen provides ``_config_path()`` (AssignmentScreen derives it from
     its bound assignment).
+
+    Job contract (v10 batch 2): the worker always passes the job's
+    ``cancel_event`` to the stage function as ``cancel_event=`` — every
+    callable handed to ``_start_job`` must accept
+    ``cancel_event: threading.Event | None = None``. Cancellation is
+    cooperative: the stage loops check the event at item boundaries and stop
+    launching new items, while calls already in flight (up to the grading
+    worker count) run to completion — synchronous calls cannot be killed.
 
     ``_render_busy`` is a REQUIRED override — JobHost calls it
     unconditionally (``_start_job`` and ``_job_done``) but does not define
@@ -166,6 +200,7 @@ class JobHost(Vertical):
             "config_path": config_path,
             "queue": q,
             "cancel_event": cancel_event,
+            "started_at": time.monotonic(),
             "total": total,
             "progress": 0,
             "state": "running",
@@ -211,6 +246,13 @@ class JobHost(Vertical):
                 return
         if ours:
             self.poll_progress(job)
+            # Elapsed clock: repaint lazily on integer-second changes only.
+            # (Hand-built test job dicts may omit started_at -> 00:00.)
+            started_at = job.get("started_at") or time.monotonic()
+            elapsed = int(time.monotonic() - started_at)
+            if elapsed != job.get("elapsed_tick"):
+                job["elapsed_tick"] = elapsed
+                self._render_busy_cancel()
 
     def _job_is_ours(self, job: dict) -> bool:
         """True when the job targets this screen's current scope.
@@ -255,15 +297,17 @@ class JobHost(Vertical):
     # ---------- busy row ----------
 
     def _render_busy_cancel(self) -> None:
-        """Shared cancel-row state: stop-mode button + progress text."""
+        """Shared cancel-row state: stop-mode button + progress text + elapsed."""
         job = self._job
         if job is None:
             return
         cancel = self.query_one(self.cancel_button_id, Button)
         cancel.disabled = job["state"] == "stopping"
         cancel.label = "Stop…" if job["state"] == "stopping" else "Cancel"
+        started_at = job.get("started_at") or time.monotonic()
+        elapsed = _fmt_elapsed(time.monotonic() - started_at)
         self.query_one(self.progress_text_id, Static).update(
-            escape(job.get("text", "running…"))
+            escape(f"{job.get('text', 'running…')} · {elapsed}")
         )
 
     # ---------- log ----------

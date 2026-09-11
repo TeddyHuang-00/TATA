@@ -132,8 +132,9 @@ Click a tab to switch (or press Tab / Shift+Tab). Follow these six steps:
 
 5. **Run the pipeline.** Select the assignment to open its work area, then
    press `p` (preprocess), `g` (grade), and `s` (score), one after another.
-   Watch the log at the bottom for progress. Press `x` to cancel a running
-   job and `e` to edit the config.
+   Watch the log at the bottom for progress. Press `x` to stop a running
+   job (queued items are dropped, the in-flight item finishes) and `e` to
+   edit the config.
 
 6. **Review the scores.** Go back to the course row in the Dashboard and
    press `s` to open the score review for the assignment.

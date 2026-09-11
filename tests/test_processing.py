@@ -5,12 +5,14 @@ import io
 import json
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 import anydoc
 import nbformat
 import pytest
 from PIL import Image
+from src.shared import pipeline as pipeline_mod
 from src.shared.caching import CACHE_FMT, cache_file, load_cache_file, save_cache_file
 from src.shared.grading import _read_reference_text
 from src.shared.processing import (
@@ -957,3 +959,43 @@ def test_render_screenshots_ipynb_passes_template_config(
     captured.clear()
     _render_screenshots(nb, "nb", tmp_path / "processed", "ipynb")
     assert captured == {}
+
+
+def test_preprocess_stops_at_item_boundary_when_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cooperative cancel (v10 batch 2): a set cancel_event stops the loop
+    before the next item; the finished item stays converted and cached."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100001.txt").write_text("<p>a</p>", encoding="utf-8")
+    (raw / "100002.txt").write_text("<p>b</p>", encoding="utf-8")
+    (tmp_path / "config.toml").write_text(
+        '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\n'
+        'provider = "deepseek"\n',
+        encoding="utf-8",
+    )
+    cancel_event = threading.Event()
+    converted: list[str] = []
+    real = pipeline_mod._process_single_file
+
+    def stop_after_first(*args: object, **kwargs: object) -> object:
+        converted.append(str(args[0]))
+        result = real(*args, **kwargs)  # type: ignore[arg-type]
+        cancel_event.set()  # cancel while the first item is the current one
+        return result
+
+    monkeypatch.setattr(pipeline_mod, "_process_single_file", stop_after_first)
+
+    result = preprocess_assignment(tmp_path / "config.toml", cancel_event=cancel_event)
+
+    assert len(converted) == 1, converted
+    assert len(list((tmp_path / "processed").glob("*.md"))) == 1
+    assert result is not None
+    assert result["total"] == 1
+    # finished items are cached: the second run only converts the remainder
+    monkeypatch.setattr(pipeline_mod, "_process_single_file", real)
+    result2 = preprocess_assignment(tmp_path / "config.toml")
+    assert result2 is not None
+    assert result2["total"] == 1
+    assert len(list((tmp_path / "processed").glob("*.md"))) == 2

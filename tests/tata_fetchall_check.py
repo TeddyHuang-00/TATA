@@ -52,7 +52,7 @@ def _build(assignments_dir: Path, *, entries: bool, aliases: bool = False) -> No
 def _make_recorder(
     calls: list, sleep_seconds: float, fail_on: int | None = None
 ) -> Callable:
-    def recorder(options: FetchCliOptions) -> None:
+    def recorder(options: FetchCliOptions, **_kwargs: object) -> None:
         calls.append(options)
         time.sleep(sleep_seconds)
         if fail_on is not None and options.assignment == fail_on:
