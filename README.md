@@ -95,13 +95,16 @@ From the project folder, start the workbench:
 uv run tui
 ```
 
-The window has three tabs at the top: Dashboard, Library, and Settings.
-Click a tab to switch (or press Tab / Shift+Tab). Press `ctrl+p` anywhere to
-open the command palette and fuzzy-search the current view's actions (for
-example `gra` to run Grade). Follow these six steps:
+The window has two tabs at the top: Dashboard and Library. Click a tab to
+switch (or press Tab / Shift+Tab). Settings opens as a fullscreen view from
+the Dashboard: press `,` or click the `⚙ Settings` button in the top action
+row (it works at every dashboard level, and closes with `escape`). Press
+`ctrl+p` anywhere to open the command palette and fuzzy-search the current
+view's actions (for example `gra` to run Grade). Follow these six steps:
 
-1. **Project keys.** Go to the Settings tab, then the Canvas sub-tab. Fill
-   in your Canvas URL and your token, click **Save .env** (a plain text file
+1. **Project keys.** Open Settings with `,` (or the `⚙ Settings` button),
+   then the Canvas sub-tab. Fill in your Canvas URL and your token, click
+   **Save .env** (a plain text file
    at the project root that stores your keys; Configuration below explains
    it), then click **Test Canvas connection**. TATA reports whether the
    connection works.

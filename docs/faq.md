@@ -97,10 +97,10 @@ max_parallel_tasks = 10
 Use this order:
 
 1. preprocess
-1. plagiarism (optional but recommended)
-1. grade
-1. score
-1. analyze (optional)
+2. plagiarism (optional but recommended)
+3. grade
+4. score
+5. analyze (optional)
 
 Or run all at once:
 
@@ -200,9 +200,9 @@ Common non-cheating causes include:
 Recommended workflow:
 
 1. Treat plagiarism results as triage candidates.
-1. Compare highlighted regions for substantive logic overlap, not just scaffolding.
-1. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
-1. Escalate only when evidence is consistent with policy.
+2. Compare highlighted regions for substantive logic overlap, not just scaffolding.
+3. Check assignment context (difficulty, template rigidity, expected idioms) before conclusions.
+4. Escalate only when evidence is consistent with policy.
 
 ## 16. Can I combine plagiarism results across all assignments into one report?
 

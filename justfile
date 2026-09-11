@@ -5,13 +5,13 @@
 fix:
     ruff format .
     ruff check --fix .
-    uvx -w mdformat-gfm mdformat --number README.md docs/**/*.md
+    uvx -w mdformat-gfm mdformat --number README.md docs/*.md docs/config/*.md
 
 [doc("Check code formatting and linting")]
 check:
     ruff format --check .
     ruff check .
-    uvx -w mdformat-gfm mdformat --check --number README.md docs/**/*.md
+    uvx -w mdformat-gfm mdformat --check --number README.md docs/*.md docs/config/*.md
 
 [doc("Run cross-assignment plagiarism analysis")]
 plagiarism:
