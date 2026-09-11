@@ -1007,10 +1007,13 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
 
         Same pattern as ``SettingsScreen.check_action``. The 1-4 state filter,
         fetch-all (F), the plagiarism view (p) and score review (s) only
-        apply to the course level (their guards live there), and import (c)
-        has no assignment-level branch — the footer must not advertise dead
-        keys (``False`` = disabled + hidden from footer/help).
+        apply to the course level (their guards live there), import (c)
+        has no assignment-level branch, and ``go_up`` (esc/backspace) has no
+        level to walk up to from the global level — the footer must not
+        advertise dead keys (``False`` = disabled + hidden from footer/help).
         """
+        if action == "go_up":
+            return self.state.dashboard_level != "global"
         if action.startswith("filter_"):
             return self.state.dashboard_level == "course"
         if action in {"fetch_all", "open_plagiarism", "score_review"}:

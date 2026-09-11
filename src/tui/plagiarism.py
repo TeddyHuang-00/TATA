@@ -235,10 +235,17 @@ def _run_detect_job(
 def run_aggregate_job(
     config_path: Path, *, cancel_event: threading.Event | None = None
 ) -> dict | None:
-    """Course aggregate: detect_plagiarism (quiet) + JSON for the pane."""
+    """Course aggregate: detect_plagiarism (quiet) + JSON for the pane.
+
+    A cancelled run leaves the existing aggregate.json untouched — a
+    truncated ranking must not overwrite the pane's last complete file.
+    """
     summary = detect_plagiarism(
         config_path, aggregate=True, quiet=True, cancel_event=cancel_event
     )
+    if cancel_event is not None and cancel_event.is_set():
+        print("[cancelled] aggregate json not updated (run cancelled)")
+        return summary
     try:
         _write_aggregate_json(config_path)
     except Exception as exc:

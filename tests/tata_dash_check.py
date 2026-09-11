@@ -530,7 +530,7 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     filter also shows as a persistent dim breadcrumb suffix (F6), absent
     for All. v10 item 6: the footer only advertises keys that work at the
     current level (1-4 / F / p / s are course-only; `c` has no assignment
-    branch)."""
+    branch; esc/backspace (go_up) has no global-level target — v10 round 2)."""
     app.switch_tab("tab-dashboard")
     await pilot.pause()
     # enter course again
@@ -561,19 +561,23 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     assert app.query_one(DashboardScreen)._filter is None
     assert "filter:" not in text(breadcrumb), text(breadcrumb)
 
-    # course-level footer: the 4 filter keys (+ F/p/s) are advertised
+    # course-level footer: the 4 filter keys (+ F/p/s, esc/backspace) advertised
     assert sum("Filter" in key for key in _footer_keys(app)) == 4, _footer_keys(app)
-    assert {"Fetch all", "Plagiarism", "Score review"} <= set(_footer_keys(app))
-    # global level: the course-only keys are not advertised, `c` stays
+    assert {"Fetch all", "Plagiarism", "Score review", "Up one level"} <= set(
+        _footer_keys(app)
+    )
+    # global level: the course-only keys are not advertised, `c` stays, and
+    # `go_up` (esc/backspace) has nothing to walk up to (v10 round 2)
     await pilot.press("escape")
     await wait_for(pilot, lambda: app.state.dashboard_level == "global")
     await wait_for(pilot, lambda: not any("Filter" in key for key in _footer_keys(app)))
     keys = _footer_keys(app)
-    assert "Fetch all" not in keys, keys
-    assert "Plagiarism" not in keys, keys
-    assert "Score review" not in keys, keys
+    assert {"Fetch all", "Plagiarism", "Score review", "Up one level"}.isdisjoint(
+        keys
+    ), keys
     assert "Import" in keys, keys
-    # assignment level: filter keys and `c` (no assignment branch) are gone
+    # assignment level: filter keys and `c` (no assignment branch) are gone,
+    # esc/backspace (up to course) stays
     table.focus()
     await pilot.press("enter")
     await wait_for(pilot, lambda: app.state.dashboard_level == "course")
@@ -583,7 +587,9 @@ async def _check_filter(pilot: Pilot, app: TataApp) -> None:
     await pilot.press("enter")
     await wait_for(pilot, lambda: app.state.dashboard_level == "assignment")
     await wait_for(pilot, lambda: not any("Filter" in key for key in _footer_keys(app)))
-    assert "Import" not in _footer_keys(app), _footer_keys(app)
+    keys = _footer_keys(app)
+    assert "Import" not in keys, keys
+    assert "Up one level" in keys, keys
     # back to course for the checks that follow
     await pilot.press("escape")
     await wait_for(pilot, lambda: app.state.dashboard_level == "course")

@@ -19,8 +19,9 @@ their widget ids / message texts and override the hooks below only where
 behavior genuinely differs.  Do NOT change the job dict key set, the
 ``run_worker(thread=True, group='stage', exclusive=True)`` arguments, the
 queue drain semantics, or the shared ``state.active_job`` slot logic —
-except deliberately: the v10 batch-2 cancel contract (below) is the one
-sanctioned extension.
+except deliberately: the v10 batch-2 cancel contract (below) and its
+elapsed-clock keys (``started_at`` / ``elapsed_tick``, the busy-row
+stopwatch; added in the same batch) are the sanctioned extensions.
 
 Cancellation is cooperative (v10 batch 2): the worker passes the job's
 ``cancel_event`` to the stage function as the ``cancel_event=`` keyword and
@@ -246,13 +247,16 @@ class JobHost(Vertical):
                 return
         if ours:
             self.poll_progress(job)
-            # Elapsed clock: repaint lazily on integer-second changes only.
-            # (Hand-built test job dicts may omit started_at -> 00:00.)
-            started_at = job.get("started_at") or time.monotonic()
-            elapsed = int(time.monotonic() - started_at)
-            if elapsed != job.get("elapsed_tick"):
-                job["elapsed_tick"] = elapsed
-                self._render_busy_cancel()
+        # Elapsed clock: repaint lazily on integer-second changes only.  Runs
+        # even when the job belongs to another assignment: the busy row stays
+        # visible there (only the counters above are ours-gated), so the
+        # stopwatch must keep ticking.  (Hand-built test job dicts may omit
+        # started_at -> 00:00.)
+        started_at = job.get("started_at") or time.monotonic()
+        elapsed = int(time.monotonic() - started_at)
+        if elapsed != job.get("elapsed_tick"):
+            job["elapsed_tick"] = elapsed
+            self._render_busy_cancel()
 
     def _job_is_ours(self, job: dict) -> bool:
         """True when the job targets this screen's current scope.
