@@ -29,7 +29,7 @@ from src.shared.assignment_config import (
 )
 from src.shared.grading import pending_grade_submissions
 from src.shared.plagiarism_display import base_uid, pair_pct
-from src.shared.processing import pending_preprocess_items
+from src.shared.processing import _iter_raw_items, pending_preprocess_items
 
 # ponytail: display threshold for a "flagged" pair (aligns with design 04
 # `display_threshold = 0.8`); NOT the aggregate z-score alpha — z-level flags
@@ -96,28 +96,51 @@ def count_files(dir_: Path, suffix: str | None = None) -> int:
 
 
 def count_raw_items(dir_: Path) -> int:
-    """Distinct student uids among top-level raw entries, skipping dot-entries.
+    """Distinct student uids among ``dir_``'s top-level raw entries.
 
-    Mirrors :func:`src.shared.processing._iter_raw_items`: a top-level flat
-    file whose base uid names a top-level dir is a stale leftover of a
-    folderized student (mixed legacy layout) and is skipped; a folder counts
-    once for its uid. Suffixed flat duplicates of the same student
-    (``<uid>.html`` + ``<uid>_1.ipynb``) dedupe to one.
+    Thins :func:`src.shared.processing._iter_raw_items` (the runtime rule the
+    preprocess loop applies) down to distinct uids — the count can never
+    drift from what a run would process: a top-level flat file whose base
+    uid names a top-level dir is a stale leftover of a folderized student
+    (mixed legacy layout) and is skipped; a folder counts once for its uid.
+    Suffixed flat duplicates of the same student (``<uid>.html`` +
+    ``<uid>_1.ipynb``) dedupe to one.
     """
     if not dir_.is_dir():
         return 0
-    entries = [
-        p
-        for p in dir_.iterdir()
-        if not p.name.startswith(".") and (p.is_file() or p.is_dir())
-    ]
-    dirs = {p.name for p in entries if p.is_dir()}
-    uids: set[str] = set()
-    for p in entries:
-        if p.is_file() and base_uid(p.stem) in dirs:
-            continue  # stale flat leftover of a folderized student
-        uids.add(p.name if p.is_dir() else base_uid(p.stem))
-    return len(uids)
+    return len({
+        p.name if p.is_dir() else base_uid(p.stem) for p in _iter_raw_items(dir_)
+    })
+
+
+def count_processed_students(config_path: Path) -> int:
+    """Distinct students among an assignment's ``processed/*.md``.
+
+    The one rule behind ``scan_assignments``' processed count and the
+    preprocess progress bar: reference markdown is not a student, and
+    ``_LATE``/``_N`` duplicates of one student count once. A dirty config
+    (OSError/ValueError) excludes nothing (dirty-data tolerance).
+    """
+    try:
+        loaded = load_assignment_file(config_path)
+    except (OSError, ValueError):
+        loaded = None
+    processed_dir = (
+        loaded.assignment.resolve_processed_dir(config_path.parent)
+        if loaded is not None
+        else config_path.parent / "processed"
+    )
+    reference = (
+        loaded.assignment.resolve_reference_file(config_path.parent)
+        if loaded is not None
+        else None
+    )
+    exclude = (
+        frozenset({reference.stem})
+        if reference is not None and reference.stem
+        else frozenset()
+    )
+    return count_students(processed_dir, ".md", exclude)
 
 
 def count_students(
@@ -223,7 +246,7 @@ def _flagged_pairs(
     return sum(1 for pair in data.get("pairs", []) if pair_pct(pair) >= threshold_pct)
 
 
-def scan_assignments(  # ruff: ignore[too-many-branches]
+def scan_assignments(
     course_dir: Path, threshold_pct: float = DISPLAY_THRESHOLD_PCT
 ) -> list[AssignmentInfo]:
     """Scan the leaf assignment dirs of ``course_dir`` (each holds config.toml).
@@ -240,19 +263,14 @@ def scan_assignments(  # ruff: ignore[too-many-branches]
         cfg_path = entry / "config.toml"
         if not entry.is_dir() or not cfg_path.is_file():
             continue
-        # Reference markdown in processed/ is not a student; exclude its stem
-        # from the processed count (dirty configs -> no exclusion).
-        reference_stem: str | None = None
         try:
             loaded = load_assignment_file(cfg_path)
         except (OSError, ValueError):
             loaded = None
-        if loaded is not None and loaded.assignment.reference_file:
-            reference_stem = Path(loaded.assignment.reference_file).stem
-        exclude = frozenset({reference_stem}) if reference_stem else frozenset()
         counts = Counts(
             raw=count_raw_items(entry / "raw"),
-            processed=count_students(entry / "processed", ".md", exclude),
+            # Same student-count rule the preprocess progress bar uses.
+            processed=count_processed_students(cfg_path),
             graded=count_students(entry / "graded", ".json"),
             scored=count_recursive(entry / "scored"),
         )

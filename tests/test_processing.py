@@ -21,6 +21,7 @@ from src.shared.processing import (
     _render_screenshots,
     convert_ipynb_to_markdown,
     convert_pdf_to_markdown,
+    convert_pptx_to_markdown,
     preprocess_assignment,
 )
 
@@ -415,6 +416,69 @@ def _write_docx(path: Path, text: str) -> None:
         z.writestr("word/document.xml", doc)
 
 
+def _write_pptx(path: Path, text: str) -> None:
+    """Minimal pptx (zip with one slide); anydoc parses it in-process."""
+    import zipfile
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.'
+        'openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/ppt/presentation.xml" ContentType="application/'
+        "vnd.openxmlformats-officedocument.presentationml.presentation.main+"
+        'xml"/>'
+        '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/'
+        'vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/officeDocument" Target="ppt/'
+        'presentation.xml"/></Relationships>'
+    )
+    presentation = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/'
+        '2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/'
+        '2006/relationships" xmlns:p="http://schemas.openxmlformats.org/'
+        'presentationml/2006/main">'
+        '<p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>'
+        '<p:sldSz cx="9144000" cy="6858000"/></p:presentation>'
+    )
+    presentation_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>'
+        "</Relationships>"
+    )
+    slide = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+        'relationships" xmlns:p="http://schemas.openxmlformats.org/'
+        'presentationml/2006/main"><p:cSld><p:spTree>'
+        '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/>'
+        "</p:nvGrpSpPr><p:grpSpPr/>"
+        '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr/>'
+        "</p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>"
+        f'<a:p><a:r><a:rPr lang="en-US"/><a:t>{text}</a:t></a:r></a:p>'
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("ppt/presentation.xml", presentation)
+        z.writestr("ppt/_rels/presentation.xml.rels", presentation_rels)
+        z.writestr("ppt/slides/slide1.xml", slide)
+
+
 def _write_pdf(path: Path, text: str) -> None:
     """Minimal text PDF (one Helvetica line, computed xref); anydoc parses it in-process."""
     stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
@@ -489,6 +553,39 @@ def test_format_for_suffix_infers_pdf() -> None:
     assert "pdf" in SUPPORTED_INPUT_FORMATS
 
 
+def test_format_for_suffix_infers_pptx() -> None:
+    assert _format_for_suffix(".pptx") == "pptx"
+    assert _format_for_suffix(".PPTX") == "pptx"
+    assert "pptx" in SUPPORTED_INPUT_FORMATS
+
+
+def test_pptx_converts_to_markdown(tmp_path: Path) -> None:
+    pptx_path = tmp_path / "s.pptx"
+    out_path = tmp_path / "s.md"
+    _write_pptx(pptx_path, "tata pptx test 100042")
+
+    convert_pptx_to_markdown(pptx_path, out_path)
+
+    assert out_path.exists()
+    assert "tata pptx test 100042" in out_path.read_text(encoding="utf-8")
+
+
+def test_single_pptx_preprocess_raw_to_md(tmp_path: Path) -> None:
+    """Item 1: a student submitting .pptx is converted (was silently dropped)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_pptx(raw / "100042.pptx", "tata pptx test 100042")
+    _write_grading_config(tmp_path)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    md = tmp_path / "processed" / "100042.md"
+    assert md.exists()
+    assert "tata pptx test 100042" in md.read_text(encoding="utf-8")
+    assert result is not None
+    assert result["success"] == 1
+
+
 def test_folder_skip_messages_for_unsupported_files(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -508,6 +605,26 @@ def test_folder_skip_messages_for_unsupported_files(
     assert "[skip] 100.py (unsupported format)" in out
     assert "[skip] folder 200 (no supported files)" in out
     assert (tmp_path / "processed" / "100.md").exists()
+    assert result is not None
+    assert result["success"] == 1
+
+
+def test_top_level_unsupported_file_prints_skip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Item 1: a top-level submission in an unsupported format prints a
+    [skip] line instead of vanishing silently from the counts."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100001.html").write_text("<h1>ok</h1>", encoding="utf-8")
+    (raw / "100002.py").write_text("print(1)", encoding="utf-8")
+    _write_grading_config(tmp_path)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[skip] 100002.py (unsupported format)" in out
+    assert (tmp_path / "processed" / "100001.md").exists()
     assert result is not None
     assert result["success"] == 1
 

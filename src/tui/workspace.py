@@ -58,7 +58,7 @@ from src.shared.processing import pending_preprocess_items, preprocess_assignmen
 from src.shared.scoring import score_assignment
 from src.tui import icons
 from src.tui.jobs import JobHost
-from src.tui.scan import AssignmentInfo, count_files, count_recursive
+from src.tui.scan import AssignmentInfo, count_processed_students, count_recursive
 from src.tui.score_review import open_score_review
 
 if TYPE_CHECKING:
@@ -730,7 +730,9 @@ class AssignmentScreen(JobHost):
             return 0
         a_dir = info.config_path.parent
         if stage == "preprocess":
-            return count_files(a_dir / "processed", ".md")
+            # Student count, not file count (a `_LATE` duplicate md of one
+            # student must not overrun the bar); same rule the scan uses.
+            return count_processed_students(info.config_path)
         if stage == "grade":
             # Count under the grading hash-cache rule (cache is updated per
             # submission during a run, so the bar moves); the same shared

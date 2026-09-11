@@ -49,7 +49,7 @@ Fix:
 
 1. Place files in `raw/`
 2. Use supported extensions: `.ipynb`, `.html`, `.txt` (treated as HTML —
-   Canvas text-entry bodies), `.md`, `.docx`, `.pdf`, `.jpg/.jpeg/.png` (images)
+   Canvas text-entry bodies), `.md`, `.docx`, `.pptx`, `.pdf`, `.jpg/.jpeg/.png` (images)
 3. If needed, set `[processing].input_format`
 
 ## 4. No files found for input_format

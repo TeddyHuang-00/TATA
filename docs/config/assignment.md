@@ -95,7 +95,7 @@ reference_file = "reference.md"
 # the assignment id comes from the numeric dir name.
 
 [processing]
-# Optional: one value or a list from: ipynb, html, markdown, docx, pdf, image
+# Optional: one value or a list from: ipynb, html, markdown, docx, pptx, pdf, image
 # ("image" = scanned/photo docs, OCR'd via Firecrawl and rasterized to PDF)
 # input_format = ["ipynb", "html", "markdown"]
 remove_base64_images = true
@@ -178,7 +178,7 @@ Purpose in workflow:
 
 Important fields:
 
-- `input_format`: one of `ipynb|html|markdown` or a list; if omitted, preprocessing auto-detects.
+- `input_format`: one of `ipynb|html|markdown|docx|pptx|pdf|image` or a list; if omitted, preprocessing auto-detects.
 - Remaining flags: boolean toggles that enable/disable specific cleanups.
 - `nbconvert_template` and `nbconvert_template_dir`: optional strings for nbconvert behavior.
 

@@ -24,6 +24,7 @@ from src.shared.processing import (
     convert_docx_to_markdown,
     convert_html_to_markdown,
     convert_ipynb_to_markdown,
+    convert_pptx_to_markdown,
 )
 
 if TYPE_CHECKING:
@@ -151,6 +152,8 @@ def convert_preview(raw: Path) -> tuple[str, str]:
         kind, converter = "markdown", convert_ipynb_to_markdown
     elif suffix == ".docx":
         kind, converter = "text", convert_docx_to_markdown
+    elif suffix == ".pptx":
+        kind, converter = "text", convert_pptx_to_markdown
     elif suffix == ".html":
         kind, converter = "text", convert_html_to_markdown
     else:

@@ -203,6 +203,73 @@ def test_counts_exclude_reference_and_dedupe_graded(tmp_path: Path) -> None:
     assert infos[0].counts.graded == 1  # 100001 and 100001_LATE_0 same uid
 
 
+def test_processed_count_is_student_count_not_file_count(tmp_path: Path) -> None:
+    """Item 1: a `_LATE` duplicate md of one student counts once, and the
+    reference md is not a student — the scan and the progress bar share the
+    same rule (count_processed_students)."""
+    from src.tui.scan import count_files, count_processed_students, scan_assignments
+
+    course = tmp_path / "data" / "111111"
+    a1 = course / "222222"
+    a1.mkdir(parents=True)
+    (course / "config.toml").write_text("", encoding="utf-8")
+    (a1 / "config.toml").write_text(
+        '[grading]\nrubric = "r.toml"\nsystem_prompt = ["p.md"]\nprovider = "test"\n'
+        '[assignment]\nreference_file = "reference.md"\n',
+        encoding="utf-8",
+    )
+    processed = a1 / "processed"
+    processed.mkdir()
+    for name in ("100001.md", "100001_LATE_0.md", "100002.md", "reference.md"):
+        (processed / name).write_text("# s", encoding="utf-8")
+
+    assert count_files(processed, ".md") == 4  # file count
+    assert count_processed_students(a1 / "config.toml") == 2  # student count
+    infos = scan_assignments(course)
+    assert infos[0].counts.processed == 2  # the scan rides the same rule
+
+
+def test_raw_count_matches_runtime_enumeration(tmp_path: Path) -> None:
+    """Item 1: count_raw_items is the runtime rule (_iter_raw_items) thinned to
+    distinct uids — stale flat leftovers and _LATE duplicates don't count."""
+    from src.shared.processing import _iter_raw_items
+    from src.tui.scan import count_raw_items
+
+    raw = tmp_path / "raw"
+    (raw / "100002").mkdir(parents=True)
+    (raw / "100002" / "100002.html").write_text("<p>a</p>", encoding="utf-8")
+    (raw / "100002" / "100002_0.ipynb").write_text("{}", encoding="utf-8")
+    (raw / "100002.docx").write_bytes(b"stale flat leftover")
+    (raw / "100001.html").write_text("<p>a</p>", encoding="utf-8")
+    (raw / "100001_LATE_0.html").write_text("<p>late</p>", encoding="utf-8")
+    (raw / ".DS_Store").write_bytes(b"junk")
+
+    assert [p.name for p in _iter_raw_items(raw)] == [
+        "100001.html",
+        "100001_LATE_0.html",
+        "100002",
+    ]
+    assert count_raw_items(raw) == 2  # 100001 (twice = one student) + 100002
+
+
+def test_preprocess_progress_bar_counts_students_not_files(tmp_path: Path) -> None:
+    """Item 1: the preprocess bar polls the student count, so a `_LATE`
+    duplicate md cannot push it past the raw total."""
+    from src.tui.scan import AssignmentInfo
+    from src.tui.workspace import AssignmentScreen
+
+    a1 = tmp_path / "a1"
+    processed = a1 / "processed"
+    processed.mkdir(parents=True)
+    (a1 / "config.toml").write_text("", encoding="utf-8")
+    for name in ("100001.md", "100001_LATE_0.md", "100002.md"):
+        (processed / name).write_text("# s", encoding="utf-8")
+
+    ws = AssignmentScreen.__new__(AssignmentScreen)
+    ws._info = AssignmentInfo(dir_name="a1", config_path=a1 / "config.toml")
+    assert ws._stage_done("preprocess") == 2  # two students, three files
+
+
 def test_env_status_continues_up_after_incomplete_env(tmp_path: Path) -> None:
     """MINOR-7: a .env missing either key must not short-circuit the walk."""
     from src.shared.canvas_fetch import read_env_state

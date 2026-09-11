@@ -1,4 +1,4 @@
-"""Format conversion helpers for the preprocess stage: ipynb/html/md/docx/pdf
+"""Format conversion helpers for the preprocess stage: ipynb/html/md/docx/pptx/pdf
 -> markdown (in-process, nbconvert/markitdown/anydoc).
 """
 
@@ -21,6 +21,7 @@ SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = (
     "html",
     "markdown",
     "docx",
+    "pptx",
     "pdf",
     "image",
 )
@@ -31,6 +32,7 @@ _SUFFIX_FORMATS: dict[str, InputFormat] = {
     ".txt": "html",  # Canvas text-entry bodies arrive as .txt but contain HTML
     ".md": "markdown",
     ".docx": "docx",
+    ".pptx": "pptx",
     ".pdf": "pdf",
     ".jpg": "image",
     ".jpeg": "image",
@@ -270,6 +272,22 @@ def convert_docx_to_markdown(input_path: Path, output_path: Path) -> None:
         except Exception as exc:
             msg = (
                 f"Failed to convert docx {input_path}: anydoc failed ({anydoc_exc}); "
+                f"markitdown failed ({exc})"
+            )
+            raise RuntimeError(msg) from exc
+    output_path.write_text(content, encoding="utf-8")
+
+
+def convert_pptx_to_markdown(input_path: Path, output_path: Path) -> None:
+    """Convert pptx to markdown with firecrawl-anydoc, falling back to markitdown (both in-process)."""
+    try:
+        content = anydoc.to_markdown(input_path)
+    except Exception as anydoc_exc:
+        try:
+            content = MarkItDown().convert(str(input_path)).text_content
+        except Exception as exc:
+            msg = (
+                f"Failed to convert pptx {input_path}: anydoc failed ({anydoc_exc}); "
                 f"markitdown failed ({exc})"
             )
             raise RuntimeError(msg) from exc

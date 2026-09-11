@@ -54,6 +54,69 @@ def _write_notebook(path: Path) -> None:
     path.write_text(json.dumps(nb), encoding="utf-8")
 
 
+def _write_pptx(path: Path, text: str) -> None:
+    """Minimal pptx (zip with one slide); anydoc parses it in-process."""
+    import zipfile
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.'
+        'openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/ppt/presentation.xml" ContentType="application/'
+        "vnd.openxmlformats-officedocument.presentationml.presentation.main+"
+        'xml"/>'
+        '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/'
+        'vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>'
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/officeDocument" Target="ppt/'
+        'presentation.xml"/></Relationships>'
+    )
+    presentation = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/'
+        '2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/'
+        '2006/relationships" xmlns:p="http://schemas.openxmlformats.org/'
+        'presentationml/2006/main">'
+        '<p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>'
+        '<p:sldSz cx="9144000" cy="6858000"/></p:presentation>'
+    )
+    presentation_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>'
+        "</Relationships>"
+    )
+    slide = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+        'relationships" xmlns:p="http://schemas.openxmlformats.org/'
+        'presentationml/2006/main"><p:cSld><p:spTree>'
+        '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/>'
+        "</p:nvGrpSpPr><p:grpSpPr/>"
+        '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr/>'
+        "</p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>"
+        f'<a:p><a:r><a:rPr lang="en-US"/><a:t>{text}</a:t></a:r></a:p>'
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("ppt/presentation.xml", presentation)
+        z.writestr("ppt/_rels/presentation.xml.rels", presentation_rels)
+        z.writestr("ppt/slides/slide1.xml", slide)
+
+
 async def main() -> None:  # ruff: ignore[too-many-statements]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -96,13 +159,18 @@ async def main() -> None:  # ruff: ignore[too-many-statements]
         assert preview_content(raw / "100001.ipynb", None) is not None
         assert preview_content(None, None) is None
 
-        # conversion dispatch (raw fallback): ipynb -> markdown; md -> text
+        # conversion dispatch (raw fallback): ipynb -> markdown; md/pptx -> text
         kind, content = convert_preview(raw / "100001.ipynb")
         assert kind == "markdown", (kind, content[:80])
         assert "Preview Check" in content, (kind, content[:80])
         kind, content = convert_preview(raw / "100002.md")
         assert kind == "text", kind
         assert content.startswith("# doc text"), kind
+        # pptx fallback dispatch (wrap-up): converted text, not Unsupported
+        _write_pptx(raw / "100003.pptx", "tata pptx preview 100003")
+        kind, content = convert_preview(raw / "100003.pptx")
+        assert kind == "text", (kind, content[:80])
+        assert "tata pptx preview 100003" in content, (kind, content[:80])
         kind, content = convert_preview(raw / "unsupported.xyz")
         assert kind == "text", kind
         assert "Unsupported" in content, kind

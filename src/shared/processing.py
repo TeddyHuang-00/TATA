@@ -23,6 +23,7 @@ from .convert import (
     convert_html_to_markdown,
     convert_ipynb_to_markdown,
     convert_pdf_to_markdown,
+    convert_pptx_to_markdown,
 )
 from .pipeline import (
     ProcessingCliOptions,
@@ -91,6 +92,7 @@ __all__ = [
     "convert_html_to_markdown",
     "convert_ipynb_to_markdown",
     "convert_pdf_to_markdown",
+    "convert_pptx_to_markdown",
     "main",
     "pending_preprocess_items",
     "preprocess_assignment",

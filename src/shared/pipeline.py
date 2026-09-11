@@ -46,6 +46,7 @@ from .convert import (
     convert_html_to_markdown,
     convert_ipynb_to_markdown,
     convert_pdf_to_markdown,
+    convert_pptx_to_markdown,
 )
 from .hooks_runtime import HookRuntime
 from .screenshots import (
@@ -163,6 +164,8 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
         _convert_markdown(input_file, output_file)
     elif input_format == "docx":
         convert_docx_to_markdown(input_file, output_file)
+    elif input_format == "pptx":
+        convert_pptx_to_markdown(input_file, output_file)
     elif input_format == "pdf":
         convert_pdf_to_markdown(input_file, output_file)
     elif input_format == "image":
@@ -566,7 +569,7 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
             print(
                 "No supported files found in raw directory: "
                 f"{raw_dir}\n"
-                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx, .pdf, .jpg, .jpeg, .png), "
+                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx, .pptx, .pdf, .jpg, .jpeg, .png), "
                 "then run preprocess again."
             )
         else:
@@ -668,6 +671,8 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
         if not files:
             if item.is_dir():
                 print(f"[skip] folder {item.name} (no supported files)")
+            else:
+                print(f"[skip] {item.name} (unsupported format)")
             continue
         if item.is_file():
             raw_file, file_format = files[0]
