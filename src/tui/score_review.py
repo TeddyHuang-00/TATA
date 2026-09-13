@@ -102,6 +102,19 @@ RATING_CLASS = {
     "somewhat correct": "rating-correct",
     "completely correct": "rating-correct",
 }
+# Background color per criterion name (feedback: the rating must be readable at
+# a glance from the name alone). Rich markup resolves inline styles only —
+# a CSS *class* like [rating-correct] parses but renders nothing — so the color
+# has to be inlined as a CSS variable. Values come from this fixed map, never
+# from the rating string itself (that would inject markup). The inline "auto"
+# foreground keeps the contrast (default text on $success/$warning is ~1.5:1).
+RATING_BG = {
+    "rating-correct": "$success",
+    "rating-partial": "$warning",
+    "rating-incorrect": "$error",
+}
+# neutral background for "(empty)"/unmapped ratings
+RATING_BG_NEUTRAL = "$foreground-muted"
 
 
 def _rating_sort_key(rating: str) -> tuple[int, str]:
@@ -111,6 +124,13 @@ def _rating_sort_key(rating: str) -> tuple[int, str]:
         len(RATING_ORDER),
     )
     return (rank, lowered)
+
+
+def _filter_label(rating: str) -> str:
+    """Filter-chip label: the escaped rating (markup stays literal), and
+    "(empty)" for a rating with no visible content — the same bucket name
+    ``visible_criteria`` falls back to."""
+    return escape(rating) if rating.strip() else "(empty)"
 
 
 class ScoreReviewScreen(Screen):
@@ -174,6 +194,13 @@ class ScoreReviewScreen(Screen):
             c["rating"] or "(empty)" for s in self.students for c in s["criteria"]
         }
         self.rating_on = dict.fromkeys(sorted(ratings, key=_rating_sort_key), True)
+        # Filter button widget ids are positional, never built from the rating
+        # text: a rating can be empty or hold characters Textual rejects in ids
+        # ("filter-(empty)"/"filter-correct]" crashed compose()). Reversible
+        # mapping id -> rating for _sync_filters/on_button_pressed.
+        self._filter_ids = {
+            f"filter-{i}": rating for i, rating in enumerate(self.rating_on)
+        }
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -192,11 +219,11 @@ class ScoreReviewScreen(Screen):
             yield Button("Next ▶", id="next-btn", flat=True)
         yield ProgressBar(id="progress", show_percentage=False, show_eta=False)
         with Horizontal(id="filters"):
-            for rating in self.rating_on:
+            for fid, rating in self._filter_ids.items():
                 cls = RATING_CLASS.get(rating.lower(), "rating-other")
                 yield Button(
-                    rating,
-                    id=f"filter-{rating.replace(' ', '_')}",
+                    _filter_label(rating),
+                    id=fid,
                     flat=True,
                     classes=f"filter {cls}",
                 )
@@ -240,9 +267,9 @@ class ScoreReviewScreen(Screen):
         ]
 
     def _sync_filters(self) -> None:
-        for rating, on in self.rating_on.items():
-            btn = self.query_one(f"#filter-{rating.replace(' ', '_')}", Button)
-            btn.set_class(not on, "off")
+        for fid, rating in self._filter_ids.items():
+            btn = self.query_one(f"#{fid}", Button)
+            btn.set_class(not self.rating_on[rating], "off")
 
     def _render_review(self) -> None:
         s = self.current
@@ -266,13 +293,16 @@ class ScoreReviewScreen(Screen):
             select.value = self.index
 
         lines = []
-        for item in self.visible_criteria(s):
+        # Numbering and the copy keys (1-9) must read the SAME list: both
+        # enumerate visible_criteria(), so the number a row shows is the key
+        # that copies it even after rating filters change the visible set.
+        for i, item in enumerate(self.visible_criteria(s), 1):
             rating = item["rating"] or "(empty)"
             cls = RATING_CLASS.get(rating.lower(), "rating-other")
+            bg = RATING_BG.get(cls, RATING_BG_NEUTRAL)
             lines.append(
-                f"[b][reverse]{escape(item['criterion'])}[/][/b]  "
-                f"[{cls}]rating: {escape(rating)}[/]"
-                f"  {escape(item['comment'])}\n"
+                f"[b][auto on {bg}]{i}. {escape(item['criterion'])}[/][/b]  "
+                f"{escape(item['comment'])}\n"
             )
         listing.update(
             "\n".join(lines)
@@ -379,8 +409,8 @@ class ScoreReviewScreen(Screen):
             self.action_prev()
         elif bid == "next-btn":
             self.action_next()
-        elif bid.startswith("filter-"):
-            rating = bid[len("filter-") :].replace("_", " ")
+        elif bid in self._filter_ids:
+            rating = self._filter_ids[bid]
             self.rating_on[rating] = not self.rating_on[rating]
             self._sync_filters()
             self._render_review()
