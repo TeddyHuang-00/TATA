@@ -78,6 +78,7 @@ class PlagiarismConfig:
     copydetect_weight: float
     embedding_weight: float
     embedding_model: str
+    embedding_enabled: bool = False
 
 
 def _safe_output_name(file_path: Path, base_dir: Path) -> str:
@@ -172,6 +173,7 @@ def _load_plagiarism_config(config_path: Path) -> PlagiarismConfig:
         copydetect_weight=plagiarism.copydetect_weight,
         embedding_weight=plagiarism.embedding_weight,
         embedding_model=plagiarism.embedding_model,
+        embedding_enabled=plagiarism.embedding_enabled,
     )
 
 
@@ -260,7 +262,6 @@ def _run_code_plagiarism(
     overwrite the previous complete one); ``detector.run()`` itself is one
     library call and cannot be interrupted (the honest ceiling).
     """
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
     cfg.submissions_dir.mkdir(parents=True, exist_ok=True)
     cfg.template_dir.mkdir(parents=True, exist_ok=True)
 
@@ -490,12 +491,18 @@ def _run_embedding(cfg: PlagiarismConfig) -> bool:
 
 
 def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
-    """Copydetect over processed/*.md, blended with embedding similarity.
+    """Copydetect over processed/*.md, optionally blended with embedding similarity.
 
-    The embedding is 5% auxiliary (user decision 2026-08-28: embedding alone
-    had too many false positives on short essays).
+    The embedding blend is opt-in (``[plagiarism] embedding_enabled``, default
+    false: pure copydetect — no model, no embedding cache). When on it is 5%
+    auxiliary (user decision 2026-08-28: embedding alone had too many false
+    positives on short essays).
     """
-    _run_embedding(cfg)
+    if cfg.embedding_enabled:
+        _run_embedding(cfg)
+        embedding_pairs = _embedding_pairs(cache_file(cfg.assignment_dir, "embedding"))
+    else:
+        embedding_pairs = {}
 
     from copydetect import CopyDetector  # ruff: ignore[import-outside-top-level]
 
@@ -515,7 +522,6 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
     _write_full_pair_data(detector, copydetect_path)
     copydetect_rows = json.loads(copydetect_path.read_text(encoding="utf-8"))["pairs"]
 
-    embedding_pairs = _embedding_pairs(cache_file(cfg.assignment_dir, "embedding"))
     rows = _blend_rows(
         copydetect_rows,
         embedding_pairs,
@@ -527,10 +533,17 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
         "test_file_count": len(detector.test_files),
         "reference_file_count": len(detector.test_files),
         "pair_count": len(rows),
-        "weights": {
-            "copydetect": cfg.copydetect_weight,
-            "embedding": cfg.embedding_weight,
-        },
+        # Weights of the blend that actually ran: with embedding off every
+        # score is pure copydetect, so report 1.0/0.0 rather than the
+        # configured split (which nothing here applied).
+        "weights": (
+            {
+                "copydetect": cfg.copydetect_weight,
+                "embedding": cfg.embedding_weight,
+            }
+            if cfg.embedding_enabled
+            else {"copydetect": 1.0, "embedding": 0.0}
+        ),
         "pairs": rows,
     }
     (cfg.output_dir / "all_pairs.json").write_text(
@@ -606,6 +619,9 @@ def _run_assignment(
         assignment_config_path=config_path,
     )
     cfg = _load_plagiarism_config(config_path)
+    # Both strategies write under output_dir and copydetect rejects a missing
+    # out_file parent: ensure it once before dispatch (text path had no mkdir).
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     if _find_submissions(cfg):
         return _run_code_plagiarism(

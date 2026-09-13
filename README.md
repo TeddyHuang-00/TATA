@@ -108,8 +108,10 @@ view's actions (for example `gra` to run Grade). Follow these six steps:
    at the project root that stores your keys; Configuration below explains
    it), then click **Test Canvas connection**. TATA reports whether the
    connection works.
-   (Inside Settings, keys 1 to 4 switch between Grading, Canvas,
-   Plagiarism, and Paths / Advanced.)
+   (Inside Settings the tabs follow the level you opened it from: global
+   and course show Canvas and Plagiarism; an assignment shows Grading,
+   Plagiarism, and Paths / Advanced. Number keys switch between the
+   visible tabs.)
 
 2. **Tell TATA which LLM to use.** Go to the Library tab, then the Providers
    sub-tab. The bundled `ollama` provider is already listed and works as
@@ -287,9 +289,10 @@ course and assignment ids to fetch one assignment), then run each stage with
 `uv run cli <stage> -c data/<course>/<assignment>/config.toml` in this
 order: validate, preprocess, plagiarism (optional), grade, score, analyze.
 Validation, preprocessing, plagiarism, scoring, and analysis can run
-offline, except scanned pages (preprocess uses hosted OCR) and plagiarism's
-first run (downloads its embedding model); grade needs the LLM (local Ollama
-or a keyed cloud provider); fetch needs Canvas. Help me drive this CLI end to
+offline, except scanned pages (preprocess uses hosted OCR) and plagiarism
+with `embedding_enabled = true` (its first run downloads the embedding
+model); grade needs the LLM (local Ollama or a keyed cloud provider);
+fetch needs Canvas. Help me drive this CLI end to
 end: run each stage, summarize
 what it printed, and when a choice is ambiguous (course, assignment,
 provider, rubric, or any config value), ask me and wait for my answer

@@ -264,6 +264,9 @@ Fields and defaults:
 - `include_python_files = true`
 - `copydetect_weight = 0.95` / `embedding_weight = 0.05`: text-submission
   blend (copydetect primary, embedding auxiliary)
+- `embedding_enabled = false`: opt-in embedding similarity blend; when false
+  the text stage is pure copydetect (no embedding model download, no embedding
+  cache read/write). Set true to blend `embedding_weight` in.
 - `embedding_model = "jinaai/jina-embeddings-v5-omni-small-text-matching"`
 - `pairwise_alpha = 0.01` / `individual_alpha = 0.01`: one-sided significance
   thresholds for the cross-assignment aggregate

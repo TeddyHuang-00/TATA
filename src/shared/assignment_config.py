@@ -181,6 +181,8 @@ class PlagiarismSection(BaseModel):
     # Text-submission plagiarism (copydetect primary, embedding auxiliary).
     copydetect_weight: float = Field(default=0.95, ge=0.0, le=1.0)
     embedding_weight: float = Field(default=0.05, ge=0.0, le=1.0)
+    # Opt-in: false = pure copydetect (no embedding model, no cache read/write).
+    embedding_enabled: bool = Field(default=False)
     embedding_model: str = Field(
         default="jinaai/jina-embeddings-v5-omni-small-text-matching"
     )

@@ -77,14 +77,16 @@ from src.shared.provider import get_providers
 if TYPE_CHECKING:
     from src.tui.app import AppState
 
-# (fqid, kind) for every text field; ``section.key`` is both the TOML path and
-# the widget id suffix. ``prompt`` is a str-or-list-of-str field (system_prompt);
-# ``list`` is a comma-separated extensions-style field.
+# (fqid, kind) for every field; ``section.key`` is both the TOML path and the
+# widget id suffix. ``prompt`` is a str-or-list-of-str field (system_prompt);
+# ``list`` is a comma-separated extensions-style field; ``bool`` is a Checkbox
+# composed by its own tab (the Paths-tab checkboxes live in _CHECKBOX_SPECS).
 _FIELD_SPECS: tuple[tuple[str, str], ...] = (
     ("grading.system_prompt", "prompt"),
     ("grading.max_parallel_tasks", "int"),
     ("fetch.course_id", "int"),
     ("plagiarism.copydetect_weight", "float"),
+    ("plagiarism.embedding_enabled", "bool"),
     ("plagiarism.embedding_weight", "float"),
     ("plagiarism.display_threshold", "float"),
     ("plagiarism.pairwise_alpha", "float"),
@@ -115,6 +117,50 @@ _CHECKBOX_SPECS: tuple[tuple[str, str], ...] = (
     ("processing.strip_html_div_tags", "strip_html_div_tags"),
     ("processing.visual_evaluation", "Visual evaluation (screenshots)"),
 )
+
+# Hover tooltips (feedback #3), applied by SettingsScreen._apply_tooltips via
+# Textual's built-in Widget.tooltip — mouse-only (no keyboard trigger), so
+# nothing load-bearing may live here alone. Keys are field fqids; the two
+# canvas.* entries are pseudo-keys for the .env fields, which are composed
+# outside the _widgets registry. Keep lines short: the Tooltip renders at
+# max-width 40 and wraps past that.
+_TOOLTIPS: dict[str, str] = {
+    # Grading (assignment level)
+    "grading.provider": "LLM provider from data/providers/",
+    "grading.rubric": "Rubric file from data/rubrics/",
+    "grading.system_prompt": "Grader prompt files; row order is kept",
+    "grading.max_parallel_tasks": "Concurrent grading tasks (1..10)",
+    # Canvas (course level; the .env fields below, global level)
+    "fetch.course_id": "Canvas course id to fetch assignments",
+    "canvas.url": "Canvas base URL; saved to .env",
+    "canvas.token": "Canvas API token; saved to .env (masked)",
+    # Plagiarism (every level)
+    "plagiarism.embedding_enabled": "Off: copydetect only, no model download",
+    "plagiarism.copydetect_weight": "Similarity share from copydetect (0..1)",
+    "plagiarism.embedding_weight": "Similarity share from embeddings (0..1)",
+    "plagiarism.display_threshold": "Scores below this are hidden (0..1)",
+    "plagiarism.pairwise_alpha": "One-sided alpha for pairwise flags",
+    "plagiarism.individual_alpha": "One-sided alpha for individual flags",
+    "plagiarism.score_floor": "Score floor in logit space (0..0.5)",
+    "plagiarism.score_cap": "Score cap in logit space (0.5..1)",
+    "plagiarism.embedding_model": "Embedding model id (used when enabled)",
+    "plagiarism.extensions": "File extensions compared for similarity",
+    "plagiarism.template_file": "Template file stripped before comparison",
+    # Paths (assignment level)
+    "assignment.raw_dir": "Downloaded submissions directory",
+    "assignment.processed_dir": "Cleaned markdown output directory",
+    "assignment.graded_dir": "Grading result files directory",
+    "assignment.logs_dir": "Run logs directory",
+    "assignment.reference_file": "Optional reference solution to compare",
+    # Processing toggles (assignment level, Paths tab)
+    "processing.remove_base64_images": "Drop base64 images from submissions",
+    "processing.clean_filenames": "Sanitise filenames into safe names",
+    "processing.strip_canvas_suffix": "Drop Canvas numeric suffixes from names",
+    "processing.strip_html_callouts": "Drop ':::' callout fence lines",
+    "processing.strip_html_escaped_backslashes": "Replace escaped backslashes with a space",
+    "processing.strip_html_div_tags": "Unwrap <div> tags in HTML submissions",
+    "processing.visual_evaluation": "Also grade page screenshots (slower)",
+}
 
 # Context -> writable TOML sections (design 05 §2.5) is gone: a settings
 # screen instance edits exactly one level and composes exactly that level's
@@ -494,6 +540,11 @@ class SettingsScreen(Screen[None]):
     def _plagiarism_fields(self) -> ComposeResult:
         """The [plagiarism] editor — shared by every level's Plagiarism tab."""
         yield _LField(
+            "embedding_enabled (auxiliary similarity check)",
+            self._checkbox("plagiarism.embedding_enabled"),
+            reset=self._reset_button("plagiarism.embedding_enabled"),
+        )
+        yield _LField(
             "copydetect_weight (0..1)",
             self._input("plagiarism.copydetect_weight"),
             reset=self._reset_button("plagiarism.copydetect_weight"),
@@ -538,6 +589,28 @@ class SettingsScreen(Screen[None]):
             self._input("plagiarism.extensions"),
             reset=self._reset_button("plagiarism.extensions"),
         )
+
+    def _apply_tooltips(self) -> None:
+        """Attach the ``_TOOLTIPS`` hover tooltip to every composed field.
+
+        Textual shows the nearest non-None tooltip walking the hovered
+        widget's ancestors, so the text is set on the ``_LField`` container:
+        the label, the reset button and the input all answer. A
+        ``_PromptCheckList`` is its own target (no _LField wrapper), and the
+        Canvas .env fields are not in ``_widgets`` — handled per level.
+        """
+        for fqid, widget in self._widgets.items():
+            text = _TOOLTIPS.get(fqid)
+            if text is None:
+                continue
+            owner = widget.parent if isinstance(widget.parent, _LField) else widget
+            owner.tooltip = text
+        if self._ctx == "global":  # the .env fields only exist at global level
+            for widget_id, key in (
+                ("#canvas-url", "canvas.url"),
+                ("#canvas-token", "canvas.token"),
+            ):
+                self.query_one(widget_id).parent.tooltip = _TOOLTIPS[key]
 
     def _title_text(self) -> str:
         """``Settings · Global`` / ``Settings · Course: <name> (<id>)`` …"""
@@ -606,6 +679,7 @@ class SettingsScreen(Screen[None]):
 
     @override
     def on_mount(self) -> None:
+        self._apply_tooltips()
         self._load_env_fields()
         self._load_context()
 

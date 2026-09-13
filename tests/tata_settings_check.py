@@ -17,6 +17,8 @@ minimal host app over a tmp three-layer fixture (global / course / assignment
 - global-level save keeps the other keys;
 - field reset (per-field button) falls back to the inherited/default value;
 - the Canvas test env guard (t) and the ``.env`` save/mask flow;
+- field tooltips (feedback #3): Textual's built-in ``Widget.tooltip`` on every
+  composed field (hover-triggered) with the full-coverage ancestor-walk check;
 - panel framing (T6): the content region carries a single round $primary
   border (the plagiarism-view panel language), unclipped at 100x30, and an
   unparseable-TOML save appends the $EDITOR repair hint to its error;
@@ -32,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import tomllib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -46,6 +48,7 @@ from src.shared.config_edit import dump_toml
 from src.tui.app import AppState, TataApp
 from src.tui.scan import scan_courses
 from src.tui.settings import (
+    _TOOLTIPS,
     SettingsScreen,
     _PromptCheckList,
     _SecretInput,
@@ -54,6 +57,7 @@ from src.tui.settings import (
 from textual.app import App
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.pilot import Pilot
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
@@ -62,6 +66,7 @@ from textual.widgets import (
     Select,
     Static,
     TabbedContent,
+    Tooltip,
 )
 
 GLOBAL_TOML = "[plagiarism]\ncopydetect_weight = 0.9\nembedding_weight = 0.1\ndisplay_threshold = 0.75\n"
@@ -161,11 +166,18 @@ def _make_state(root: Path, *, course: bool, assignment: bool) -> AppState:
 
 @asynccontextmanager
 async def _open(
-    state: AppState, ctx: str, size: tuple[int, int] = (120, 44)
+    state: AppState,
+    ctx: str,
+    size: tuple[int, int] = (120, 44),
+    tooltips: bool = False,
 ) -> AsyncIterator[tuple[App[None], Pilot, SettingsScreen]]:
-    """Run the host app with the settings screen for ``ctx`` pushed."""
+    """Run the host app with the settings screen for ``ctx`` pushed.
+
+    ``tooltips`` turns Textual's tooltip widget on (``run_test`` disables it
+    by default, keeping the rest of the checks tooltip-free).
+    """
     app: App[None] = _SettingsTestApp(state, ctx)
-    async with app.run_test(size=size) as pilot:
+    async with app.run_test(size=size, tooltips=tooltips) as pilot:
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen), (
@@ -190,6 +202,19 @@ def _field_label(screen: SettingsScreen, fqid: str) -> str:
 def _pane_ids(screen: SettingsScreen) -> list[str]:
     tabs = screen.query_one("#settings-tabs", TabbedContent)
     return [pane.id for pane in tabs.query("TabPane")]
+
+
+def _closest_tooltip(widget: Widget) -> str | None:
+    """The tooltip a hover on ``widget`` shows (Textual's ancestor walk)."""
+    for node in widget.ancestors_with_self:
+        if isinstance(node, Widget) and node.tooltip is not None:
+            return str(node.tooltip)
+    return None
+
+
+def _tooltip_shown(tooltip: Tooltip, key: str) -> Callable[[], bool]:
+    """``wait_for`` predicate: ``tooltip`` is visible and shows ``key``'s text."""
+    return lambda: tooltip.display and str(tooltip.content) == _TOOLTIPS[key]
 
 
 def _check_mask_secret() -> None:
@@ -769,6 +794,106 @@ async def _check_field_reset(root: Path) -> None:
         assert screen.query_one("#f-plagiarism-display_threshold", Input).value == "0.8"
 
 
+async def _check_embedding_toggle(root: Path) -> None:
+    """User request: [plagiarism] embedding_enabled checkbox at every level.
+
+    Default off; ticking it saves a real bool and only that key, unticking
+    writes ``false`` back (a checkbox is never "unset" by value).
+    """
+    state = _make_state(root, course=True, assignment=True)
+    for ctx in ("global", "course", "assignment"):
+        async with _open(state, ctx) as (_app, _pilot, screen):
+            box = screen.query_one("#f-plagiarism-embedding_enabled", Checkbox)
+            assert box.value is False, (ctx, box.value)
+
+    async with _open(state, "assignment") as (_app, pilot, screen):
+        assignment_cfg = root / _ASSIGNMENT_CFG
+        before = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
+        screen.query_one("#f-plagiarism-embedding_enabled", Checkbox).value = True
+        await pilot.press("ctrl+s")
+        await wait_for(pilot, lambda: "Saved to" in _status_text(screen))
+        saved = tomllib.loads(assignment_cfg.read_text(encoding="utf-8"))
+        assert saved["plagiarism"]["embedding_enabled"] is True
+        # only the edited key is added; every sibling key survives
+        assert set(saved["plagiarism"]) == set(before["plagiarism"]) | {
+            "embedding_enabled"
+        }
+        assert _close(saved["plagiarism"]["copydetect_weight"], 0.95)
+        assert saved["plagiarism"]["extensions"] == [".py"]
+
+    async with _open(state, "assignment") as (_app, pilot, screen):
+        box = screen.query_one("#f-plagiarism-embedding_enabled", Checkbox)
+        assert box.value is True  # loaded back from the file just saved
+        box.value = False
+        await pilot.press("ctrl+s")
+        await wait_for(pilot, lambda: "Saved to" in _status_text(screen))
+        saved = tomllib.loads((root / _ASSIGNMENT_CFG).read_text(encoding="utf-8"))
+        assert saved["plagiarism"]["embedding_enabled"] is False
+
+
+async def _check_tooltips(root: Path) -> None:
+    """Feedback #3: every composed field carries a hover tooltip.
+
+    Textual's built-in ``Widget.tooltip`` shows its ``Tooltip`` Static on
+    mouse hover after ``App.TOOLTIP_DELAY`` (0.5s). The text sits on the
+    field's ``_LField`` container, so hovering the label or the input both
+    reach it via the ancestor walk. Probes wait on the rendered content
+    (``_tooltip_shown``) instead of a fixed pause: a bare pause leaves only
+    ~0.2 s of margin, and ``display`` alone stays True while the mouse moves
+    to a different widget. One hover per control: hovering the SAME widget
+    twice in a row toggles the tooltip back off, so each probe moves to a
+    fresh widget.
+    """
+    state = _make_state(root, course=True, assignment=True)
+
+    async with _open(state, "global", tooltips=True) as (_app, pilot, screen):
+        # full coverage: every composed field resolves to its own text, plus
+        # the .env fields (composed outside _widgets) and a field label
+        for fqid, widget in screen._widgets.items():
+            assert _closest_tooltip(widget) == _TOOLTIPS[fqid], fqid
+        assert (
+            _closest_tooltip(screen.query_one("#canvas-url")) == _TOOLTIPS["canvas.url"]
+        )
+        assert (
+            _closest_tooltip(screen.query_one("#canvas-token"))
+            == _TOOLTIPS["canvas.token"]
+        )
+        label = screen.query_one("#f-plagiarism-copydetect_weight").parent.query_one(
+            "Label"
+        )
+        assert _closest_tooltip(label) == _TOOLTIPS["plagiarism.copydetect_weight"]
+
+        screen.action_open_tab(1)  # Plagiarism (hover needs a visible widget)
+        await pilot.pause()
+        tooltip = screen.get_child_by_type(Tooltip)
+        assert not tooltip.display  # nothing hovered yet
+        # (a) Input
+        assert await pilot.hover("#f-plagiarism-copydetect_weight", offset=(1, 1))
+        await wait_for(pilot, _tooltip_shown(tooltip, "plagiarism.copydetect_weight"))
+        assert tooltip.display
+        assert str(tooltip.content) == _TOOLTIPS["plagiarism.copydetect_weight"]
+        # (b) the embedding_enabled Checkbox
+        assert await pilot.hover("#f-plagiarism-embedding_enabled", offset=(1, 1))
+        await wait_for(pilot, _tooltip_shown(tooltip, "plagiarism.embedding_enabled"))
+        assert tooltip.display
+        assert str(tooltip.content) == _TOOLTIPS["plagiarism.embedding_enabled"]
+
+    async with _open(state, "course", tooltips=True) as (_app, _pilot, screen):
+        for fqid, widget in screen._widgets.items():
+            assert _closest_tooltip(widget) == _TOOLTIPS[fqid], fqid
+
+    async with _open(state, "assignment", tooltips=True) as (_app, pilot, screen):
+        for fqid, widget in screen._widgets.items():
+            assert _closest_tooltip(widget) == _TOOLTIPS[fqid], fqid
+        # (c) Select — the visible area is its SelectCurrent child, so hovering
+        # that (offset clear of the value label) is what a user points at
+        tooltip = screen.get_child_by_type(Tooltip)
+        assert await pilot.hover("#f-grading-rubric SelectCurrent", offset=(1, 1))
+        await wait_for(pilot, _tooltip_shown(tooltip, "grading.rubric"))
+        assert tooltip.display
+        assert str(tooltip.content) == _TOOLTIPS["grading.rubric"]
+
+
 async def _check_inherited_values(root: Path) -> None:
     """F6: inherited keys show the effective value + source in the badge."""
     state = _make_state(root, course=True, assignment=True)
@@ -1036,10 +1161,12 @@ async def main() -> None:
         _check_prompt_order,
         _check_prompt_list_height,
         _check_field_reset,
+        _check_embedding_toggle,
         _check_inherited_values,
         _check_titles,
         _check_canvas_env_edit,
         _check_env_buttons_overflow,
+        _check_tooltips,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

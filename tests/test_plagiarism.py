@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,7 @@ from src.shared.plagiarism import (
     _load_plagiarism_config,
     _pair_key,
     _run_embedding,
+    _run_text_plagiarism,
     _write_full_pair_data,
     detect_plagiarism,
     embedding_input_hash,
@@ -718,3 +720,122 @@ def test_embedding_input_hash_tracks_md_and_model(
 
     write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
     assert embedding_input_hash(processed, "model-a") != baseline
+
+
+# -- embedding_enabled switch: off = pure copydetect, zero embedding work ----
+
+
+def _text_cfg(tmp_path: Path, *, enabled: bool) -> PlagiarismConfig:
+    (tmp_path / "plagiarism").mkdir(exist_ok=True)
+    return replace(_plagiarism_config(tmp_path), embedding_enabled=enabled)
+
+
+def _raw_pairs_by_key(cfg: PlagiarismConfig) -> dict[tuple[str, str], float]:
+    raw = json.loads(
+        (cfg.output_dir / "all_pairs.copydetect.json").read_text(encoding="utf-8")
+    )["pairs"]
+    return {
+        _pair_key(row["test_file"], row["reference_file"]): row["max_similarity_pct"]
+        for row in raw
+    }
+
+
+def test_text_plagiarism_skips_embedding_when_disabled(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """embedding_enabled=False: no model load, no cache read/write, pure scores."""
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    cfg = _text_cfg(tmp_path, enabled=False)
+
+    def _boom(*args: object, **kwargs: object) -> bool:
+        msg = "embedding must not run when embedding_enabled is false"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(plagiarism_mod, "_run_embedding", _boom)
+    monkeypatch.setattr(plagiarism_mod, "_embedding_pairs", _boom)
+    _run_text_plagiarism(cfg)
+
+    payload = json.loads(
+        (cfg.output_dir / "all_pairs.json").read_text(encoding="utf-8")
+    )
+    rows = payload["pairs"]
+    # no embedding in the scores -> the weights metadata must say pure copydetect,
+    # never the configured copydetect_weight/embedding_weight pair
+    assert payload["weights"] == {"copydetect": 1.0, "embedding": 0.0}, payload[
+        "weights"
+    ]
+    raw = _raw_pairs_by_key(cfg)
+    assert rows, "copydetect should still produce pairs"
+    for row in rows:
+        key = _pair_key(row["test_file"], row["reference_file"])
+        # no blend: the score is exactly copydetect's raw value
+        assert row["max_similarity_pct"] == pytest.approx(raw[key])
+        assert row["embedding_similarity_pct"] is None
+    # zero cache write (and nothing read it either: _embedding_pairs would boom)
+    assert not cache_file(tmp_path, "embedding").exists()
+
+
+def test_text_plagiarism_blends_when_embedding_enabled(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    fake_embedder: list[int],
+) -> None:
+    """embedding_enabled=True: same blend as before, embedding_similarity_pct set."""
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    cfg = _text_cfg(tmp_path, enabled=True)
+
+    _run_text_plagiarism(cfg)
+
+    assert fake_embedder == [2]  # the fake model encoded the two markdown files
+    payload = json.loads(
+        (cfg.output_dir / "all_pairs.json").read_text(encoding="utf-8")
+    )
+    rows = payload["pairs"]
+    # the blend ran -> the metadata reports the configured weights
+    assert payload["weights"] == {"copydetect": 0.95, "embedding": 0.05}
+    raw = _raw_pairs_by_key(cfg)
+    assert len(rows) == 1
+    row = rows[0]
+    key = _pair_key(row["test_file"], row["reference_file"])
+    # fake embedder: files 1 and 2 -> (0.1 * 0.2) * 100 = 2.0 %
+    assert row["embedding_similarity_pct"] == pytest.approx(2.0)
+    assert row["max_similarity_pct"] == pytest.approx(0.95 * raw[key] + 0.05 * 2.0)
+
+
+# -- pre-existing bug: text path crashed on a missing plagiarism/ output dir --
+
+
+def test_text_plagiarism_creates_the_missing_output_dir(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+) -> None:
+    """Regression (pre-existing): the text path never created ``plagiarism/``,
+    so the first run on an assignment without it died in the CopyDetector
+    constructor (out_file parent missing -> ``ValueError: Invalid output file
+    path (directory does not exist)``). The dir is now ensured once before
+    either strategy is dispatched, and the pair artifacts land on disk."""
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    (tmp_path / "config.toml").write_text(
+        "[grading]\n"
+        "rubric = 'rubrics/exam.toml'\n"
+        "system_prompt = 'prompt/system.md'\n"
+        "provider = 'deepseek'\n",
+        encoding="utf-8",
+    )
+    assert not (tmp_path / "plagiarism").exists()
+
+    summary = detect_plagiarism(tmp_path / "config.toml")
+
+    assert summary is not None
+    assert summary["success"] == 2, summary
+    for name in ("all_pairs.copydetect.json", "all_pairs.json"):
+        assert (tmp_path / "plagiarism" / name).is_file(), name
+    pairs = json.loads(
+        (tmp_path / "plagiarism" / "all_pairs.json").read_text(encoding="utf-8")
+    )
+    assert pairs["pair_count"] == 1, pairs
