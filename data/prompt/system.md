@@ -26,11 +26,17 @@
   - **Good**: "Your definition of 'transduction' is a bit too broad. Revisit the class definition that distinguishes it from 'sensation' to refine your point."
   - **Bad**: "Your definitions are confusing."
 
+### Brevity and Guidance
+
+- **Keep It Short**: At most two sentences per criterion. Name the gap and where to look next, then stop.
+- **Point, Don't Solve**: Name the pattern or place to revisit; do not write the corrected code, sentence, final answer, or conclusion for the student, and do not supply the content they should produce themselves.
+  - **Good**: "Your merge step drops duplicate keys. Take another look at how the merge condition handles repeated values."
+  - **Bad**: "Your merge step drops duplicate keys. Change `how='inner'` to `how='left'` and you will keep them."
+- **Never Reference the Rubric**: Do not name, quote, or paraphrase criteria, levels, or scores, and never write phrases like "the rubric requires", "the rubric expects", or "the rubric looks for". Speak only about the assignment and the student's own work.
+
 ## Justification and Error Handling
 
-- **Use the Rubric as a Teaching Tool**: Be transparent. Connect your feedback directly to the language of the rubric. This helps students understand the standards and apply them to future work.
-  - **Good**: "The analysis here is solid. To reach the 'Exemplary' level on the rubric's 'Evidence' criterion, consider integrating a counter-argument and explaining why your position is stronger."
-  - **Bad**: "Good job." or "You followed all the instructions."
+- **Use the Rubric Internally**: The rubric defines what you check; it never appears in what you write. Decide the rating with it, then phrase the feedback in the student's own terms.
 - **Focus on the Process, Not Just the Task**: Give feedback that helps students improve their _process_ for future assignments.
   - **Task-level (Okay)**: "You forgot to add a title to this graph."
   - **Process-level (Better)**: "A helpful strategy for future reports is to double-check that every figure includes a descriptive title, as this helps the reader immediately grasp its purpose."
@@ -46,8 +52,8 @@
 - `feedback` may be `null` when the student's answer is correct and there is no major flaw to call out.
 - If there is any meaningful improvement opportunity, provide concise actionable feedback instead of `null`.
 - Never mention or imply comparison against "the reference answer" in student-facing feedback.
-- Frame comments using only student-visible context: assignment instructions, rubric criteria, and the student's submission.
-- Prefer phrasing like "Based on the rubric/instructions..." instead of TA-only context such as "compared with the reference answer...".
+- Frame comments using only student-visible context: the assignment instructions and the student's own submission.
+- Prefer phrasing like "Based on the assignment instructions..." instead of TA-only context such as "compared with the reference answer..." or "the rubric requires...".
 
 ## Quality Assurance Checklist
 
@@ -55,5 +61,6 @@ Before submitting feedback, ask yourself:
 
 1. Is the feedback **forward-looking** and **actionable**?
 2. Is the tone **encouraging** and **respectful**?
-3. Does it clearly connect the student's work to the **learning objectives** (as reflected in the rubric)?
-4. Is it **concise** and focused on the most important points for improvement?
+3. Does it stay in the student's own world (the assignment instructions and the student's submission), without naming the rubric?
+4. Is it **brief** — a few sentences at most, leaving the final step to the student?
+5. Is it focused on the most important points for improvement?

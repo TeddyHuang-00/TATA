@@ -274,8 +274,9 @@ def test_rubric_without_subcommand_exits_1(
 
 def test_prompt_default_ternary_standard() -> None:
     """Generation prompt pins ternary rating + standard grading, never offers
-    custom_scale, keeps desc quality-level based (not point based), and does
-    not invent nitpicky sub-rules beyond the assignment."""
+    custom_scale, keeps desc quality-level based (not point based), stays
+    lenient about how requirements are read, and does not invent sub-rules
+    beyond the assignment."""
     prompt = RUBRIC_GEN_SYSTEM_PROMPT.lower()
     assert '"rating": "ternary"' in prompt
     assert '"grading": "standard"' in prompt
@@ -283,8 +284,18 @@ def test_prompt_default_ternary_standard() -> None:
     assert "quality levels" in prompt
     assert "without tying" in prompt
     assert "points or deductions" in prompt
-    assert "nitpick" in prompt
-    assert "explicitly" in prompt
+    # Hard constraints kept through the lenient rewrite: cover only what the
+    # assignment explicitly states, add no criteria/sub-rules it does not
+    # require and no nitpicks, invent no quantitative thresholds.
+    assert "explicitly stated" in prompt
+    assert "do not add criteria" in prompt
+    assert "do not nitpick" in prompt
     assert "quantitative" in prompt
-    assert "not state" in prompt
+    assert "does not state" in prompt
     assert "rubric table" in prompt
+    # Lenient-reading paragraph: most natural/generous reading wins.
+    assert "lenient" in prompt
+    assert "most natural" in prompt
+    assert "generous" in prompt
+    assert "reasonable alternative" in prompt
+    assert "reachable by any reasonable attempt" in prompt

@@ -22,7 +22,10 @@ Output a RubricDefinition: an array "criterion". Each criterion is an object:
   answer look like) without tying them to specific points or deductions. It
   must be specific enough that a grader can locate the relevant part of a
   student answer and apply it, and must not just restate the assignment
-  requirement.
+  requirement. Describe each level in terms of the student's intent and
+  result: the highest level must be reachable by any reasonable attempt that
+  meets the requirement, even if it differs from the reference in approach,
+  structure, or naming.
 - "rating": "ternary" (correct, partial, incorrect). Always "ternary".
 - "grading": "standard". Always "standard"; never "custom", "strict", or
   "round up", and never generate "custom_scale".
@@ -33,11 +36,21 @@ Rules:
   with at least one criterion. Do not add criteria or finer sub-rules the
   assignment does not explicitly require, and do not nitpick details it does
   not mention.
+- Read every requirement the way a student would: take the most natural and
+  lenient reading of what the assignment asks, and give credit for any
+  reasonable way of satisfying it. When a requirement can be read strictly or
+  generously, the criterion must be written so that the generous reading still
+  earns the highest level.
+- When the assignment does not specify how something is done (tool, format,
+  order, naming, or exact count), do not require a specific choice: accept any
+  reasonable alternative.
 - Do not invent specific quantitative thresholds, counts, or structural
   requirements that the assignment does not state. If the assignment describes
   a requirement qualitatively (e.g., "multiple test cases", "organized and
   readable"), keep it qualitative; assessing such a requirement must not add
-  numbers or conditions the assignment never specifies.
+  numbers or conditions the assignment never specifies. Treat vague qualifiers
+  generously: "multiple" means two or more, "several" means more than one, and
+  any answer that demonstrates the intended behavior satisfies the requirement.
 - If the assignment description includes a rubric table (criterion names with
   point values), use those exact names and point values for the corresponding
   criteria; do not rename or reinterpret them. Only follow the table when the
