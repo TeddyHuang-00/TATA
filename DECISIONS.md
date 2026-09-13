@@ -371,3 +371,89 @@ accepting that the five test monkeypatch targets had to move upstream (`copydete
 because the tax was pure startup overhead: the referent behaviour is unchanged (conversion fallback chains, warning messages, report outputs), the deferral is held by the full pytest + 13/13 e2e gates and by the rewritten monkeypatches (which would silently stop intercepting if the imports moved back to module level), and the runner aggregates instead of short-circuiting, so a failing script can no longer hide the ones after it.
 
 **Verification (batch C):** before/after, each item 3 rounds with `uptime` logged (raw logs `/tmp/tata-batch-c/{baseline,after}.log`): `uv run python -c "import src.tui.app"` 5.23/5.40/5.39 s → 0.735/0.665/0.672 s; `uv run cli --help` 5.39/5.07/5.10 s → 0.672/0.692/0.649 s; TUI cold-start wall (run_test script) 5.90/5.78/5.87 s → 1.150/1.156/1.170 s (in-script import 3.88–3.90 s → 0.517 s; scan 0.17 s unchanged); `uv run pytest -q` 302 passed in 103.86/102.41/103.00 s → 20.84/19.52/19.37 s; `just test-fast` (baseline `-n auto`: 43.90/42.63/42.38 s) → 302 passed in 9.49/9.23/9.12 s; `just test-e2e` serial (JOBS=1) 173.4/172.2/173.9 s → 111.9/114.7/113.2 s and parallel (JOBS=8) 21.2/21.2/21.0 s — **13/13 OK in every run (3 serial + 5 parallel, including the frozen-state re-run)**; `just check` exit 0 (83 files already formatted / All checks passed / mdformat clean). CLI chain inspection (`python -X importtime -c "import src.cli.main"`): 583 ms total, largest single item `openai` 270 ms reached via `src.shared.grading` → `provider` (the deferred P2-2 item); `src/cli/main.py` carries no other direct heavy import. Local dev only; remote untouched per policy.
+
+## Feedback v12 (item 1): the dashboard search bar moves into the breadcrumb head row (feedback v12, 2026-09-13)
+
+**Date:** 2026-09-13
+**Status:** Accepted
+**Files:** `src/tui/app.py`, `src/tui/styles/app.tcss`, `tests/tata_dash_check.py`
+
+In the context of the dashboard search Input being a direct child of `DashboardScreen` on its own full-width strip under the `#dash-head` line (three whole rows spent at 120×40; the course table ran at 25 rows),
+facing feedback item 1 (put the search bar in the breadcrumb row),
+we decided for yielding `Input#search-input` inside `Horizontal#dash-head` between `#breadcrumb` and `#dash-actions` (composition order breadcrumb → search → actions; the input filters exactly the level the breadcrumb names) plus one TCSS rule `#search-input { width: 30; max-width: 40% }` (an Input defaults to `width: 100%`, which pushed the right-aligned buttons past the screen edge; the max-width keeps the row flush as the terminal narrows),
+and neglected docking the search elsewhere (topbar/footer/side panel), reordering the three children, and any change to the display-level logic (the by-id lookups, the `_refocus` guard and the `Input.Changed` handler are position-independent),
+to achieve one head row that carries level identity, filtering and the action buttons, with the three reclaimed rows going to the table (course table 25 → 28 rows at 120×40; probes flush from 40 through 120 columns),
+accepting that the course level overflows below 56 columns (the actions block alone is 32 columns; the design target and the repo's minimum exercised width are ≥80) and that closing that would need a responsive collapse, which is not built,
+because the user asked for the search bar in the breadcrumb row, and `tests/tata_dash_check.py` now pins the single-line layout (breadcrumb and actions regions sharing one row, plus the painted-line SVG assertion).
+
+## Feedback v12 (item 2): `[plagiarism] embedding_enabled` defaults to false — pure copydetect unless opted in (feedback v12, 2026-09-13)
+
+**Date:** 2026-09-13
+**Status:** Accepted
+**Files:** `src/shared/plagiarism.py`, `src/shared/assignment_config.py`, `src/tui/settings.py`, `tests/test_plagiarism.py`, `tests/tata_settings_check.py`, `README.md`, `docs/config/assignment.md`
+
+In the context of text-submission plagiarism always blending 95% copydetect with 5% embedding similarity (user decision 2026-08-28), which loaded the jina-v5 sentence-transformers model inline and read/wrote `.cache/embedding.json` on every text run even when the auxiliary signal was not wanted,
+facing feedback item 2 (an embedding switch, default off),
+we decided for a `[plagiarism] embedding_enabled` boolean (field default false) read in `_run_text_plagiarism`, where it gates both `_run_embedding` and the embedding-cache read — with it off a text run is pure copydetect: zero model import/load, zero cache I/O, no missing-model warning, `max_similarity_pct` equal to the raw copydetect value, `embedding_similarity_pct: null`; and for reporting in `all_pairs.json` the weights that actually ran (`{copydetect: 1.0, embedding: 0.0}` when off — not the configured 0.95/0.05, which nothing applied); the key merges three-layered (course `true` inherited, an assignment-level explicit value wins, a missing key defaults false) and re-enabling reuses a stale `embedding.json` while the processed hash is unchanged; the Settings Plagiarism-tab checkbox is the single shared `_plagiarism_fields()` row at every level (a `bool` spec in `_FIELD_SPECS`, not `_CHECKBOX_SPECS`) and CLI `config set` writes the raw boolean; `sentence-transformers` stays the dependency, lazily imported and unused by default,
+and neglected deleting the embedding path or the dependency, changing the 0.95/0.05 weight defaults or the `embedding_input_hash` signature, and disabling the weight fields while the toggle is off,
+to achieve zero-cost default text runs with the auxiliary blend one checkbox away and no silent work left behind,
+accepting the behavior change for existing users (the default output moves from the 95/5 blend to pure copydetect — recorded here and in the README/docs), that pre-existing `embedding.json` files stay on disk untouched (reused later, never read while off), and that the change is a config value visible only after the next plagiarism run,
+because the user asked for a default-off switch; verified on /tmp fake-data CLI runs (exit 0, no `.cache/embedding.json`, no `sentence_transformers` import, no warning) with the three-layer merge and the weights semantics pinned in `tests/test_plagiarism.py`.
+
+## Feedback v12 (item 3): Settings field tooltips via Textual's built-in `Widget.tooltip` (feedback v12, 2026-09-13)
+
+**Date:** 2026-09-13
+**Status:** Accepted
+**Files:** `src/tui/settings.py`, `tests/tata_settings_check.py`
+
+In the context of the Settings screen exposing its field sets across three levels (global 10 / course 11 / assignment 27, union) with unevenly self-explanatory names,
+facing feedback item 3 (show a hint when hovering a setting),
+we decided for Textual 8.2.8's built-in `Widget.tooltip` with one central `_TOOLTIPS` dict in `settings.py` (30 entries: every composed field fqid of the three levels plus the `canvas.url`/`canvas.token` pseudo-keys for the global-level .env fields) applied once in `on_mount` by `_apply_tooltips()` onto the `_LField` container — Textual resolves the nearest ancestor tooltip, so the label, the reset button and the input all answer — with no new widget, no "?" icon and no per-field call-site code,
+and neglected a custom info widget or a keyboard-triggerable help path (none exists in Textual 8.2.8),
+to achieve field hints at near-zero cost with a single editing point,
+accepting that tooltips are hover-only (mouse-only discoverability; the label stays the authoritative information source — nothing load-bearing lives in a tooltip, and labels are unchanged), that they render at max-width 40 (`TOOLTIP_DELAY` 0.5 s), and that the check's assertion must wait for both display and the expected content because a display-only predicate goes false-green on stale content when the hover target changes,
+because the user's instruction was to use the built-in directly if it exists; `tests/tata_settings_check.py` covers the tooltip application at all three levels.
+
+## Feedback v12 (item 4): score-review numbering, inline rating backgrounds, positional filter ids (feedback v12, 2026-09-13)
+
+**Date:** 2026-09-13
+**Status:** Accepted
+**Files:** `src/tui/score_review.py`, `tests/review_screen_check.py`
+
+In the context of the review list showing a static number plus a `[reverse]`-highlighted criterion name and a `[rating-*]` markup that painted no colour at all (Rich markup does not resolve CSS classes — the row colouring was a dead path; verified: no `$success`/`$warning`/`$error` ever appeared), while the 1–9 copy keys already read the *filtered* criterion list,
+facing feedback item 4 (numbering, rating background colour, drop the extra text),
+we decided for rows of the form `[b][auto on $var]{i}. {name}[/][/b]  {comment}` where `i` comes from `enumerate(self.visible_criteria(s), 1)` — the same filtered list the copy keys enumerate, so a row's number and its copy key can never drift as rating filters change — and the background from the fixed `RATING_BG` map (correct/partial/incorrect → `$success`/`$warning`/`$error`; anything else or empty → `$foreground-muted`), with the inline `auto` foreground preserving contrast (measured 9.0 / 10.7 / 5.4:1, versus ~1.5:1 for the default text colour on the same fills); the colour always comes from the map, never from the rating string (that would inject markup); and for the pre-existing crash alongside it: filter-button ids are now positional (`filter-0`, …) held in a `_filter_ids` id→rating map used by `_sync_filters` and `on_button_pressed` — building ids from the rating text (`#filter-{rating}`) made an empty or punctuation-bearing rating blow up `compose()` with Textual's `BadIdentifier` (reproduced on the parent commit) — and chip labels are `escape()`d with an `(empty)` fallback matching `visible_criteria`,
+and neglected a class-based colour scheme, per-rating colours beyond the fixed map, keeping the old `[reverse]` treatment, and any sanitisation of the rating text into ids,
+to achieve a rating readable from the criterion name alone with stable, filter-proof numbering,
+accepting that the `(empty)` bucket merges ratings that differ only by case/whitespace (the existing `visible_criteria` semantics) and that `RATING_CLASS` remains only as the filter-chip class source (it no longer colours rows),
+because the feedback asked for the rating to be visible at a glance; `tests/review_screen_check.py` pins the numbering after filtering, the painted background colours, and the empty/illegal-rating round-trip.
+
+## Feedback v12 (item 5): lenient rubric reading + rubric-free, brief, non-solving feedback prompts (feedback v12, 2026-09-13)
+
+**Date:** 2026-09-13
+**Status:** Accepted
+**Files:** `src/shared/rubric_gen.py`, `data/prompt/system.md`, `data/prompt/lab.md`, `tests/test_rubric_gen.py`
+
+In the context of rubric generation reading assignment requirements rigidly (unspecified tool/format/order/naming/exact-count could harden into requirements a reasonable answer fails) and the grader prompt instructing "Use the Rubric as a Teaching Tool" and "Show Examples Where Helpful" — which pushed rubric vocabulary into student-facing feedback and could hand the student the corrected answer,
+facing feedback item 5 (lenient rubric reading; feedback that guides without solving),
+we decided for adding lenient-reading paragraphs to `RUBRIC_GEN_SYSTEM_PROMPT` — read every requirement the way a student would and take the most natural/lenient reading; the highest level must be reachable by any reasonable attempt that meets the requirement, even if it differs from the reference in approach, structure or naming; when the assignment does not specify how something is done (tool, format, order, naming, exact count) do not require a specific choice; vague qualifiers are generous ("multiple" ≥2, "several" >1) — while keeping the hard constraints verbatim (do not add criteria or finer sub-rules the assignment does not explicitly require / do not nitpick; do not invent quantitative thresholds the assignment does not state), and for rewriting `data/prompt/system.md`: "Use the Rubric as a Teaching Tool" → "Use the Rubric Internally" (the rubric decides the rating but never appears in the feedback), a new "Brevity and Guidance" section (at most two sentences per criterion; Point-Don't-Solve — name the pattern or place to revisit, never write the corrected code/answer/conclusion; Never Reference the Rubric — no naming, quoting or paraphrasing criteria and no "the rubric requires/expects/looks for"), the student-visible-context bullet naming only the assignment instructions and the submission, and the QA-checklist items reworded to match; `data/prompt/lab.md`'s "Show Examples Where Helpful" becomes "Point, Don't Solve",
+and neglected regenerating the existing rubrics, touching the provider/temperature configuration, and changing `rubric_gen`'s pydantic or content validation (unchanged),
+to achieve rubrics that do not punish reasonable alternatives and feedback that points at the gap without supplying the answer,
+accepting that prompt bytes already enter the grading hash (grading digests every `system_prompt`/rubric/reference input), so the next grade run re-grades in full wherever these prompts are referenced (5 assignments reference `lab.md`) — the intended consequence, flagged to the user — that existing rubric files are not regenerated (the user's decision; generation runs only on request), and that real-LLM rubric generation was not re-verified in this batch (ollama offline — recorded as a known limit),
+because the user asked for the laxer reading and the tightened feedback; the five hard-constraint guardrail assertions in `tests/test_rubric_gen.py` were restored alongside and mutation-proofed (deleting a guarded sentence fails the suite).
+
+## Feedback v12 (pre-existing fix): the plagiarism output directory is created at the dispatch point (feedback v12, 2026-09-13)
+
+**Date:** 2026-09-13
+**Status:** Accepted
+**Files:** `src/shared/plagiarism.py`, `tests/test_plagiarism.py`
+
+In the context of the round-1 targeted verifiers finding that a text-path plagiarism run on an assignment without a `plagiarism/` directory died with `ValueError: Invalid output file path` — copydetect rejects a missing `out_file` parent, and while the code path mkdir'd its output dir first, the text path had no mkdir at all,
+facing a same-class pre-existing bug in the module this batch already changed (the project rule: fix that class in-batch, don't record a skip),
+we decided for moving `cfg.output_dir.mkdir(parents=True, exist_ok=True)` into `_run_assignment`, the shared dispatch point both strategies pass through, deleting the code-path-only copy inside `_run_code_plagiarism` (one guarantee, one place) and adding a regression test,
+and neglected keeping per-path mkdir calls (the text path has no earlier guarantee point) or expecting copydetect to create the directory,
+to achieve both plagiarism strategies creating their output directory exactly once before their work starts,
+accepting that the move is invisible for the code path (same `parents=True, exist_ok=True` semantics) and that the bundled fix set also includes the review-screen filter-id crash from item 4 (same batch, found by the same round),
+because the verifiers found it and the failure class — a missing-directory crash — sits directly in the changed module; mutation self-proof: deleting the new mkdir on the fixed tree reproduces the original `ValueError`.
+
+**Verification (feedback v12 batch):** gates re-run independently by the implementer, each round's verifiers and the parent — `uv run pytest -q` **305 passed**; `just test-e2e` **13/13 OK**; `just check` exit 0 (**83 files already formatted** / All checks passed / mdformat clean). Verification rounds: two targeted round-1 verifiers (all items PASS; they found the two pre-existing bugs fixed above plus a tooltip-test flake risk and COSMETIC items) → a 4-item fix pass with a fresh-verifier fix review (all PASS, live mutation self-proofs) → a free-exploration round-2 verifier **APPROVED** (independent full-gate re-runs + cross-cutting audit), whose 2 MINOR (weights semantics, chip label) and 1 MINOR-doc (stale README line) went to a wrap-up fix and a targeted 3/3 re-review (both mutations precisely caught by the tests). Mutation self-proofs across the batch ≈20 (implementer + every round's verifiers); key examples: deleting the mkdir reproduces the original `ValueError`; making `if cfg.embedding_enabled` always-true turns the new tests red; static numbering and replaced colour constants turn the review check red; deleting a guarded prompt sentence fails `test_rubric_gen`; reverting the tooltip predicate to display-only goes false-green. Local dev only (commits `fca04977`, `00ebc5ce`, `ae89626d`, `ec3b4427`; remote main untouched per policy).
