@@ -219,8 +219,11 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="topbar", markup=True)
-        # Breadcrumb + action row share one line (feedback v10 item 1): the
-        # `[⚙ Settings]` button at all three levels (`,`); `[Plagiarism]` is
+        # Breadcrumb + search + actions share one head row (v10 item 1 merged
+        # the action row into it; feedback item 1 moved the search strip in):
+        # the input sits between the breadcrumb (whose level it filters) and
+        # the buttons, so it no longer costs a 3-row strip of its own.
+        # `[⚙ Settings]` at all three levels (`,`); `[Plagiarism]` is
         # course-level only (toggled in render_level). #dash-head needs
         # height auto — Horizontal defaults to 1fr and would clip the row.
         actions = Horizontal(
@@ -231,8 +234,8 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         actions.styles.height = "auto"  # Horizontal defaults to 1fr
         with Horizontal(id="dash-head"):
             yield Static(id="breadcrumb", markup=True)
+            yield Input(placeholder="Search…", id="search-input")
             yield actions
-        yield Input(placeholder="Search…", id="search-input")
         yield DataTable(id="dashboard-table", cursor_type="row", zebra_stripes=True)
         yield _FocusableStatic(id="dash-empty", markup=True)
         yield AssignmentScreen(self.state)

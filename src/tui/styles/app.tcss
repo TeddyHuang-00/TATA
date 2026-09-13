@@ -25,6 +25,14 @@ Screen {
     height: auto;  /* Horizontal defaults to 1fr */
 }
 
+#search-input {
+    /* Input defaults to width: 100%, which would push #dash-actions past the
+       right edge; max-width keeps the buttons flush down to 56 cols (course
+       level — 55 overflows; the repo's minimum exercised width is 80). */
+    width: 30;
+    max-width: 40%;
+}
+
 #dash-actions {
     width: auto;  /* hug the right edge inside #dash-head */
 }

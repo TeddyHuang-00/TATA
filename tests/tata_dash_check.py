@@ -103,17 +103,24 @@ def _svg_lines(svg: str) -> dict[float, str]:
 async def _check_head_row_layout(pilot: Pilot, app: TataApp) -> None:
     """v10 item 1 alignment at 120x40 (mutation guard):
 
-    ``#breadcrumb`` and ``#dash-actions`` sit on the same head row, the
-    actions hug the right edge of the screen, and the exported SVG paints
-    the breadcrumb text and the Settings button text on the same line
+    ``#breadcrumb``, ``#search-input`` and ``#dash-actions`` sit on one head
+    row in that order (the search strip filters the breadcrumb's level), the
+    actions hug the right edge of the screen, and the exported SVG paints the
+    breadcrumb text and the Settings button text on the same line
     (``#breadcrumb { width: 1fr }`` is what keeps the row split like this;
     mutating it to ``auto`` drops the actions off the right edge).
     """
     await pilot.pause()
     breadcrumb = app.query_one("#breadcrumb", Static)
+    search = app.query_one("#search-input", Input)
     actions = app.query_one("#dash-actions", Horizontal)
-    assert breadcrumb.region.y == actions.region.y, (
+    assert search.region.y == breadcrumb.region.y, (
+        search.region,
         breadcrumb.region,
+    )
+    assert breadcrumb.region.x < search.region.x < actions.region.x, (
+        breadcrumb.region,
+        search.region,
         actions.region,
     )
     assert actions.region.x + actions.region.width == app.screen.size.width, (
@@ -384,9 +391,10 @@ async def _check_plagiarism_course(pilot: Pilot, app: TataApp) -> None:
     assert cell(table, 1, 5) == "-", cell(table, 1, 5)
     assert str(table.get_cell_at(Coordinate(0, 5)).style) == "red bold"
     assert str(table.get_cell_at(Coordinate(1, 5)).style) == "dim"
-    # 1fr table: measured 25 rows at 120x40 (v10 item 1 merged the action row
-    # into the breadcrumb line, reclaiming one row)
-    assert table.region.height == 25, table.region
+    # 1fr table: measured 28 rows at 120x40 (v10 item 1 merged the action row
+    # into the breadcrumb line; the search strip joined that row next,
+    # reclaiming its own 3 rows)
+    assert table.region.height == 28, table.region
 
 
 async def _check_pane_row_enter(
