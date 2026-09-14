@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from html import escape
 from pathlib import Path
@@ -14,59 +15,42 @@ from .assignment_config import (
 )
 from .cli_options import ConfigFileCliOptions, parse_cli_args
 from .hooks_runtime import HookRuntime
-from .rubric import get_rubric_definition, slugify_criterion_name
+from .rubric import (
+    RATING_ENUM_MAP,
+    Rating,
+    get_rubric_definition,
+    slugify_criterion_name,
+)
 
 
 class ScoringCliOptions(ConfigFileCliOptions):
     pass
 
 
-def calculate_criterion_score(  # ruff: ignore[too-many-return-statements, too-many-branches]
+def calculate_criterion_score(  # ruff: ignore[too-many-return-statements]
     criterion_pts: int | float,
     rating: str,
     grading_scheme: str | None,
     custom_scale: list[float] | None = None,
+    rating_scale: str | None = None,
 ) -> float:
-    """Calculate score for a single criterion based on rating and grading scheme."""
+    """Calculate score for a single criterion based on rating and grading scheme.
+
+    For the ``custom`` scheme, ``rating_scale`` (the criterion's ``rating``:
+    binary/ternary/likert) selects the ``custom_scale`` entry by the rating's
+    position in its scale (lowest -> highest). Without it the rating cannot be
+    mapped and a ValueError is raised instead of guessing a score.
+    """
     if grading_scheme == "custom":
         if custom_scale is None:
             msg = "Custom grading scheme requires custom_scale, but none provided"
             raise ValueError(msg)
 
-        # Map rating to index in custom scale
-        rating_map = {
-            "binary": {"correct": 1, "incorrect": 0},
-            "ternary": {"correct": 2, "partial": 1, "incorrect": 0},
-            "likert": {
-                "completely incorrect": 0,
-                "somewhat incorrect": 1,
-                "neutral": 2,
-                "somewhat correct": 3,
-                "completely correct": 4,
-            },
-        }
-
-        if rating.lower() not in rating_map.get(grading_scheme, {}):
-            # Fallback for custom scale - assume order matches scale length
-            rating_options = [
-                "incorrect",
-                "partial",
-                "correct",
-                "somewhat correct",
-                "completely correct",
-            ]
-            try:
-                rating_index = rating_options.index(rating.lower())
-                if rating_index < len(custom_scale):
-                    return custom_scale[rating_index]
-                return custom_scale[-1]  # Use last value if out of range
-            except ValueError:
-                return custom_scale[-1]  # Default to last value
-
-        rating_index = rating_map[grading_scheme][rating.lower()]
-        if rating_index < len(custom_scale):
-            return custom_scale[rating_index]
-        return custom_scale[-1]
+        # Map rating to index in custom scale (lowest -> highest)
+        scale_index = _custom_scale_index(rating, rating_scale)
+        if scale_index < len(custom_scale):
+            return custom_scale[scale_index]
+        return custom_scale[-1]  # out of range (impossible with a validated rubric)
 
     # Standard grading schemes
     if grading_scheme in {"standard", None}:
@@ -92,9 +76,36 @@ def calculate_criterion_score(  # ruff: ignore[too-many-return-statements, too-m
         standard_score = calculate_criterion_score(
             criterion_pts, rating, "standard", custom_scale
         )
-        return float(round(standard_score))
+        # Round up to the next whole number (0.5 -> 1 per the documented
+        # example); the epsilon keeps float noise from lifting exact integers.
+        return float(math.ceil(standard_score - 1e-9))
 
     msg = f"Unknown grading scheme: {grading_scheme}"
+    raise ValueError(msg)
+
+
+def _custom_scale_index(rating: str, rating_scale: str | None) -> int:
+    """Index of ``rating`` within its scale, lowest correctness first.
+
+    The rating enums are declared highest -> lowest while ``custom_scale`` is
+    ordered lowest -> highest, so the enum position is mirrored. Unknown
+    ratings raise: silently scoring them would fabricate a grade.
+    """
+    enum_cls = None
+    if rating_scale is not None:
+        try:
+            enum_cls = RATING_ENUM_MAP[Rating(rating_scale)]
+        except ValueError:
+            enum_cls = None
+    if enum_cls is not None:
+        try:
+            value = enum_cls(rating.lower())
+        except ValueError:
+            pass
+        else:
+            members = list(enum_cls)
+            return len(members) - 1 - members.index(value)
+    msg = f"Unknown rating {rating!r} for custom grading scale"
     raise ValueError(msg)
 
 
@@ -201,6 +212,7 @@ def score_submission(  # ruff: ignore[too-many-branches]
             rating,
             criterion.grading,
             criterion.custom_scale,
+            criterion.rating,
         )
         total_score += score
 

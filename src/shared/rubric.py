@@ -122,7 +122,7 @@ class Criterion(BaseModel):
     )
     rating: Rating = Field(..., description="Rating scale to use for evaluation.")
     grading: Grading | None = Field(
-        ...,
+        default=None,
         description="Grading scheme to use for evaluation. If not specified, it will default to STANDARD.",
     )
     custom_scale: list[float] | None = Field(
@@ -130,7 +130,9 @@ class Criterion(BaseModel):
         description="Custom grading scale to use when grading is set to CUSTOM. The length of the custom scale must exactly match the number of ratings in the rating scale, and the values should be ordered from lowest to highest.",
     )
     pts: int | float = Field(
-        ..., description="Total points allocated for this criterion."
+        ...,
+        ge=0,
+        description="Total points allocated for this criterion. 0 is only meaningful for penalty criteria scored via a custom scale.",
     )
 
     @model_validator(mode="after")
@@ -151,6 +153,10 @@ class Criterion(BaseModel):
                 for i in range(len(self.custom_scale) - 1)
             ):
                 msg = f"Values in custom grading scale must be ordered from lowest to highest for criterion '{self.name}'."
+                raise ValueError(msg)
+
+            if max(self.custom_scale) > self.pts:
+                msg = f"custom_scale values must not exceed pts ({self.pts}) for criterion '{self.name}'; highest value is {max(self.custom_scale)}."
                 raise ValueError(msg)
         return self
 
