@@ -177,6 +177,7 @@ def _analyze_graded_files(
                 rating,
                 criterion.grading,
                 criterion.custom_scale,
+                criterion.rating,
             )
 
             submission_total += score
