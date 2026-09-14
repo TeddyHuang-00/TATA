@@ -167,14 +167,17 @@ def course_student_display_name(
 # -- field-level TOML patching (mirrors canvas_fetch's [fetch] patching) ----
 
 
-def _open_alias_doc(path: Path) -> tomlkit.TOMLDocument:
-    """Parse an alias.toml; missing files start from the header comment,
-    corrupt files from an empty document (reads tolerate them too)."""
+def _open_alias_doc(path: Path) -> tomlkit.TOMLDocument | None:
+    """Parse an alias.toml; missing files start from the header comment.
+    Returns None for an existing-but-unparsable (or unreadable) file: the
+    writers skip it — a corrupt file may still be hand-recoverable, and
+    overwriting it with a fresh doc would destroy that content (set_alias
+    already refused this class of file)."""
     if path.exists():
         try:
             return tomlkit.parse(path.read_text(encoding="utf-8"))
-        except tomlkit.exceptions.ParseError:
-            return tomlkit.parse("")
+        except (OSError, tomlkit.exceptions.ParseError):
+            return None
     return tomlkit.parse(_HEADER)
 
 
@@ -191,6 +194,12 @@ def upsert_student_aliases(assignment_root: Path, entries: dict[str, str]) -> No
     path = assignment_root / "alias.toml"
     entries = {str(k): str(v) for k, v in entries.items()}
     doc = _open_alias_doc(path)
+    if doc is None:
+        print(
+            f"[alias] {path} is corrupt/unparsable; entries not written "
+            "(file left untouched)"
+        )
+        return
     if "student" not in doc:
         doc["student"] = {}
     student = doc["student"]
@@ -305,8 +314,15 @@ def _roster_entries(roster: Path) -> dict[str, str]:
 
 
 def _seed_section(alias_path: Path, table: str, key: str, value: str) -> None:
-    """Add ``key = value`` to ``[table]`` in alias_path if the key is absent."""
+    """Add ``key = value`` to ``[table]`` in alias_path if the key is absent.
+    A corrupt/unparsable file is left untouched (never rewritten as fresh)."""
     doc = _open_alias_doc(alias_path)
+    if doc is None:
+        print(
+            f"[alias] {alias_path} is corrupt/unparsable; entry not written "
+            "(file left untouched)"
+        )
+        return
     if table not in doc:
         doc[table] = {}
     if key not in doc[table]:
@@ -334,10 +350,18 @@ def _resolve_renames(
     pending_dirs: list[str],
     entry_ids: list[int],
 ) -> tuple[list[tuple[Path, str, dict[str, str]]], list[str]]:
-    """Map non-numeric dirs to course-list ids by index order (sorted dirs
-    vs sorted entries). Returns (targets, ambiguity messages): when the
-    counts differ or an id already names a child dir, no targets and a
-    report message (the dirs are left unchanged)."""
+    """Map non-numeric dirs to course-list ids. Returns (targets, ambiguity
+    messages); on ambiguity the dirs are left unchanged.
+
+    Preferred: by name — the course ``alias.toml``'s ``[assignment]`` table
+    maps id -> display name (seeded by fetch when the dir was created), so a
+    pending dir is renamed to the id whose alias equals its dir name.
+    Index-order zipping (sorted dirs vs sorted ids) is the fallback for the
+    zero-name-info case only: lexicographic title order ("Lab 10" < "Lab 2")
+    is unrelated to chronological id order, so an index zip on a
+    name-matching course silently renames every dir — config, raw, graded,
+    seeded alias — to the wrong assignment id (audit). Partial name matches
+    are ambiguous and refused."""
     if len(pending_dirs) != len(entry_ids):
         return [], [
             f"ambiguous: {len(pending_dirs)} named dirs vs {len(entry_ids)} "
@@ -354,13 +378,46 @@ def _resolve_renames(
             f"ambiguous: an id in {course_config} already names a child dir; "
             "dirs left unchanged"
         ]
+
+    entry_id_set = {str(aid) for aid in entry_ids}
+    alias_names = load_alias_file(course_dir / "alias.toml").get("assignment", {})
+    name_to_ids: dict[str, list[str]] = {}
+    for key, value in alias_names.items():
+        if key in entry_id_set and value.strip():
+            name_to_ids.setdefault(value.strip().lower(), []).append(key)
+    matches: dict[str, str | None] = {
+        child_name: (
+            name_to_ids[child_name.strip().lower()][0]
+            if child_name.strip().lower() in name_to_ids
+            and len(name_to_ids[child_name.strip().lower()]) == 1
+            else None
+        )
+        for child_name in pending_dirs
+    }
+    unmatched = [name for name, matched in matches.items() if matched is None]
+    if unmatched and alias_names:
+        return [], [
+            f"ambiguous: dir(s) {', '.join(unmatched)} "
+            + (
+                "do not match any [assignment] alias name"
+                if len(unmatched) == len(pending_dirs)
+                else "match [assignment] alias names but some dirs do not"
+            )
+            + f" in {course_dir / 'alias.toml'}; dirs left unchanged "
+            "(add id = name entries or rename the dirs manually)"
+        ]
+    if unmatched:
+        # Zero name info at all: legacy index-order zip — the only signal
+        # available (documented fallback).
+        matches = dict(zip(pending_dirs, map(str, entry_ids), strict=True))
+
     targets = []
-    for child_name, aid in zip(pending_dirs, entry_ids, strict=True):
+    for child_name in pending_dirs:
         child = course_dir / child_name
         roster = child / "roster.csv"
         targets.append((
             child,
-            str(aid),
+            matches[child_name],
             _roster_entries(roster) if roster.is_file() else {},
         ))
     return targets, []
@@ -373,10 +430,12 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
     ``[assignment]`` and the assignment alias.toml ``[student]`` from
     roster.csv, then delete roster.csv.
 
-    Ids come from the course config's list, matched to dirs by index order
-    (sorted dirs vs sorted entries) — assignment configs no longer carry
-    [fetch]. A count mismatch or a collision with an already-numeric dir is
-    ambiguous: the dirs are left unchanged and reported. Returns one
+    Ids come from the course config's list, matched to dirs by name via the
+    course alias.toml's [assignment] table (seeded by fetch); index order
+    (sorted dirs vs sorted entries) is only the zero-name-info fallback.
+    A count mismatch, an unmatched/partial name match, or a collision with
+    an already-numeric dir is ambiguous: the dirs are left unchanged and
+    reported. Returns one
     description string per intended action; with ``dry_run=True`` it only
     reports and changes nothing. Idempotent: once every child dir is named
     after its id, the second run yields no actions.
@@ -417,6 +476,11 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
                 f"{child.with_name(new_name) / 'alias.toml'} "
                 f"({len(entries)} entries), delete roster.csv"
             )
+        elif (child / "roster.csv").is_file():
+            actions.append(
+                f"warning: {child / 'roster.csv'} has no usable rows; kept "
+                "for inspection, no student aliases seeded"
+            )
 
     if dry_run:
         return actions
@@ -438,7 +502,10 @@ def migrate_course_to_ids(course_dir: Path, *, dry_run: bool = False) -> list[st
         _seed_section(course_dir / "alias.toml", "assignment", new_name, child.name)
         if entries:
             upsert_student_aliases(migrated, entries)
-        (migrated / "roster.csv").unlink(missing_ok=True)
+            # Only a roster that actually seeded aliases is deleted; a
+            # malformed one is kept for manual inspection (audit: it was
+            # destroyed with nothing recorded).
+            (migrated / "roster.csv").unlink(missing_ok=True)
     return actions
 
 

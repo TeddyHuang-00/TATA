@@ -313,3 +313,117 @@ def test_migrate_ran_and_idempotent(tmp_path: Path) -> None:
     # second run: no actions left
     assert migrate_course_to_ids(course) == []
     assert migrate_course_to_ids(course, dry_run=True) == []
+
+
+# -- audit fixes: name-based rename, corrupt alias safety, roster safety ---
+
+
+def _make_named_course(
+    tmp_path: Path,
+    names_ids: dict[str, int],
+    aliases: dict[str, str] | None,
+) -> Path:
+    """Course with named assignment dirs + [[fetch.assignments]] ids; seeds a
+    course alias.toml [assignment] table when ``aliases`` is given."""
+    course = tmp_path / "data" / "111111"
+    entries = []
+    for name, aid in names_ids.items():
+        d = course / name
+        d.mkdir(parents=True)
+        (d / "config.toml").write_text(
+            "[grading]\nrubric = 'x.toml'\nsystem_prompt = 'p.md'\nprovider = 'x'\n",
+            encoding="utf-8",
+        )
+        entries.append(f"[[fetch.assignments]]\nid = {aid}\n")
+    (course / "config.toml").write_text(
+        "[fetch]\ncourse_id = 111111\n" + "".join(entries), encoding="utf-8"
+    )
+    if aliases is not None:
+        rows = "".join(f'{k} = "{v}"\n' for k, v in aliases.items())
+        (course / "alias.toml").write_text(f"[assignment]\n{rows}", encoding="utf-8")
+    return course
+
+
+def test_migrate_matches_by_name_not_index_order(tmp_path: Path) -> None:
+    """Regression: dirs were zipped by sorted index — lexicographic title
+    order ("Lab 10" < "Lab 2") vs chronological id order, so a count-matching
+    course renamed every dir to the wrong id. The course alias.toml
+    [assignment] table (seeded by fetch) now drives the mapping by name."""
+    course = _make_named_course(
+        tmp_path,
+        {"Lab 10": 222223, "Lab 2": 222222},
+        {"222222": "Lab 2", "222223": "Lab 10"},
+    )
+    migrate_course_to_ids(course)
+
+    assert (course / "222222").is_dir()  # was "Lab 2"
+    assert (course / "222223").is_dir()  # was "Lab 10"
+    aliases = load_alias_file(course / "alias.toml")["assignment"]
+    assert aliases["222222"] == "Lab 2"
+    assert aliases["222223"] == "Lab 10"
+
+
+def test_migrate_partial_name_match_refused(tmp_path: Path) -> None:
+    """Only some dirs match alias names: ambiguous — nothing is renamed
+    (a silent index zip over the rest would be the old trap)."""
+    course = _make_named_course(
+        tmp_path,
+        {"Lab 10": 222223, "Lab 2": 222222},
+        {"222222": "Lab 2"},  # only one of the two names
+    )
+    actions = migrate_course_to_ids(course, dry_run=True)
+    assert any("ambiguous" in a for a in actions)
+    assert (course / "Lab 10").is_dir()
+    assert (course / "Lab 2").is_dir()
+
+
+def test_migrate_alias_names_without_dir_match_refused(tmp_path: Path) -> None:
+    """Alias names exist but none matches a dir name (e.g. dirs were
+    hand-renamed): refuse instead of falling back to the index zip."""
+    course = _make_named_course(
+        tmp_path,
+        {"Lab 10": 222223, "Lab 2": 222222},
+        {"222222": "Other A", "222223": "Other B"},
+    )
+    actions = migrate_course_to_ids(course, dry_run=True)
+    assert any("ambiguous" in a for a in actions)
+    assert (course / "Lab 10").is_dir()
+    assert (course / "Lab 2").is_dir()
+
+
+def test_upsert_skips_corrupt_alias_file(tmp_path: Path) -> None:
+    """Regression: an unparsable alias.toml used to be replaced by a fresh
+    doc on the next upsert, destroying hand-recoverable content."""
+    path = tmp_path / "alias.toml"
+    original = "[student\n100 = Alpha"  # invalid TOML, still readable
+    path.write_text(original, encoding="utf-8")
+
+    upsert_student_aliases(tmp_path, {"100": "Alpha"})
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_migrate_keeps_malformed_roster(tmp_path: Path) -> None:
+    """Regression: roster.csv was deleted unconditionally while alias seeding
+    only happened when rows parsed — a malformed roster was destroyed with
+    nothing recorded. It is now kept for inspection with a warning."""
+    course = tmp_path / "data" / "111111"
+    d = course / "assignment-one"
+    d.mkdir(parents=True)
+    (d / "config.toml").write_text(
+        "[grading]\nrubric = 'x.toml'\nsystem_prompt = 'p.md'\nprovider = 'x'\n",
+        encoding="utf-8",
+    )
+    (d / "roster.csv").write_text(
+        "user_id,user_name,sortable_name\n", encoding="utf-8"
+    )  # header only
+    (course / "config.toml").write_text(
+        "[fetch]\ncourse_id = 111111\n[[fetch.assignments]]\nid = 222222\n",
+        encoding="utf-8",
+    )
+
+    actions = migrate_course_to_ids(course)
+
+    assert any("no usable rows" in a for a in actions)
+    assert (course / "222222").is_dir()
+    assert (course / "222222" / "roster.csv").is_file()  # kept
