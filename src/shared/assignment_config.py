@@ -77,7 +77,7 @@ class ProcessingSection(BaseModel):
     visual_evaluation: bool = Field(
         default=False,
         validation_alias=AliasChoices("visual_evaluation", "render_screenshots"),
-        description="Render submission screenshots (docx/pdf pages, embedded ipynb images, image submissions) for multimodal grading. Optional, default off.",
+        description="Render submission screenshots (docx/pptx/pdf pages, notebook image outputs, image submissions) for multimodal grading. Optional, default off.",
     )
 
 

@@ -50,8 +50,10 @@ from .convert import (
 )
 from .hooks_runtime import HookRuntime
 from .screenshots import (
+    _PAGE_FORMATS,
     _cleanup_stem_shots,
     _image_to_pdf,
+    _notebook_has_images,
     _render_screenshots,
     _render_stem_screenshots,
 )
@@ -130,7 +132,7 @@ def _postprocess_markdown(  # ruff: ignore[too-many-arguments]
     return processed
 
 
-def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
+def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positional-arguments, too-many-branches]
     input_file: Path,
     output_file: Path,
     input_format: InputFormat,
@@ -202,6 +204,9 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
 
         output_file.write_text(content, encoding="utf-8")
 
+        if not content.strip():
+            print(f"[warn] {input_file.name} converted to empty markdown")
+
     if input_format == "ipynb" and remove_nbconvert_assets:
         assets_dir = output_file.parent / f"{output_file.stem}_files"
         if assets_dir.exists() and assets_dir.is_dir():
@@ -226,13 +231,27 @@ def _iter_raw_items(raw_dir: Path) -> list[Path]:
     ]
 
 
-def _screenshots_missing(shots_dir: Path, output_stem: str) -> bool:
-    """True when no page (``_pN``) or embedded (``_iN``) screenshots exist
-    for ``output_stem`` — a cache hit re-renders in that case."""
-    return not (
-        next(shots_dir.glob(f"{output_stem}_p*.png"), None)
-        or next(shots_dir.glob(f"{output_stem}_i*.png"), None)
-    )
+def _screenshots_missing(
+    shots_dir: Path, output_stem: str, members: list[tuple[Path, InputFormat]]
+) -> bool:
+    """True when the shots on disk lack a class ``members`` would produce —
+    a cache hit re-renders then. Page shots (``_pN``) are expected when any
+    member is docx/pptx/pdf/image; embedded shots (``_iN``) when any
+    notebook member carries image outputs. Members that render nothing
+    (md/txt/html, image-less notebooks) never count, so cache hits
+    converge. Classes OR together: any missing class re-renders the stem.
+
+    Page shots cannot be attributed to a member — a page-class member
+    whose pages were deleted under a stem that still has another member's
+    pages stays undetected; delete the stem's shots to force a full
+    refresh."""
+    if any(fmt in _PAGE_FORMATS for _, fmt in members) and not next(
+        shots_dir.glob(f"{output_stem}_p*.png"), None
+    ):
+        return True
+    return any(
+        fmt == "ipynb" and _notebook_has_images(path) for path, fmt in members
+    ) and not next(shots_dir.glob(f"{output_stem}_i*.png"), None)
 
 
 def _cached(cache: dict, stem: str, item_hash: str, output_file: Path) -> bool:
@@ -285,8 +304,9 @@ def _item_files(
 ) -> list[tuple[Path, InputFormat]]:
     """Supported files of one raw item: a top-level file itself, or the
     files inside a folder (sorted by name), filtered by the configured
-    formats when set. Unsupported files inside a folder are logged as
-    skips instead of being dropped silently."""
+    formats when set. Folder members dropped for their format (unsupported
+    or excluded by ``input_format``) are logged as skips instead of being
+    dropped silently."""
     files = (
         [item]
         if item.is_file()
@@ -308,6 +328,8 @@ def _item_files(
                 print(f"[skip] {f.name} (unsupported format)")
             continue
         if configured_formats is not None and fmt not in configured_formats:
+            if item.is_dir():
+                print(f"[skip] {f.name} (excluded by input_format)")
             continue
         found.append((f, fmt))
     return found
@@ -671,6 +693,9 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
         if not files:
             if item.is_dir():
                 print(f"[skip] folder {item.name} (no supported files)")
+            elif _format_for_suffix(item.suffix) is not None:
+                # Supported format dropped by [processing].input_format.
+                print(f"[skip] {item.name} (excluded by input_format)")
             else:
                 print(f"[skip] {item.name} (unsupported format)")
             continue
@@ -686,14 +711,14 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
             if entry is None:
                 print(f"[cached] {output_file.name} (unchanged)")
                 if processing.visual_evaluation and _screenshots_missing(
-                    processed_dir / "screenshots", output_stem
+                    processed_dir / "screenshots",
+                    output_stem,
+                    [(raw_file, file_format)],
                 ):
                     _render_stem_screenshots(
                         processed_dir,
                         output_stem,
                         [(raw_file, file_format)],
-                        nbconvert_template,
-                        template_dir_path,
                     )
                 continue
 
@@ -747,8 +772,6 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
                         processed_dir,
                         output_stem,
                         [(input_file, file_format)],
-                        nbconvert_template,
-                        template_dir_path,
                     )
                 if hook_runtime is not None:
                     hook_runtime.run(
@@ -787,14 +810,12 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
             if entry is None:
                 print(f"[cached] {output_file.name} (unchanged)")
                 if processing.visual_evaluation and _screenshots_missing(
-                    processed_dir / "screenshots", item.name
+                    processed_dir / "screenshots", item.name, files
                 ):
                     _render_stem_screenshots(
                         processed_dir,
                         item.name,
                         files,
-                        nbconvert_template,
-                        template_dir_path,
                     )
                 continue
             src, item_hash = entry
@@ -872,8 +893,6 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
                             item.name,
                             processed_dir,
                             file_format,
-                            nbconvert_template,
-                            template_dir_path,
                             page_offset=page_offset,
                             img_offset=img_offset,
                         )

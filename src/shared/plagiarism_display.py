@@ -21,6 +21,7 @@ from rich.markup import escape
 
 from src.shared.aliases import student_display_name
 from src.shared.processing import (
+    _format_for_suffix,
     convert_docx_to_markdown,
     convert_html_to_markdown,
     convert_ipynb_to_markdown,
@@ -156,6 +157,14 @@ def convert_preview(raw: Path) -> tuple[str, str]:
         kind, converter = "text", convert_pptx_to_markdown
     elif suffix == ".html":
         kind, converter = "text", convert_html_to_markdown
+    elif _format_for_suffix(suffix) is not None:
+        # Preprocess-supported binary (pdf/image): nothing to show as text
+        # here — the extraction lives in the processed markdown.
+        return (
+            "text",
+            f"{raw.name}: no text preview for this format. "
+            f"Preprocess converts it to markdown — see processed/{raw.stem}.md.",
+        )
     else:
         return "text", f"Unsupported raw file type: {raw.name}"
     with tempfile.TemporaryDirectory() as tmp:

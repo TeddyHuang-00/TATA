@@ -159,7 +159,7 @@ _TOOLTIPS: dict[str, str] = {
     "processing.strip_html_callouts": "Drop ':::' callout fence lines",
     "processing.strip_html_escaped_backslashes": "Replace escaped backslashes with a space",
     "processing.strip_html_div_tags": "Unwrap <div> tags in HTML submissions",
-    "processing.visual_evaluation": "Also grade page screenshots (slower)",
+    "processing.visual_evaluation": "Also grade docx/pptx/pdf/image pages + notebook image outputs (slower)",
 }
 
 # Context -> writable TOML sections (design 05 §2.5) is gone: a settings

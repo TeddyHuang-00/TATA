@@ -46,7 +46,7 @@ from .pipeline import (
 )
 from .screenshots import (
     _cleanup_stem_shots,
-    _extract_embedded_images,
+    _extract_notebook_images,
     _image_to_pdf,
     _pdftoppm_pages,
     _render_screenshots,
@@ -64,7 +64,7 @@ __all__ = [
     "_cleanup_stem_shots",
     "_convert_html_tables_to_markdown",
     "_convert_markdown",
-    "_extract_embedded_images",
+    "_extract_notebook_images",
     "_format_for_suffix",
     "_image_to_pdf",
     "_item_files",

@@ -174,6 +174,20 @@ async def main() -> None:  # ruff: ignore[too-many-statements]
         kind, content = convert_preview(raw / "unsupported.xyz")
         assert kind == "text", kind
         assert "Unsupported" in content, kind
+        # preprocess-supported binaries (pdf/image) have no text preview:
+        # the message points at the converted markdown instead of claiming
+        # the format is unsupported (never read here — suffix-driven)
+        (raw / "100004.pdf").write_bytes(b"%PDF-1.4 fake")
+        kind, content = convert_preview(raw / "100004.pdf")
+        assert kind == "text", (kind, content[:80])
+        assert "no text preview" in content, (kind, content[:80])
+        assert "processed/100004.md" in content, (kind, content[:80])
+        assert "Unsupported" not in content, (kind, content[:80])
+        (raw / "100005.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        kind, content = convert_preview(raw / "100005.png")
+        assert kind == "text", (kind, content[:80])
+        assert "no text preview" in content, (kind, content[:80])
+        assert "Unsupported" not in content, (kind, content[:80])
 
         args = ScoreReviewCliOptions(score_dir=graded)
         app = Viewer(args)

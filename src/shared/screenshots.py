@@ -1,18 +1,26 @@
-"""Screenshot rendering for visual evaluation: docx/pdf/image via
-soffice->pdftoppm and ipynb via embedded-image extraction.
+"""Screenshot rendering for visual evaluation: docx/pptx/pdf/image via
+soffice->pdftoppm and ipynb via image outputs read from the notebook JSON.
 """
 
 from __future__ import annotations
 
 import base64
-import re
+import io
+import json
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 from PIL import Image, ImageOps
 
 from .assignment_config import InputFormat
+
+# Rendered-shot classes: _pN pages come from these formats (soffice for
+# docx/pptx, pdftoppm/PIL for pdf/image), _iN images from ipynb outputs.
+# Shared with the cache-hit freshness check so the two never drift.
+_SOFFICE_FORMATS = frozenset({"docx", "pptx"})
+_PAGE_FORMATS = _SOFFICE_FORMATS | {"pdf", "image"}
 
 
 def _image_to_pdf(input_path: Path, out_pdf: Path) -> None:
@@ -29,37 +37,97 @@ def _image_to_pdf(input_path: Path, out_pdf: Path) -> None:
         img.convert("RGB").save(out_pdf, "PDF", resolution=150)
 
 
-def _extract_embedded_images(
-    md_text: str, output_stem: str, shots_dir: Path, img_offset: int = 0
-) -> int:
-    """Save inline base64 images from markdown as ``{output_stem}_i{n}.png``
-    (n from ``img_offset`` so folder members continue the same stem's
-    numbering) in ``shots_dir``, stripping the image links from the returned
-    copy. Returns how many images were saved.
+def _first_image_payload(output: dict) -> tuple[str, str | list[str]] | None:
+    """(mime, base64 payload) of one notebook output's first image, PNG
+    preferred over other representations of the same figure."""
+    data = output.get("data") or {}
+    for mime in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+        payload = data.get(mime)
+        if payload is not None:
+            return mime, payload
+    return None
 
-    Matches ``![alt](data:image/<png|jpeg|gif>;base64,<b64>)`` with any alt
-    text; the payload runs to the closing ``)`` (no nested parens). Invalid
-    payloads are left in place — the regular base64 cleanup drops them from
-    the written md anyway.
+
+def _write_png_from_payload(target: Path, mime: str, payload: str | list[str]) -> None:
+    """Write one base64 notebook image payload to ``target`` as a valid PNG:
+    PNG payloads stay byte-identical, other image mimes are re-encoded
+    through PIL. The bytes are staged in a sibling ``.<name>.tmp`` (no
+    ``_p*``/``_i*`` glob match) and moved in with ``Path.replace`` (atomic
+    ``os.replace`` under the hood), so a failed decode/encode/write never
+    leaves a partial PNG behind."""
+    raw = base64.b64decode(payload if isinstance(payload, str) else "".join(payload))
+    if mime == "image/png":
+        # Verify without re-encoding: the written bytes must stay identical
+        # to the payload (test-pinned).
+        with Image.open(io.BytesIO(raw)) as check:
+            check.verify()
+        data = raw
+    else:
+        buf = io.BytesIO()
+        with Image.open(io.BytesIO(raw)) as src:
+            src.save(buf, "PNG")
+        data = buf.getvalue()
+    tmp = target.with_name(f".{target.name}.tmp")
+    try:
+        tmp.write_bytes(data)
+        tmp.replace(target)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _iter_notebook_images(
+    notebook_path: Path,
+) -> Iterator[tuple[str, str | list[str]]]:
+    """(mime, base64 payload) of every image output of the notebook, in
+    cell/output order — the single JSON traversal the extractor and the
+    freshness check share. An unreadable notebook prints and yields
+    nothing."""
+    try:
+        notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[screenshots] failed to read {notebook_path.name}: {exc}")
+        return
+    for cell in notebook.get("cells", []):
+        for output in cell.get("outputs", []):
+            image = _first_image_payload(output)
+            if image is not None:
+                yield image
+
+
+def _notebook_has_images(notebook_path: Path) -> bool:
+    """True when any output carries an image payload. The class predicate
+    for the cache-hit freshness check: an image-less notebook produces no
+    ``_iN`` shots, so counting it would re-render forever."""
+    return next(_iter_notebook_images(notebook_path), None) is not None
+
+
+def _extract_notebook_images(
+    notebook_path: Path, output_stem: str, shots_dir: Path, img_offset: int = 0
+) -> int:
+    """Save the notebook's embedded image outputs as ``{output_stem}_i{n}.png``
+    (n from ``img_offset`` so folder members continue the same stem's
+    numbering) in ``shots_dir``. Returns how many images were saved.
+
+    Jupyter keys figure payloads (base64) by mime type under
+    ``cell.outputs[*].data``; nbconvert's markdown output only references
+    them as external files, so the raw notebook JSON is the source of
+    truth. Every written file is a valid PNG, in cell/output order, one
+    image per output; unreadable payloads are skipped with a message.
     """
     shots_dir.mkdir(parents=True, exist_ok=True)
     n = 0
-
-    def save_image(match: re.Match[str]) -> str:
-        nonlocal n
+    for mime, payload in _iter_notebook_images(notebook_path):
+        target = shots_dir / f"{output_stem}_i{img_offset + n}.png"
         try:
-            data = base64.b64decode(match.group(1))
-        except Exception:
-            return match.group(0)
-        (shots_dir / f"{output_stem}_i{img_offset + n}.png").write_bytes(data)
+            _write_png_from_payload(target, mime, payload)
+        except Exception as exc:
+            print(
+                f"[screenshots] skipped unreadable {mime} output "
+                f"in {notebook_path.name}: {exc}"
+            )
+            continue
         n += 1
-        return ""
-
-    re.sub(
-        r"!\[.*?\]\(data:image/(?:png|jpeg|gif);base64,([^)]+)\)",
-        save_image,
-        md_text,
-    )
     return n
 
 
@@ -105,38 +173,27 @@ def _pdftoppm_pages(
     return len(rendered)
 
 
-def _render_screenshots(  # ruff: ignore[too-many-return-statements, too-many-arguments, too-many-positional-arguments, too-many-branches]
+def _render_screenshots(  # ruff: ignore[too-many-return-statements, too-many-arguments, too-many-positional-arguments]
     input_file: Path,
     output_stem: str,
     processed_dir: Path,
     file_format: InputFormat,
-    template_name: str | None = None,
-    template_dir: Path | None = None,
     page_offset: int = 0,
     img_offset: int = 0,
 ) -> tuple[int, int]:
     """Render screenshots for visual evaluation (best-effort, never raises):
-    docx/pdf -> one PNG per page (all pages, no truncation), image -> one
-    PNG via PIL, ipynb -> embedded base64 images saved from the converted
-    markdown. ``page_offset``/``img_offset`` shift the numbering so folder
-    members continue the same stem (R2: no per-member overwrite). Returns
-    (pages rendered, images rendered). Missing tools or render failures
-    print and return (0, 0)."""
+    docx/pptx/pdf -> one PNG per page (all pages, no truncation), image ->
+    one PNG via PIL, ipynb -> image outputs saved from the notebook JSON.
+    ``page_offset``/``img_offset`` shift the numbering so folder members
+    continue the same stem (R2: no per-member overwrite). Returns (pages
+    rendered, images rendered). Missing tools or render failures print and
+    return (0, 0)."""
     shots_dir = processed_dir / "screenshots"
     pdf_dir: Path | None = None
     try:  # ruff: ignore[too-many-statements-in-try-clause]
         if file_format == "ipynb":
-            shots_dir.mkdir(parents=True, exist_ok=True)
-            kwargs: dict = {}
-            if template_name:
-                kwargs["template_name"] = template_name
-            if template_dir:
-                kwargs["extra_template_basedirs"] = [str(template_dir)]
-            from nbconvert import MarkdownExporter  # ruff: ignore[import-outside-top-level]
-
-            text, _ = MarkdownExporter(**kwargs).from_filename(str(input_file))
-            n_images = _extract_embedded_images(
-                text, output_stem, shots_dir, img_offset=img_offset
+            n_images = _extract_notebook_images(
+                input_file, output_stem, shots_dir, img_offset=img_offset
             )
             return (0, n_images)
         if file_format == "image":
@@ -150,10 +207,10 @@ def _render_screenshots(  # ruff: ignore[too-many-return-statements, too-many-ar
                 f"for {output_stem}"
             )
             return (1, 0)
-        if file_format not in {"docx", "pdf"}:
+        if file_format not in _PAGE_FORMATS:  # ipynb/image handled above
             return (0, 0)
         if not shutil.which("pdftoppm") or (
-            file_format == "docx" and not shutil.which("soffice")
+            file_format in _SOFFICE_FORMATS and not shutil.which("soffice")
         ):
             print(
                 f"[screenshots] skipped {input_file.name}: soffice/pdftoppm not found"
@@ -161,7 +218,7 @@ def _render_screenshots(  # ruff: ignore[too-many-return-statements, too-many-ar
             return (0, 0)
         shots_dir.mkdir(parents=True, exist_ok=True)
         pdf_dir = shots_dir / "_pdf"
-        if file_format == "docx":
+        if file_format in _SOFFICE_FORMATS:
             pdf_dir.mkdir(exist_ok=True)
             try:
                 subprocess.run(
@@ -213,8 +270,6 @@ def _render_stem_screenshots(
     processed_dir: Path,
     output_stem: str,
     files: list[tuple[Path, InputFormat]],
-    template_name: str | None,
-    template_dir: Path | None,
 ) -> None:
     """Clean old shots for ``output_stem``, then render each member file in
     order with globally continuous page/image numbers (R2). Best-effort:
@@ -228,8 +283,6 @@ def _render_stem_screenshots(
             output_stem,
             processed_dir,
             file_format,
-            template_name,
-            template_dir,
             page_offset=page_offset,
             img_offset=img_offset,
         )

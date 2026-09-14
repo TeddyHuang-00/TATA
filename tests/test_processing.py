@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import anydoc
 import nbformat
@@ -18,12 +19,12 @@ from src.shared.grading import _read_reference_text
 from src.shared.processing import (
     SUPPORTED_INPUT_FORMATS,
     _format_for_suffix,
-    _render_screenshots,
     convert_ipynb_to_markdown,
     convert_pdf_to_markdown,
     convert_pptx_to_markdown,
     preprocess_assignment,
 )
+from src.shared.screenshots import _write_png_from_payload
 
 
 def test_txt_text_submission_converts_as_html(tmp_path: Path) -> None:
@@ -629,6 +630,93 @@ def test_top_level_unsupported_file_prints_skip(
     assert result["success"] == 1
 
 
+def test_empty_conversion_warns_single_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A conversion that succeeds but yields empty markdown prints a
+    [warn] line (visibility); the output is still written and the student
+    still counts as processed (warn only, no gate)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100.md").write_text("", encoding="utf-8")
+    _write_grading_config(tmp_path)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[warn] 100.md converted to empty markdown" in out
+    assert (tmp_path / "processed" / "100.md").is_file()
+    assert result is not None
+    assert result["success"] == 1
+    assert result["errors"] == 0
+
+
+def test_empty_conversion_warns_folder_member(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same shared empty-content check fires for folder members: the
+    empty member warns while the folder still converts and counts."""
+    raw = tmp_path / "raw"
+    (raw / "990019").mkdir(parents=True)
+    (raw / "990019" / "990019.md").write_text("", encoding="utf-8")
+    (raw / "990019" / "990019_1.md").write_text("part two", encoding="utf-8")
+    _write_grading_config(tmp_path)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[warn] 990019.md converted to empty markdown" in out
+    md = tmp_path / "processed" / "990019.md"
+    assert md.is_file()
+    assert "part two" in md.read_text(encoding="utf-8")
+    assert result is not None
+    assert result["success"] == 1
+
+
+def test_input_format_filter_logs_excluded_folder_member(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A folder member dropped by [processing].input_format prints its own
+    [skip] line (was silent) while the folder still converts the rest."""
+    raw = tmp_path / "raw"
+    (raw / "990019").mkdir(parents=True)
+    (raw / "990019" / "990019.md").write_text("# kept", encoding="utf-8")
+    (raw / "990019" / "990019.pdf").write_bytes(b"%PDF-1.4 fake")
+    _write_grading_config(tmp_path, '[processing]\ninput_format = ["markdown"]\n')
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[skip] 990019.pdf (excluded by input_format)" in out
+    assert "# kept" in (tmp_path / "processed" / "990019.md").read_text(
+        encoding="utf-8"
+    )
+    assert result is not None
+    assert result["success"] == 1
+
+
+def test_top_level_input_format_filter_says_excluded_not_unsupported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A top-level file whose (supported) format is dropped by
+    [processing].input_format reports (excluded by input_format) — the old
+    wording wrongly called it an unsupported format."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "100001.md").write_text("# kept", encoding="utf-8")
+    (raw / "100002.pdf").write_bytes(b"%PDF-1.4 fake")
+    _write_grading_config(tmp_path, '[processing]\ninput_format = ["markdown"]\n')
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[skip] 100002.pdf (excluded by input_format)" in out
+    assert "unsupported format" not in out
+    assert (tmp_path / "processed" / "100001.md").exists()
+    assert result is not None
+    assert result["success"] == 1
+
+
 def test_mixed_layout_skips_stale_flat_duplicates(tmp_path: Path) -> None:
     """Regression: raw/ with BOTH a folderized student (990019/) and stale
     flat leftovers of the previous flat fetch (990019.docx, 990019_1.docx)
@@ -794,8 +882,20 @@ def _fake_tools(
 
     if which is None:
         which = {"soffice": "/usr/bin/soffice", "pdftoppm": "/usr/bin/pdftoppm"}
-    monkeypatch.setattr("src.shared.screenshots.shutil.which", fake_which)
-    monkeypatch.setattr("src.shared.screenshots.subprocess.run", fake_run)
+    # Scope the fakes to the screenshots module: setting attributes on the
+    # stdlib ``subprocess``/``shutil`` modules themselves leaks into every
+    # importer for the rest of the test — markitdown's lazy import chain
+    # calls ``platform.processor()``, which shells out to ``uname -p`` via
+    # ``subprocess.run`` and crashed on the fake's ``stdout=None`` (docx
+    # conversion failed whenever one of these tests ran alone).
+    monkeypatch.setattr(
+        "src.shared.screenshots.subprocess",
+        SimpleNamespace(run=fake_run, CalledProcessError=subprocess.CalledProcessError),
+    )
+    monkeypatch.setattr(
+        "src.shared.screenshots.shutil",
+        SimpleNamespace(which=fake_which, rmtree=shutil.rmtree),
+    )
 
 
 def test_visual_eval_docx_renders_all_pages_without_page_limit(
@@ -849,20 +949,126 @@ def test_visual_eval_pdf_skips_soffice_and_renders_all_pages(
     assert "-f" not in cmd
 
 
-def test_visual_eval_ipynb_extracts_embedded_images(
+def test_visual_eval_pptx_renders_all_pages_via_soffice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An embedded base64 png in a notebook markdown cell is saved as
-    {stem}_i0.png with bytes identical to the original, and the processed
-    md stays base64-free."""
+    """pptx screenshots: soffice converts the pptx to a temp PDF, pdftoppm
+    rasters every page into {stem}_pN.png, the temp _pdf dir is removed."""
     raw = tmp_path / "raw"
     raw.mkdir()
-    buf = io.BytesIO()
-    Image.new("RGB", (2, 2), "red").save(buf, "PNG")
-    png_bytes = buf.getvalue()
-    embedded = f"![plot](data:image/png;base64,{base64.b64encode(png_bytes).decode()})"
-    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_markdown_cell(embedded)])
-    nbformat.write(nb, raw / "100.ipynb")
+    _write_pptx(raw / "413620.pptx", "tata pptx test 413620")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, pages=8)
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    assert result is not None
+    assert result["success"] == 1
+    shots = tmp_path / "processed" / "screenshots"
+    assert [f.name for f in sorted(shots.glob("413620_p*.png"))] == [
+        f"413620_p{i}.png" for i in range(1, 9)
+    ]
+    soffice_calls = [c for c in calls if c[0] == "soffice"]
+    assert len(soffice_calls) == 1
+    assert soffice_calls[0][-1].endswith("413620.pptx")  # soffice got the pptx
+    assert "pdf" in soffice_calls[0]
+    assert "-l" not in soffice_calls[0]
+    cmd = next(c for c in calls if c[0] == "pdftoppm")
+    # pdftoppm consumed the pdf the (mocked) soffice wrote into shots/_pdf
+    assert Path(cmd[4]) == shots / "_pdf" / "413620.pdf"
+    assert "-f" not in cmd
+    assert "-l" not in cmd
+    assert not (shots / "_pdf").exists()  # temp pdf dir cleaned up
+
+
+def test_visual_eval_folder_pptx_continuous_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folderized multi-file pptx student: both members render via soffice
+    with CONTINUOUS page numbers (R2: 2+2 pages -> _p1.._p4, each page's
+    bytes coming from the right member)."""
+    raw = tmp_path / "raw"
+    (raw / "990019").mkdir(parents=True)
+    _write_pptx(raw / "990019" / "990019.pptx", "deck one")
+    _write_pptx(raw / "990019" / "990019_1.pptx", "deck two")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, pages=2)
+    preprocess_assignment(tmp_path / "config.toml")
+
+    shots = tmp_path / "processed" / "screenshots"
+    page_shots = sorted(shots.glob("990019_p*.png"))
+    assert [f.name for f in page_shots] == [
+        "990019_p1.png",
+        "990019_p2.png",
+        "990019_p3.png",
+        "990019_p4.png",
+    ]
+    for i, shot in enumerate(page_shots, 1):
+        member = "990019.pptx" if i <= 2 else "990019_1.pptx"
+        page_in_member = i if i <= 2 else i - 2
+        assert shot.read_bytes() == f"pdf:{member} page {page_in_member}".encode()
+    assert sum(1 for c in calls if c[0] == "soffice") == 2
+
+
+def test_visual_eval_pptx_skipped_when_soffice_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Best-effort: without soffice a pptx renders no screenshots, prints
+    the standard skip line, still converts and never fails the run."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_pptx(raw / "100.pptx", "tata pptx test 100")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, which={"pdftoppm": "/usr/bin/pdftoppm"})
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[screenshots] skipped 100.pptx: soffice/pdftoppm not found" in out
+    assert not list((tmp_path / "processed" / "screenshots").glob("100_p*.png"))
+    assert (tmp_path / "processed" / "100.md").exists()
+    assert result is not None
+    assert result["success"] == 1
+    assert result["errors"] == 0
+    assert all(c[0] != "soffice" for c in calls)
+
+
+def _notebook_with_image_outputs(path: Path, *payloads: tuple[str, bytes]) -> None:
+    """Minimal real notebook: one code cell carrying one display_data output
+    per (mime, image bytes) payload, in order — the way Jupyter stores
+    figures."""
+    outputs = [
+        nbformat.v4.new_output(
+            "display_data", data={mime: base64.b64encode(data).decode()}
+        )
+        for mime, data in payloads
+    ]
+    nb = nbformat.v4.new_notebook(
+        cells=[nbformat.v4.new_code_cell("plt.show()", outputs=outputs)]
+    )
+    nbformat.write(nb, path)
+
+
+def test_visual_eval_ipynb_extracts_image_outputs(tmp_path: Path) -> None:
+    """Notebook figure outputs (code-cell display_data payloads, which the
+    markdown conversion only references as external files) are saved as
+    {stem}_iN.png in cell/output order with bytes identical to the embedded
+    png; the processed md stays base64-free."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    first = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(first, "PNG")
+    second = io.BytesIO()
+    Image.new("RGB", (3, 1), "green").save(second, "PNG")
+    _notebook_with_image_outputs(
+        raw / "100.ipynb",
+        ("image/png", first.getvalue()),
+        ("image/png", second.getvalue()),
+    )
     _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
 
     preprocess_assignment(tmp_path / "config.toml")
@@ -872,8 +1078,176 @@ def test_visual_eval_ipynb_extracts_embedded_images(
     content = md.read_text(encoding="utf-8")
     assert "base64" not in content
     assert "data:image" not in content
+    shots = tmp_path / "processed" / "screenshots"
+    assert (shots / "100_i0.png").read_bytes() == first.getvalue()
+    assert (shots / "100_i1.png").read_bytes() == second.getvalue()
+
+
+def test_visual_eval_ipynb_normalizes_non_png_outputs(tmp_path: Path) -> None:
+    """A jpeg figure output is re-encoded through PIL so the saved
+    {stem}_i0.png is a valid PNG (never a mislabelled jpeg)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), "blue").save(buf, "JPEG")
+    _notebook_with_image_outputs(raw / "100.ipynb", ("image/jpeg", buf.getvalue()))
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    shot = tmp_path / "processed" / "screenshots" / "100_i0.png"
+    with Image.open(shot) as out:
+        assert out.format == "PNG"
+        assert out.size == (4, 4)
+
+
+def test_visual_eval_folder_ipynb_continuous_image_numbers(tmp_path: Path) -> None:
+    """Two notebooks in one folder: extracted images continue the folder
+    stem's numbering across members (_i0, _i1), no per-member overwrite."""
+    raw = tmp_path / "raw"
+    (raw / "990019").mkdir(parents=True)
+    first = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(first, "PNG")
+    second = io.BytesIO()
+    Image.new("RGB", (2, 2), "green").save(second, "PNG")
+    _notebook_with_image_outputs(
+        raw / "990019" / "990019.ipynb", ("image/png", first.getvalue())
+    )
+    _notebook_with_image_outputs(
+        raw / "990019" / "990019_1.ipynb", ("image/png", second.getvalue())
+    )
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    shots = tmp_path / "processed" / "screenshots"
+    assert sorted(f.name for f in shots.glob("990019_i*.png")) == [
+        "990019_i0.png",
+        "990019_i1.png",
+    ]
+    assert (shots / "990019_i0.png").read_bytes() == first.getvalue()
+    assert (shots / "990019_i1.png").read_bytes() == second.getvalue()
+
+
+def _notebook_with_outputs(path: Path, *outputs: dict) -> None:
+    """Minimal notebook with one code cell carrying the given raw outputs
+    (for shapes ``_notebook_with_image_outputs`` doesn't build)."""
+    nb = nbformat.v4.new_notebook(
+        cells=[nbformat.v4.new_code_cell("plt.show()", outputs=list(outputs))]
+    )
+    nbformat.write(nb, path)
+
+
+def _png_bytes(color: str = "red") -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_visual_eval_ipynb_list_payload_renders(tmp_path: Path) -> None:
+    """Jupyter can store a payload as a list of base64 chunks; the chunks
+    are joined before decoding, so the shot is the complete image."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    png_bytes = _png_bytes()
+    payload = base64.b64encode(png_bytes).decode()
+    _notebook_with_outputs(
+        raw / "100.ipynb",
+        nbformat.v4.new_output(
+            "display_data", data={"image/png": [payload[:13], payload[13:]]}
+        ),
+    )
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+
+    preprocess_assignment(tmp_path / "config.toml")
+
     shot = tmp_path / "processed" / "screenshots" / "100_i0.png"
     assert shot.read_bytes() == png_bytes
+
+
+def test_visual_eval_ipynb_prefers_png_over_other_mimes(tmp_path: Path) -> None:
+    """One output carrying both image/png and image/jpeg -> the PNG payload
+    is written as-is (preferred representation, byte-identical)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    png_bytes = _png_bytes()
+    jpeg_buf = io.BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(jpeg_buf, "JPEG")
+    _notebook_with_outputs(
+        raw / "100.ipynb",
+        nbformat.v4.new_output(
+            "display_data",
+            data={
+                "image/jpeg": base64.b64encode(jpeg_buf.getvalue()).decode(),
+                "image/png": base64.b64encode(png_bytes).decode(),
+            },
+        ),
+    )
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    shot = tmp_path / "processed" / "screenshots" / "100_i0.png"
+    assert shot.read_bytes() == png_bytes
+    with Image.open(shot) as out:
+        assert out.format == "PNG"
+
+
+def test_visual_eval_ipynb_unreadable_payload_skipped_others_kept(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unreadable payload is skipped with the standard message, does not
+    stop the remaining outputs (no index burned, no partial file left), and
+    never fails the run."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    png_bytes = _png_bytes()
+    _notebook_with_outputs(
+        raw / "100.ipynb",
+        nbformat.v4.new_output("display_data", data={"image/png": "aaaa"}),
+        nbformat.v4.new_output(
+            "display_data", data={"image/png": base64.b64encode(png_bytes).decode()}
+        ),
+    )
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    out = capsys.readouterr().out
+    assert "[screenshots] skipped unreadable image/png output in 100.ipynb:" in out
+    assert result is not None
+    assert result["errors"] == 0
+    shots = tmp_path / "processed" / "screenshots"
+    assert [f.name for f in sorted(shots.glob("100_i*.png"))] == ["100_i0.png"]
+    assert (shots / "100_i0.png").read_bytes() == png_bytes
+    assert not list(shots.glob("*.tmp"))  # no staging leftover
+
+
+def test_write_png_from_payload_write_failure_leaves_no_partial_shot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """COSMETIC-1 pin: an interrupted write (half the bytes, then error)
+    leaves no half-written ``_iN.png`` and no ``.tmp`` behind — the direct
+    write this replaced left the partial file in place (mutation-checked)."""
+    shots = tmp_path / "screenshots"
+    shots.mkdir()
+    target = shots / "100_i0.png"
+    real_write_bytes = Path.write_bytes
+
+    def half_then_fail(path: Path, data: bytes) -> int:
+        real_write_bytes(path, data[: len(data) // 2])
+        failure_msg = "disk full"
+        raise OSError(failure_msg)
+
+    monkeypatch.setattr(Path, "write_bytes", half_then_fail)
+
+    with pytest.raises(OSError, match="disk full"):
+        _write_png_from_payload(
+            target, "image/png", base64.b64encode(_png_bytes()).decode()
+        )
+
+    assert not target.exists()  # no partial PNG
+    assert not list(shots.iterdir())  # no `.<name>.tmp` staging leftover
 
 
 def test_visual_eval_folder_docx_triggers_render(
@@ -960,9 +1334,7 @@ def test_visual_eval_rerender_swapped_to_ipynb_cleans_pages(
     buf = io.BytesIO()
     Image.new("RGB", (2, 2), "red").save(buf, "PNG")
     png_bytes = buf.getvalue()
-    embedded = f"![plot](data:image/png;base64,{base64.b64encode(png_bytes).decode()})"
-    nb = nbformat.v4.new_notebook(cells=[nbformat.v4.new_markdown_cell(embedded)])
-    nbformat.write(nb, raw / "100.ipynb")
+    _notebook_with_image_outputs(raw / "100.ipynb", ("image/png", png_bytes))
     preprocess_assignment(tmp_path / "config.toml")
 
     assert list(shots.glob("100_p*.png")) == []  # no stale pages
@@ -1021,6 +1393,89 @@ def test_visual_eval_rerenders_when_screenshots_missing_from_cache(
     assert (tmp_path / "processed" / "screenshots" / "100_p1.png").is_file()
 
 
+def test_visual_eval_folder_docx_ipynb_rerenders_missing_images_on_cache_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Folderized student with a docx AND an image-bearing ipynb member:
+    deleting only the _i* shots (raw unchanged -> md cache hit, _p* still
+    on disk) still re-renders the stem — freshness is judged per expected
+    class, not by "any shot exists". The third run then converges (both
+    classes present -> no render calls)."""
+    raw = tmp_path / "raw"
+    (raw / "990019").mkdir(parents=True)
+    _write_docx(raw / "990019" / "990019.docx", "docx part")
+    png_bytes = _png_bytes()
+    _notebook_with_image_outputs(
+        raw / "990019" / "990019.ipynb", ("image/png", png_bytes)
+    )
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    calls: list[list[str]] = []
+
+    _fake_tools(monkeypatch, calls, pages=2)
+    preprocess_assignment(tmp_path / "config.toml")
+
+    shots = tmp_path / "processed" / "screenshots"
+    assert [f.name for f in sorted(shots.glob("990019_p*.png"))] == [
+        "990019_p1.png",
+        "990019_p2.png",
+    ]
+    assert (shots / "990019_i0.png").read_bytes() == png_bytes
+
+    # Simulated hot-cache gap: only the notebook class is missing (raw
+    # untouched, so the md path stays cached).
+    for stale in shots.glob("990019_i*.png"):
+        stale.unlink()
+    capsys.readouterr()
+    preprocess_assignment(tmp_path / "config.toml")
+
+    assert "[cached] 990019.md (unchanged)" in capsys.readouterr().out
+    assert (shots / "990019_i0.png").read_bytes() == png_bytes  # re-rendered
+    assert [f.name for f in sorted(shots.glob("990019_p*.png"))] == [  # regenerated too
+        "990019_p1.png",
+        "990019_p2.png",
+    ]
+    renders = [c for c in calls if c[0] in {"soffice", "pdftoppm"}]
+    assert len(renders) == 4  # two render passes x (soffice + pdftoppm)
+
+    # Converged: both classes present -> no further render attempt.
+    preprocess_assignment(tmp_path / "config.toml")
+    assert [c for c in calls if c[0] in {"soffice", "pdftoppm"}] == renders
+
+
+def test_visual_eval_notebook_without_images_no_rerender_on_cache_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A notebook whose outputs carry no image (stream only) yields no _i*
+    shots — the cache-hit freshness check must not treat that as missing,
+    or preprocess would re-render on every run and never converge."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    nb = nbformat.v4.new_notebook(
+        cells=[
+            nbformat.v4.new_code_cell(
+                "print('hi')",
+                outputs=[nbformat.v4.new_output("stream", name="stdout", text="hi\n")],
+            )
+        ]
+    )
+    nbformat.write(nb, raw / "100.ipynb")
+    _write_grading_config(tmp_path, "[processing]\nvisual_evaluation = true\n")
+    renders: list[str] = []
+    real = pipeline_mod._render_stem_screenshots
+
+    def spy(processed_dir: Path, output_stem: str, files: list) -> None:
+        renders.append(output_stem)
+        real(processed_dir, output_stem, files)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pipeline_mod, "_render_stem_screenshots", spy)
+    preprocess_assignment(tmp_path / "config.toml")
+    assert renders == ["100"]  # first run converts + renders (0 images)
+
+    preprocess_assignment(tmp_path / "config.toml")
+    assert renders == ["100"]  # cache hit: no image class -> no re-render
+    assert list((tmp_path / "processed" / "screenshots").glob("100_i*.png")) == []
+
+
 def test_visual_eval_image_renders_via_pil(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1040,11 +1495,13 @@ def test_visual_eval_image_renders_via_pil(
         assert out.size == (5, 3)
 
 
-def test_render_screenshots_ipynb_passes_template_config(
+def test_convert_ipynb_passes_template_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ipynb screenshot extraction must use the same nbconvert template config
-    as convert_ipynb_to_markdown (R1 finding regression guard)."""
+    """convert_ipynb_to_markdown forwards the template config to
+    MarkdownExporter and passes nothing when unset (R1 finding regression
+    guard — nbconvert is no longer on the screenshot path, so this is the
+    mechanism the guard covers now)."""
     captured: dict = {}
 
     class FakeExporter:
@@ -1059,22 +1516,16 @@ def test_render_screenshots_ipynb_passes_template_config(
     nb.write_text("{}", encoding="utf-8")
 
     tpl_dir = tmp_path / "templates"
-    _render_screenshots(
-        nb,
-        "nb",
-        tmp_path / "processed",
-        "ipynb",
-        template_name="mdoutput",
-        template_dir=tpl_dir,
+    convert_ipynb_to_markdown(
+        nb, tmp_path / "nb.md", template_name="mdoutput", template_dir=tpl_dir
     )
-
     assert captured == {
         "template_name": "mdoutput",
         "extra_template_basedirs": [str(tpl_dir)],
     }
 
     captured.clear()
-    _render_screenshots(nb, "nb", tmp_path / "processed", "ipynb")
+    convert_ipynb_to_markdown(nb, tmp_path / "nb2.md")
     assert captured == {}
 
 
