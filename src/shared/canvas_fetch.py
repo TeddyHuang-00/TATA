@@ -149,15 +149,26 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
                 None,
             ))
         for i, att in enumerate(getattr(sub, "attachments", None) or []):
-            ext = att.filename.rsplit(".", 1)[-1]
+            base, dot, ext = (att.filename or "").rpartition(".")
+            if not dot or not base:
+                # Dotless (or dot-leading) name: the whole name is not an
+                # extension. Save it extension-less and warn instead of
+                # fabricating '<uid>.<name>' (a format preprocess skips).
+                ext = ""
+                print(
+                    f"[fetch] warning: attachment {att.filename!r} has no "
+                    "file extension; saved without one (preprocess skips "
+                    "it unless renamed)"
+                )
             if body and i == 0:
                 suffix = "_0"  # avoid clashing with the body html
             elif late:
                 suffix = f"_LATE_{i}"
             else:
                 suffix = f"_{i}" if i else ""
+            fname = f"{uid}{suffix}.{ext}" if ext else f"{uid}{suffix}"
             entries.append((
-                f"{uid}{suffix}.{ext}",
+                fname,
                 getattr(att, "updated_at", "") or "",
                 att,
             ))
@@ -195,53 +206,68 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
             "sortable_name": sortable,
             "file": entries[0][0],
         })
-    # Prune stale layout leftovers after the download loop (cache stamps
-    # are final). A flat file not produced flat this run is an obsolete
-    # copy: either the file moved into a per-student folder — keep the
-    # re-stamped plain-name key, the folder copy reuses it — or it is a
-    # truly deleted name — unlink it and drop its cache entry. Never drop
-    # a cache key for a name that IS part of this run's output.
     produced = flat_names | folder_names
-    for p in out.iterdir():
-        if not p.is_file() or p.name.startswith(".") or p.name in flat_names:
-            continue
-        p.unlink()
-        if p.name not in produced:
-            cache.pop(p.name, None)
-    # Full folder cleanup. A top-level dir NOT produced this run is stale
-    # (2->0 unsubmit, folder->flat shrink): rmtree it and pop cache keys
-    # for its files (keys of names produced flat this run are re-used and
-    # survive). A produced dir keeps only the files produced this run
-    # (folder->folder rename: stale in-folder members are unlinked). A uid
-    # appearing in both layouts this run keeps its folder — a dir written
-    # this run is never rmtree'd (the folder wins).
-    produced_folders = {out / str(uid) for uid in folder_uids}
-    for d in out.iterdir():
-        if not d.is_dir() or d.name.startswith("."):
-            continue
-        files = [p for p in d.iterdir() if p.is_file()]
-        if d not in produced_folders:
-            for p in files:
-                if p.name not in produced:
-                    cache.pop(p.name, None)
-            shutil.rmtree(d)
-        else:
-            for p in files:
-                if p.name not in produced:
-                    p.unlink()
-                    cache.pop(p.name, None)
-    # Same uid in both layouts this run (duplicated submission entries):
-    # the folder is canonical — drop the flat copies (preprocess's
-    # mixed-layout guard skips them anyway) and their cache keys unless
-    # the folder carries the same name.
-    for uid in flat_uids & folder_uids:
+    local_content = [p for p in out.iterdir() if not p.name.startswith(".")]
+    if not subs and local_content:
+        # An empty submission listing is ambiguous (everyone unsubmitted
+        # vs a transient API/permission hiccup): never wipe a non-empty
+        # local tree on it — keep everything and warn.
+        print(
+            f"[fetch] warning: Canvas returned no submissions for "
+            f"assignment {assignment_id}; kept {len(local_content)} existing "
+            f"entr{'y' if len(local_content) == 1 else 'ies'} in {out} "
+            "(prune skipped — remove them manually if the assignment is "
+            "truly empty)"
+        )
+    else:
+        # Prune stale layout leftovers after the download loop (cache
+        # stamps are final). A flat file not produced flat this run is an
+        # obsolete copy: either the file moved into a per-student folder —
+        # keep the re-stamped plain-name key, the folder copy reuses it —
+        # or it is a truly deleted name — unlink it and drop its cache
+        # entry. Never drop a cache key for a name that IS part of this
+        # run's output.
         for p in out.iterdir():
-            if not p.is_file() or p.name.startswith("."):
+            if not p.is_file() or p.name.startswith(".") or p.name in flat_names:
                 continue
-            if re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == str(uid):
-                p.unlink()
-                if p.name not in folder_names:
-                    cache.pop(p.name, None)
+            p.unlink()
+            if p.name not in produced:
+                cache.pop(p.name, None)
+        # Full folder cleanup. A top-level dir NOT produced this run is
+        # stale (2->0 unsubmit, folder->flat shrink): rmtree it and pop
+        # cache keys for its files (keys of names produced flat this run
+        # are re-used and survive). A produced dir keeps only the files
+        # produced this run (folder->folder rename: stale in-folder
+        # members are unlinked). A uid appearing in both layouts this run
+        # keeps its folder — a dir written this run is never rmtree'd
+        # (the folder wins).
+        produced_folders = {out / str(uid) for uid in folder_uids}
+        for d in out.iterdir():
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            files = [p for p in d.iterdir() if p.is_file()]
+            if d not in produced_folders:
+                for p in files:
+                    if p.name not in produced:
+                        cache.pop(p.name, None)
+                shutil.rmtree(d)
+            else:
+                for p in files:
+                    if p.name not in produced:
+                        p.unlink()
+                        cache.pop(p.name, None)
+        # Same uid in both layouts this run (duplicated submission
+        # entries): the folder is canonical — drop the flat copies
+        # (preprocess's mixed-layout guard skips them anyway) and their
+        # cache keys unless the folder carries the same name.
+        for uid in flat_uids & folder_uids:
+            for p in out.iterdir():
+                if not p.is_file() or p.name.startswith("."):
+                    continue
+                if re.sub(r"_(?:LATE_)?\d+$", "", p.stem) == str(uid):
+                    p.unlink()
+                    if p.name not in folder_names:
+                        cache.pop(p.name, None)
     save_cache_file(cache_path, cache)
     rows.sort(key=operator.itemgetter("sortable_name"))
     aliases = {

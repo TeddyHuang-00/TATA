@@ -597,3 +597,53 @@ def test_preprocess_hash_tracks_fetch_cache_entries(tmp_path: Path) -> None:
     assert result is not None
     assert result["success"] == 1
     assert "submitted: S2" in md.read_text(encoding="utf-8")
+
+
+def test_fetch_empty_listing_keeps_local_tree(tmp_path: Path, capfd) -> None:
+    """Empty submission listing + non-empty local tree: ambiguous (API
+    hiccup vs everyone unsubmitted) — prune must NOT wipe the tree, and a
+    warning must be printed instead."""
+    out = tmp_path / "raw"
+    subs = [
+        StubSub(
+            100,
+            name="Alpha, A",
+            sortable_name="Alpha, A",
+            attachments=[StubAtt("a.html"), StubAtt("b.html")],
+        ),
+    ]
+    canvas = StubCanvas(StubAssignment(subs))
+    fetch_assignment(canvas, 1, 2, out)
+    assert (out / "100" / "100.html").exists()
+
+    # Canvas now returns no submissions at all.
+    canvas._assignment._subs = []
+    fetch_assignment(canvas, 1, 2, out)
+
+    # Tree intact: files, folders and cache keys all survive.
+    assert (out / "100" / "100.html").exists()
+    assert (out / "100" / "100_1.html").exists()
+    cache = load_cache_file(cache_file(out.parent, "fetch"))
+    assert "100.html" in cache and "100_1.html" in cache
+    assert "returned no submissions" in capfd.readouterr().out
+
+
+def test_fetch_dotless_attachment_saved_without_extension(tmp_path: Path, capfd) -> None:
+    """A dotless attachment name is not a file extension: it is saved
+    extension-less with a warning, never as '<uid>.<name>' (a fabricated
+    format that preprocess silently skips)."""
+    out = tmp_path / "raw"
+    subs = [
+        StubSub(
+            100,
+            name="Alpha, A",
+            sortable_name="Alpha, A",
+            attachments=[StubAtt("thesis")],
+        ),
+    ]
+    canvas = StubCanvas(StubAssignment(subs))
+    fetch_assignment(canvas, 1, 2, out)
+
+    assert (out / "100").is_file()
+    assert not (out / "100.thesis").exists()
+    assert "no file extension" in capfd.readouterr().out
