@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from statistics import NormalDist, mean, median
 
-MIN_PARTS_FOR_ASSIGNMENT_RELATIVE_PATH = 3
 MAX_PERCENTAGE = 100.0
 MIN_STUDENT_ID_TOKEN_LENGTH = 5
 MIN_STD_FOR_ZSCORE = 1e-12
@@ -146,15 +145,16 @@ class BuildConfig:
     pair_data_files: list[Path] | None = None
 
 
-def _extract_assignment_name(report_file: Path, assignments_root: Path) -> str:
-    try:
-        relative = report_file.relative_to(assignments_root)
-    except ValueError:
-        return report_file.parents[1].name
+def _extract_assignment_name(report_file: Path) -> str:
+    """The assignment is the directory above the pair file's output dir
+    (``<assignment>/plagiarism/all_pairs.json``).
 
-    if len(relative.parts) < MIN_PARTS_FOR_ASSIGNMENT_RELATIVE_PATH:
-        return report_file.parents[1].name
-    return relative.parts[0]
+    Not the first component of the path relative to the assignments root:
+    with nested layouts (``data/<course>/<assignment>/plagiarism/...``
+    globbed from ``data/``) that is the *course* name, so every assignment
+    pooled into one — per-assignment z-scores ran over pooled pairs and
+    ``shared_assignments``/K was always 1 (audit)."""
+    return report_file.parents[1].name
 
 
 def _student_identity(file_name: str) -> tuple[str, str]:
@@ -165,6 +165,13 @@ def _student_identity(file_name: str) -> tuple[str, str]:
         return stem, stem
 
     name_token = tokens[0]
+    if name_token.isdigit() and len(name_token) >= MIN_STUDENT_ID_TOKEN_LENGTH:
+        # Fetch names a student by leading uid: <uid>, <uid>_LATE_i,
+        # <uid>_i, <uid>__<member> — the uid is the identity for every
+        # shape (audit: <uid>__<member> resolved to id:<uid> while flat
+        # <uid> resolved to name:<uid>, splitting one student in two and
+        # defeating the longitudinal Review).
+        return f"id:{name_token}", name_token
     id_token = next(
         (
             token
@@ -221,9 +228,7 @@ def _gumbel_cdf(value: float, location: float, scale: float) -> float:
     return math.exp(-math.exp(-standardized))
 
 
-def _parse_pair_data_file(
-    pair_data_file: Path, assignments_root: Path
-) -> list[MatchRecord]:
+def _parse_pair_data_file(pair_data_file: Path) -> list[MatchRecord]:
     payload = json.loads(pair_data_file.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         msg = f"Invalid pair data payload (not an object): {pair_data_file}"
@@ -234,7 +239,7 @@ def _parse_pair_data_file(
         msg = f"Invalid pair data payload (missing list 'pairs'): {pair_data_file}"
         raise ValueError(msg)
 
-    assignment = _extract_assignment_name(pair_data_file, assignments_root)
+    assignment = _extract_assignment_name(pair_data_file)
     records: list[MatchRecord] = []
     for pair in pairs:
         if not isinstance(pair, dict):
@@ -501,11 +506,13 @@ def _load_assignment_records(
 
     for pair_data_file in pair_data_files:
         try:
-            records = _parse_pair_data_file(pair_data_file, config.assignments_root)
-            assignment = _extract_assignment_name(
-                pair_data_file, config.assignments_root
-            )
-            per_assignment_records[assignment] = records
+            records = _parse_pair_data_file(pair_data_file)
+            assignment = _extract_assignment_name(pair_data_file)
+            # Extend, never overwrite: two files resolving to the same
+            # assignment name (same-named dirs at different depths) used to
+            # silently keep only the last one while pair_data_parsed counted
+            # both (audit).
+            per_assignment_records.setdefault(assignment, []).extend(records)
             pair_data_parsed += 1
         except Exception:
             parse_errors += 1
