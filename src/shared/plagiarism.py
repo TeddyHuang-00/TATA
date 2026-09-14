@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import re
+import shutil
+import tempfile
 import threading
 from dataclasses import dataclass
 from operator import itemgetter
@@ -15,6 +20,7 @@ if TYPE_CHECKING:
 from .assignment_config import (
     FetchSection,
     PlagiarismSection,
+    ProcessingSection,
     ensure_assignment_dirs,
     is_root_config,
     load_assignment_file,
@@ -43,7 +49,10 @@ from .plagiarism_aggregate import (
     to_text,
 )
 
-MIN_TEXT_CHARS = 20
+# Bumped when the embedding similarity definition changes (v2: normalized
+# cosine, was raw dot product) so stale caches with the old scale are not
+# blended into fresh runs.
+EMBEDDING_CACHE_VERSION = 2
 
 
 class PlagiarismCliOptions(ConfigFileCliOptions):
@@ -81,10 +90,55 @@ class PlagiarismConfig:
     embedding_enabled: bool = False
 
 
-def _safe_output_name(file_path: Path, base_dir: Path) -> str:
+def _safe_output_name(file_path: Path, base_dir: Path, taken: set[str]) -> str:
+    """Unique extracted-code name for a raw submission.
+
+    Distinct raw paths must never map to the same output file: ``raw/a/b.ipynb``
+    and ``raw/a__b.ipynb`` (and ``x.ipynb`` + ``x.py``) all cleaned to
+    ``a__b.py``/``x.py`` before, and the later extraction overwrote the
+    earlier student's code — a different submission was then compared under
+    the first student's name. First in sorted order keeps the base name, the
+    rest get ``_2``, ``_3``, ... (mirrors the pipeline stem disambiguation).
+    """
     rel = file_path.relative_to(base_dir)
     stem = rel.with_suffix("").as_posix().replace("/", "__")
-    return f"{stem}.py"
+    name = f"{stem}.py"
+    if name not in taken:
+        taken.add(name)
+        return name
+    suffix = 2
+    while f"{stem}_{suffix}.py" in taken:
+        suffix += 1
+    name = f"{stem}_{suffix}.py"
+    taken.add(name)
+    return name
+
+
+_UID_PREFIX = re.compile(r"^(\d+)")
+
+
+def _student_uid(file_name: str) -> str | None:
+    """Leading numeric uid of a submission file name (fetch convention:
+    ``<uid>``, ``<uid>_LATE_i``, ``<uid>__<member>``); None when absent."""
+    match = _UID_PREFIX.match(Path(file_name).stem)
+    return match.group(1) if match else None
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text atomically (same-dir temp + replace) so a crash or cancel
+    mid-write never leaves a truncated JSON for the aggregate/TUI to parse."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        Path(tmp_name).replace(path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(tmp_name).unlink()
+        raise
 
 
 def _extract_notebook_code(input_path: Path) -> str:
@@ -180,6 +234,12 @@ def _load_plagiarism_config(config_path: Path) -> PlagiarismConfig:
 def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
     """Export all compared student pairs from copydetect matrices.
 
+    Pairs whose two files carry the same leading numeric uid are one
+    student's own submissions (fetch variants ``<uid>.py`` +
+    ``<uid>_LATE_0.py``, multi-file folders) — they are never plagiarism
+    and are excluded here so every consumer (scan flags, TUI ranking,
+    aggregate) agrees.
+
     Returns number of exported undirected pairs.
     """
     if len(detector.similarity_matrix) == 0:
@@ -190,8 +250,7 @@ def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
             "pair_count": 0,
             "pairs": [],
         }
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_text(output_path, json.dumps(payload, indent=2))
         return 0
 
     seen_pairs: set[tuple[str, str]] = set()
@@ -200,6 +259,9 @@ def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
     for test_idx, test_file in enumerate(detector.test_files):
         for ref_idx, ref_file in enumerate(detector.ref_files):
             if test_file == ref_file:
+                continue
+            test_uid = _student_uid(test_file)
+            if test_uid is not None and test_uid == _student_uid(ref_file):
                 continue
 
             pair_key = tuple(sorted((test_file, ref_file)))
@@ -235,8 +297,7 @@ def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
         "pair_count": len(rows),
         "pairs": rows,
     }
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _atomic_write_text(output_path, json.dumps(payload, indent=2))
     return len(rows)
 
 
@@ -299,12 +360,13 @@ def _run_code_plagiarism(
             "running without boilerplate removal"
         )
 
+    taken_names: set[str] = set()
     for submission_file in _find_submissions(cfg):
         if cancel_event is not None and cancel_event.is_set():
             print("[cancelled] plagiarism stopped — remaining submissions skipped")
             break
         try:
-            output_name = _safe_output_name(submission_file, cfg.raw_dir)
+            output_name = _safe_output_name(submission_file, cfg.raw_dir, taken_names)
             _write_extracted_code(submission_file, cfg.submissions_dir / output_name)
             extracted_success += 1
         except Exception as exc:
@@ -418,16 +480,28 @@ def _blend_rows(
 
 
 def _top_pairs(embs: np.ndarray) -> list[tuple[int, int, float]]:
+    """All (i, j, cosine) pairs, descending by similarity.
+
+    Vectors are L2-normalized first (zero-norm guarded): raw ``a @ b`` made
+    the score norm-dominated and produced impossible values (real data hit
+    100.12%, which is not a cosine). Clamped to [-1, 1] against float drift.
+    """
     n = embs.shape[0]
+    norms = np.linalg.norm(embs, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    unit = embs / norms
     pairs: list[tuple[int, int, float]] = [
-        (i, j, float(embs[i] @ embs[j])) for i in range(n) for j in range(i + 1, n)
+        (i, j, float(np.clip(unit[i] @ unit[j], -1.0, 1.0)))
+        for i in range(n)
+        for j in range(i + 1, n)
     ]
     pairs.sort(key=itemgetter(2), reverse=True)
     return pairs
 
 
 def embedding_input_hash(processed_dir: Path, model: str) -> str:
-    """Input hash for the embedding cache: sorted processed/*.md digests + model.
+    """Input hash for the embedding cache: sorted processed/*.md digests +
+    model + cache version (bumped when the similarity definition changes).
 
     Public so the cache-migration tool can recompute stored hashes with the
     production rule instead of reimplementing it.
@@ -435,7 +509,11 @@ def embedding_input_hash(processed_dir: Path, model: str) -> str:
     md_digests = [
         file_digest(md).encode("utf-8") for md in sorted(processed_dir.glob("*.md"))
     ]
-    return content_hash([*md_digests, model.encode("utf-8")])
+    return content_hash([
+        *md_digests,
+        model.encode("utf-8"),
+        str(EMBEDDING_CACHE_VERSION).encode("utf-8"),
+    ])
 
 
 def _run_embedding(cfg: PlagiarismConfig) -> bool:
@@ -453,11 +531,16 @@ def _run_embedding(cfg: PlagiarismConfig) -> bool:
         )
         return False
 
-    items: list[tuple[str, str]] = []
-    for f in sorted(cfg.processed_dir.glob("*.md")):
-        text = f.read_text(encoding="utf-8", errors="replace").strip()
-        if len(text) >= MIN_TEXT_CHARS:
-            items.append((f.name, text))
+    # Every processed md is embedded (no minimum-length gate): the cache must
+    # cover all pairs of the copydetect input, or rows for skipped files fall
+    # back to pure copydetect and two score scales mix in one assignment.
+    items: list[tuple[str, str]] = [
+        (
+            f.name,
+            f.read_text(encoding="utf-8", errors="replace").strip(),
+        )
+        for f in sorted(cfg.processed_dir.glob("*.md"))
+    ]
     if not items:
         return False
 
@@ -490,27 +573,64 @@ def _run_embedding(cfg: PlagiarismConfig) -> bool:
     return True
 
 
-def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
+def _run_text_plagiarism(
+    cfg: PlagiarismConfig,
+    *,
+    md_files: list[Path] | None = None,
+    merge_code_pairs: bool = False,
+) -> dict:
     """Copydetect over processed/*.md, optionally blended with embedding similarity.
 
     The embedding blend is opt-in (``[plagiarism] embedding_enabled``, default
     false: pure copydetect — no model, no embedding cache). When on it is 5%
     auxiliary (user decision 2026-08-28: embedding alone had too many false
-    positives on short essays).
+    positives on short essays). The blend only applies when the embedding
+    cache is fresh for this input; a failed/unavailable model falls back to
+    pure copydetect for the whole run — a stale cache from a previous run
+    must never mix old scores into fresh numbers while the payload claims
+    the configured weights.
+
+    ``md_files`` restricts the comparison (mixed assignment: only the
+    students the code path does not cover). Copydetect takes directories, so
+    the subset is staged into ``output_dir/text_submissions/`` and the HTML
+    report goes to ``report.text.html`` — it must not clobber the code
+    path's ``report.html``. ``merge_code_pairs`` prepends the code path's
+    pairs (written to ``full_pairs_file`` earlier in the same run) to the
+    shared ``all_pairs.json``.
     """
+    embedding_ok = False
     if cfg.embedding_enabled:
-        _run_embedding(cfg)
-        embedding_pairs = _embedding_pairs(cache_file(cfg.assignment_dir, "embedding"))
-    else:
-        embedding_pairs = {}
+        embedding_ok = _run_embedding(cfg)
+        if not embedding_ok:
+            print(
+                "[plagiarism] embedding unavailable; this run is "
+                "copydetect-only (no blend)"
+            )
+    embedding_pairs = (
+        _embedding_pairs(cache_file(cfg.assignment_dir, "embedding"))
+        if embedding_ok
+        else {}
+    )
 
     from copydetect import CopyDetector  # ruff: ignore[import-outside-top-level]
 
+    if md_files is None:
+        test_dir = cfg.processed_dir
+        report_file = cfg.report_file
+    else:
+        test_dir = cfg.output_dir / "text_submissions"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        for md in md_files:
+            shutil.copy2(md, test_dir / md.name)
+        report_file = cfg.output_dir / "report.text.html"
+
     detector = CopyDetector(
-        test_dirs=[str(cfg.processed_dir)],
+        test_dirs=[str(test_dir)],
         extensions=[".md"],
         display_t=cfg.display_threshold,
-        out_file=str(cfg.report_file),
+        out_file=str(report_file),
         autoopen=False,
         silent=True,
         # copydetect's filter_code drops token.Text (comment stripping, for code);
@@ -518,6 +638,7 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
         disable_filtering=True,
     )
     detector.run()
+    detector.generate_html_report()
     copydetect_path = cfg.output_dir / "all_pairs.copydetect.json"
     _write_full_pair_data(detector, copydetect_path)
     copydetect_rows = json.loads(copydetect_path.read_text(encoding="utf-8"))["pairs"]
@@ -528,29 +649,44 @@ def _run_text_plagiarism(cfg: PlagiarismConfig) -> dict:
         cfg.copydetect_weight,
         cfg.embedding_weight,
     )
+
+    code_rows: list[dict] = []
+    code_count = 0
+    if merge_code_pairs and cfg.full_pairs_file.exists():
+        try:
+            old = json.loads(cfg.full_pairs_file.read_text(encoding="utf-8"))
+            if isinstance(old.get("pairs"), list):
+                code_rows = old["pairs"]
+                code_count = int(old.get("test_file_count", 0))
+        except (json.JSONDecodeError, OSError):
+            # A corrupt code payload must not block this run; the code
+            # report.html and extracted submissions are still there.
+            print(
+                f"[plagiarism] warning: unreadable {cfg.full_pairs_file.name}; "
+                "all_pairs.json holds the text pairs only"
+            )
+
     payload = {
         "version": 1,
-        "test_file_count": len(detector.test_files),
-        "reference_file_count": len(detector.test_files),
-        "pair_count": len(rows),
-        # Weights of the blend that actually ran: with embedding off every
-        # score is pure copydetect, so report 1.0/0.0 rather than the
-        # configured split (which nothing here applied).
+        "test_file_count": code_count + len(detector.test_files),
+        "reference_file_count": code_count + len(detector.test_files),
+        "pair_count": len(code_rows) + len(rows),
+        # Weights of the blend that actually ran: only claim the configured
+        # split when the embedding cache was fresh and applied; otherwise
+        # every score is pure copydetect.
         "weights": (
             {
                 "copydetect": cfg.copydetect_weight,
                 "embedding": cfg.embedding_weight,
             }
-            if cfg.embedding_enabled
+            if embedding_ok
             else {"copydetect": 1.0, "embedding": 0.0}
         ),
-        "pairs": rows,
+        "pairs": [*code_rows, *rows],
     }
-    (cfg.output_dir / "all_pairs.json").write_text(
-        json.dumps(payload, indent=2), encoding="utf-8"
-    )
+    _atomic_write_text(cfg.full_pairs_file, json.dumps(payload, indent=2))
 
-    print(f"[text-plagiarism] {cfg.output_dir / 'all_pairs.json'} ({len(rows)} pairs)")
+    print(f"[text-plagiarism] {cfg.full_pairs_file} ({len(rows)} pairs)")
     for row in rows[:10]:
         emb = row.get("embedding_similarity_pct")
         emb_s = f" (emb {emb:.1f}%)" if emb is not None else ""
@@ -610,6 +746,41 @@ def _aggregate_report(
     print(f"[plagiarism] aggregate report -> {output}")
 
 
+def _non_code_md_files(
+    cfg: PlagiarismConfig, processing: ProcessingSection
+) -> list[Path]:
+    """processed/*.md whose raw item has no .ipynb/.py file — the students
+    the code path does not cover (mixed assignments).
+
+    The mapping is the pipeline's own (same ``_output_stem`` call with the
+    same config flags), so a code item's md is recognized even when its name
+    was cleaned (``Alice_111_222_lab.ipynb`` -> ``Alice.md``) or disambiguated.
+    """
+    if not cfg.processed_dir.exists():
+        return []
+    from .pipeline import (  # ruff: ignore[import-outside-top-level]
+        _item_files,
+        _iter_raw_items,
+        _output_stem,
+    )
+
+    items = _iter_raw_items(cfg.raw_dir) if cfg.raw_dir.exists() else []
+    item_files_by = {item: _item_files(item, None) for item in items}
+    code_stems = {
+        _output_stem(
+            item,
+            item_files_by,
+            processing.strip_canvas_suffix,
+            processing.clean_filenames,
+        )
+        for item, files in item_files_by.items()
+        if any(f.suffix.lower() in {".ipynb", ".py"} for f, _ in files)
+    }
+    return [
+        md for md in sorted(cfg.processed_dir.glob("*.md")) if md.stem not in code_stems
+    ]
+
+
 def _run_assignment(
     config_path: Path, *, cancel_event: threading.Event | None = None
 ) -> dict:
@@ -623,26 +794,43 @@ def _run_assignment(
     # out_file parent: ensure it once before dispatch (text path had no mkdir).
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if _find_submissions(cfg):
-        return _run_code_plagiarism(
-            cfg, config_path, hook_runtime, cancel_event=cancel_event
+    code_files = _find_submissions(cfg)
+    summaries: list[dict] = []
+    if code_files:
+        summaries.append(
+            _run_code_plagiarism(
+                cfg, config_path, hook_runtime, cancel_event=cancel_event
+            )
         )
-    md_files = (
-        list(cfg.processed_dir.glob("*.md")) if cfg.processed_dir.exists() else []
-    )
-    if md_files:
-        return _run_text_plagiarism(cfg)
-    print(
-        f"[plagiarism] nothing to compare in {config_path.parent} "
-        "(no raw .ipynb/.py, no processed/*.md)"
-    )
-    return {
-        "stage": "plagiarism",
-        "success": 0,
-        "errors": 0,
-        "total": 0,
-        "success_rate": 0,
-    }
+        if cancel_event is not None and cancel_event.is_set():
+            return summaries[0]
+
+    # Mixed assignments: the code path only covers code submissions; the
+    # remaining students (their processed md) still need comparing. Both
+    # pair sets land in all_pairs.json (code pairs first) — one student is
+    # never compared on both scales, and no one is silently dropped.
+    text_md = _non_code_md_files(cfg, cfg_model.processing)
+    if text_md:
+        summaries.append(
+            _run_text_plagiarism(
+                cfg,
+                md_files=None if not code_files else text_md,
+                merge_code_pairs=bool(code_files),
+            )
+        )
+    if not summaries:
+        print(
+            f"[plagiarism] nothing to compare in {config_path.parent} "
+            "(no raw .ipynb/.py, no processed/*.md)"
+        )
+        return {
+            "stage": "plagiarism",
+            "success": 0,
+            "errors": 0,
+            "total": 0,
+            "success_rate": 0,
+        }
+    return _combine_summaries(summaries)
 
 
 def _combine_summaries(summaries: list[dict]) -> dict:

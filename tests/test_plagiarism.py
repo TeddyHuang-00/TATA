@@ -12,7 +12,7 @@ import pytest
 from copydetect import CopyDetector
 from src.shared import plagiarism as plagiarism_mod
 from src.shared.assignment_config import PlagiarismSection
-from src.shared.caching import cache_file, load_cache_file
+from src.shared.caching import cache_file, load_cache_file, save_cache_file
 from src.shared.plagiarism import (
     PlagiarismConfig,
     _blend_rows,
@@ -21,6 +21,7 @@ from src.shared.plagiarism import (
     _pair_key,
     _run_embedding,
     _run_text_plagiarism,
+    _safe_output_name,
     _write_full_pair_data,
     detect_plagiarism,
     embedding_input_hash,
@@ -601,8 +602,11 @@ def _plagiarism_config(
 def fake_embedder(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Monkeypatched SentenceTransformer (no model download); call sizes recorded.
 
-    ``encode_document`` returns deterministic 1-column embeddings, so file i
-    vs file j similarity is ``(i + 1) * (j + 1) / 100`` in percent.
+    ``encode_document`` returns deterministic 2-D embeddings ``[1.0, i]`` for
+    file index i (0-based): cosine(i, j) = (1 + i*j) / (sqrt(1+i^2) *
+    sqrt(1+j^2)), so file 0 vs file 1 is 100/sqrt(2) % — a non-trivial value
+    that also catches the old raw-dot-product definition (which the 1-D
+    fixture vectors made indistinguishable from cosine).
     """
     calls: list[int] = []
 
@@ -617,10 +621,16 @@ def fake_embedder(monkeypatch: pytest.MonkeyPatch) -> list[int]:
             show_progress_bar: bool = False,
         ) -> np.ndarray:
             calls.append(len(texts))
-            return (np.arange(1, len(texts) + 1) / 10).reshape(-1, 1).astype(np.float32)
+            return np.array(
+                [[1.0, float(i)] for i in range(len(texts))], dtype=np.float32
+            )
 
     monkeypatch.setattr("sentence_transformers.SentenceTransformer", FakeModel)
     return calls
+
+
+# cosine([1, 0], [1, 1]) * 100, for the fake_embedder vectors above.
+_FAKE_COS_PCT_01 = 100.0 / (2.0**0.5)
 
 
 def test_embedding_reused_when_processed_inputs_unchanged(
@@ -639,7 +649,9 @@ def test_embedding_reused_when_processed_inputs_unchanged(
     data = load_cache_file(cache_path)
     assert data["hash"] == embedding_input_hash(cfg.processed_dir, cfg.embedding_model)
     # Pairs reach the consumer through the same interface as before.
-    assert _embedding_pairs(cache_path) == {("aaa.md", "bbb.md"): pytest.approx(2.0)}
+    assert _embedding_pairs(cache_path) == {
+        ("aaa.md", "bbb.md"): pytest.approx(_FAKE_COS_PCT_01)
+    }
     # The old flat file is never written anymore.
     assert not (tmp_path / "plagiarism" / "all_pairs.embedding.json").exists()
 
@@ -801,9 +813,11 @@ def test_text_plagiarism_blends_when_embedding_enabled(
     assert len(rows) == 1
     row = rows[0]
     key = _pair_key(row["test_file"], row["reference_file"])
-    # fake embedder: files 1 and 2 -> (0.1 * 0.2) * 100 = 2.0 %
-    assert row["embedding_similarity_pct"] == pytest.approx(2.0)
-    assert row["max_similarity_pct"] == pytest.approx(0.95 * raw[key] + 0.05 * 2.0)
+    # fake embedder: cosine of files 0 and 1 -> 100/sqrt(2) %
+    assert row["embedding_similarity_pct"] == pytest.approx(_FAKE_COS_PCT_01)
+    assert row["max_similarity_pct"] == pytest.approx(
+        0.95 * raw[key] + 0.05 * _FAKE_COS_PCT_01
+    )
 
 
 # -- pre-existing bug: text path crashed on a missing plagiarism/ output dir --
@@ -839,3 +853,161 @@ def test_text_plagiarism_creates_the_missing_output_dir(
         (tmp_path / "plagiarism" / "all_pairs.json").read_text(encoding="utf-8")
     )
     assert pairs["pair_count"] == 1, pairs
+
+
+# -- audit fixes: self-pairs, output-name collisions, cosine, stale blend, --
+# -- mixed-assignment dispatch                                           --
+
+
+def test_own_submissions_are_not_plagiarism_pairs(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
+    """Regression: a student's own fetch variants (``<uid>.md`` +
+    ``<uid>_LATE_0.md``) were exported as a 100% plagiarism pair (only exact
+    file equality was excluded) and topped the TUI ranking; the shared uid
+    prefix now identifies one student, cross-student pairs survive."""
+    same = "The quick brown fox jumps over the lazy dog. " * 8
+    write_tree(tmp_path, "processed/100.md", same)
+    write_tree(tmp_path, "processed/100_LATE_0.md", same)
+    write_tree(tmp_path, "processed/200.md", same)
+    cfg = _plagiarism_config(tmp_path)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
+    _run_text_plagiarism(cfg)
+
+    pairs = json.loads((cfg.output_dir / "all_pairs.json").read_text(encoding="utf-8"))
+    keys = {_pair_key(r["test_file"], r["reference_file"]) for r in pairs["pairs"]}
+    assert ("100.md", "100_LATE_0.md") not in keys  # own variants: excluded
+    assert ("100.md", "200.md") in keys
+    assert ("100_LATE_0.md", "200.md") in keys
+
+
+def test_code_output_names_are_unique(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
+    """Regression: ``raw/a/b.ipynb`` and ``raw/a__b.ipynb`` (and ``x.ipynb``
+    + ``x.py``) all cleaned to the same extracted name and the later
+    extraction overwrote the earlier student's code; names are now unique
+    per run (first in sorted order keeps the base name)."""
+    nb = _minimal_notebook()
+    write_tree(tmp_path, "raw/a/b.ipynb", nb)
+    write_tree(tmp_path, "raw/a__b.ipynb", nb)
+    write_tree(tmp_path, "raw/x.ipynb", nb)
+    write_tree(tmp_path, "raw/x.py", "print(2)")
+    cfg = _plagiarism_config(tmp_path)
+
+    taken: set[str] = set()
+    names = [
+        _safe_output_name(p, cfg.raw_dir, taken)
+        for p in sorted(cfg.raw_dir.rglob("*"))
+        if p.suffix in {".ipynb", ".py"}
+    ]
+    assert len(names) == 4
+    assert len(set(names)) == 4, names
+    assert "a__b.py" in names  # first in sorted order keeps the base name
+    assert "x.py" in names
+
+
+def test_embedding_similarity_is_normalized_cosine(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: raw ``a @ b`` made the score norm-dominated and produced
+    impossible values (real data hit 100.12%, which is not a cosine); the
+    score is L2-normalized cosine, so collinear vectors of norms 1 vs 100
+    give exactly 100%, not 10000%."""
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+
+    class NormModel:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def encode_document(
+            self,
+            texts: list[str],
+            batch_size: int = 16,
+            show_progress_bar: bool = False,
+        ) -> np.ndarray:
+            return np.array([[1.0, 0.0], [100.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr("sentence_transformers.SentenceTransformer", NormModel)
+    assert _run_embedding(_plagiarism_config(tmp_path)) is True
+    pairs = _embedding_pairs(cache_file(tmp_path, "embedding"))
+    assert pairs["aaa.md", "bbb.md"] == pytest.approx(100.0)
+
+
+def test_stale_embedding_cache_not_blended(
+    tmp_path: Path,
+    write_tree: Callable[[Path, str, str], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: ``_run_embedding``'s failure bool was discarded — when the
+    model was unavailable a stale cache from a previous run was blended into
+    fresh copydetect numbers while the payload claimed the configured
+    weights. A failed run is pure copydetect, with honest 1.0/0.0 weights."""
+    write_tree(tmp_path, "processed/aaa.md", "first answer essay text " * 4)
+    write_tree(tmp_path, "processed/bbb.md", "second answer essay text " * 4)
+    save_cache_file(
+        cache_file(tmp_path, "embedding"),
+        {
+            "hash": "stale",
+            "pairs": [
+                {
+                    "test_file": "aaa.md",
+                    "reference_file": "bbb.md",
+                    "test_similarity_pct": 90.0,
+                    "reference_similarity_pct": 90.0,
+                    "max_similarity_pct": 90.0,
+                    "token_overlap": 0,
+                }
+            ],
+        },
+    )
+
+    monkeypatch.setattr(plagiarism_mod, "_run_embedding", lambda cfg: False)
+    cfg = _text_cfg(tmp_path, enabled=True)
+    _run_text_plagiarism(cfg)
+
+    payload = json.loads(
+        (cfg.output_dir / "all_pairs.json").read_text(encoding="utf-8")
+    )
+    assert payload["weights"] == {"copydetect": 1.0, "embedding": 0.0}
+    for row in payload["pairs"]:
+        assert row["embedding_similarity_pct"] is None
+
+
+def test_mixed_assignment_covers_text_students(
+    tmp_path: Path, write_tree: Callable[[Path, str, str], Path]
+) -> None:
+    """Regression: whenever any raw .ipynb/.py existed, only the code path
+    ran and the other students never appeared in any pair list (real data:
+    6 code students compared, 44 silently dropped, success_rate=100). Both
+    paths now run: code pairs plus text pairs for the remaining students in
+    one all_pairs.json; a code student is never double-compared on the text
+    scale, and the text report keeps the code report.html."""
+    same = "The quick brown fox jumps over the lazy dog. " * 8
+    write_tree(tmp_path, "raw/100.ipynb", _minimal_notebook())
+    write_tree(tmp_path, "processed/100.md", "converted notebook text " * 8)
+    write_tree(tmp_path, "processed/200.md", same)
+    write_tree(tmp_path, "processed/300.md", same)
+    (tmp_path / "config.toml").write_text(
+        "[grading]\n"
+        "rubric = 'rubrics/exam.toml'\n"
+        "system_prompt = 'prompt/system.md'\n"
+        "provider = 'deepseek'\n",
+        encoding="utf-8",
+    )
+
+    summary = detect_plagiarism(tmp_path / "config.toml")
+    assert summary is not None
+    assert summary["total"] == 3, summary  # 1 code + 2 text students
+
+    pairs = json.loads(
+        (tmp_path / "plagiarism" / "all_pairs.json").read_text(encoding="utf-8")
+    )
+    keys = {_pair_key(r["test_file"], r["reference_file"]) for r in pairs["pairs"]}
+    assert ("200.md", "300.md") in keys  # prose students compared
+    assert not any("100.md" in k for k in keys)  # no double comparison
+    assert (tmp_path / "plagiarism" / "report.html").is_file()
+    assert (tmp_path / "plagiarism" / "report.text.html").is_file()
