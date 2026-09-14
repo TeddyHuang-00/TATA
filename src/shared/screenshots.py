@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -21,6 +22,12 @@ from .assignment_config import InputFormat
 # Shared with the cache-hit freshness check so the two never drift.
 _SOFFICE_FORMATS = frozenset({"docx", "pptx"})
 _PAGE_FORMATS = _SOFFICE_FORMATS | {"pdf", "image"}
+
+
+def _escape_glob(name: str) -> str:
+    """Escape glob metacharacters so a literal name matches exactly:
+    a stem containing ``[``/``*``/``?`` must not act as a pattern."""
+    return re.sub(r"[\[\]*?]", lambda m: f"[{m.group(0)}]", name)
 
 
 def _image_to_pdf(input_path: Path, out_pdf: Path) -> None:
@@ -165,7 +172,7 @@ def _pdftoppm_pages(
     except subprocess.CalledProcessError as e:
         print(f"[screenshots] pdftoppm failed for {pdf_path.name}: {e.stderr}")
         return 0
-    rendered = sorted(shots_dir.glob(f"{output_stem}-*.png"))
+    rendered = sorted(shots_dir.glob(f"{_escape_glob(output_stem)}-*.png"))
     for f in rendered:
         page = f.name.rsplit("-", 1)[-1].split(".")[0]
         f.rename(shots_dir / f"{output_stem}_p{_shift_page(page, page_offset)}.png")
@@ -261,7 +268,10 @@ def _cleanup_stem_shots(shots_dir: Path, output_stem: str) -> None:
     prefix is touched — other students' files are untouched."""
     if not shots_dir.exists():
         return
-    for pattern in (f"{output_stem}_p*.png", f"{output_stem}_i*.png"):
+    for pattern in (
+        f"{_escape_glob(output_stem)}_p*.png",
+        f"{_escape_glob(output_stem)}_i*.png",
+    ):
         for old in shots_dir.glob(pattern):
             old.unlink(missing_ok=True)
 

@@ -52,10 +52,21 @@ from .hooks_runtime import HookRuntime
 from .screenshots import (
     _PAGE_FORMATS,
     _cleanup_stem_shots,
+    _escape_glob,
     _image_to_pdf,
     _notebook_has_images,
     _render_screenshots,
     _render_stem_screenshots,
+)
+
+# Mount points preprocess invokes (docs/hooks.md lifecycle map): only these
+# hooks run during the preprocess stage, so only their scripts enter the
+# preprocess hash — other stages' hooks cannot affect it.
+_PREPROCESS_HOOK_MOUNTS = (
+    "before_preprocess",
+    "before_preprocess_file",
+    "after_preprocess_file",
+    "after_preprocess",
 )
 
 
@@ -246,12 +257,12 @@ def _screenshots_missing(
     pages stays undetected; delete the stem's shots to force a full
     refresh."""
     if any(fmt in _PAGE_FORMATS for _, fmt in members) and not next(
-        shots_dir.glob(f"{output_stem}_p*.png"), None
+        shots_dir.glob(f"{_escape_glob(output_stem)}_p*.png"), None
     ):
         return True
     return any(
         fmt == "ipynb" and _notebook_has_images(path) for path, fmt in members
-    ) and not next(shots_dir.glob(f"{output_stem}_i*.png"), None)
+    ) and not next(shots_dir.glob(f"{_escape_glob(output_stem)}_i*.png"), None)
 
 
 def _cached(cache: dict, stem: str, item_hash: str, output_file: Path) -> bool:
@@ -335,13 +346,13 @@ def _item_files(
     return found
 
 
-def _output_stem(
+def _naive_output_stem(
     item: Path,
     item_files_by: dict[Path, list[tuple[Path, InputFormat]]],
     strip_canvas_suffix: bool,
     clean_filenames: bool,
 ) -> str:
-    """Output md stem of a raw item (file: cleaned filename; dir: folder name)."""
+    """Un-disambiguated output md stem (file: cleaned filename; dir: name)."""
     if item.is_dir():
         return item.name
     output_name = item_files_by[item][0][0].name
@@ -350,6 +361,43 @@ def _output_stem(
     if clean_filenames:
         output_name = _clean_filename(output_name)
     return Path(output_name).stem
+
+
+def _output_stem(
+    item: Path,
+    item_files_by: dict[Path, list[tuple[Path, InputFormat]]],
+    strip_canvas_suffix: bool,
+    clean_filenames: bool,
+) -> str:
+    """Output md stem of a raw item, disambiguated when distinct raw items
+    clean to the same stem (e.g. Canvas ``Alice_111_222_lab.ipynb`` and
+    ``Alice_111_333_lab.ipynb`` both -> ``Alice``): the first in sorted name
+    order keeps the stem, the rest get ``_2``, ``_3``, ... — without this the
+    later item would overwrite the earlier student's processed md."""
+    stem = _naive_output_stem(item, item_files_by, strip_canvas_suffix, clean_filenames)
+    siblings = [
+        other
+        for other in sorted(item_files_by, key=lambda p: p.name)
+        if item_files_by[other]
+        and _naive_output_stem(
+            other, item_files_by, strip_canvas_suffix, clean_filenames
+        )
+        == stem
+    ]
+    if len(siblings) > 1:
+        pos = siblings.index(item)
+        if pos == 0:
+            return stem
+        taken = {
+            _naive_output_stem(o, item_files_by, strip_canvas_suffix, clean_filenames)
+            for o in item_files_by
+            if item_files_by[o]
+        }
+        suffix = pos + 1
+        while f"{stem}_{suffix}" in taken:
+            suffix += 1
+        return f"{stem}_{suffix}"
+    return stem
 
 
 def _item_hash_and_src(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
@@ -472,8 +520,8 @@ def _preprocess_rule_inputs(config_path: Path) -> _PreprocessRuleInputs:
     if hook_runtime is not None:
         hook_parts = [
             script.read_bytes()
-            for script_paths in hook_runtime.mounts.values()
-            for script in script_paths
+            for mount_point in _PREPROCESS_HOOK_MOUNTS
+            for script in hook_runtime.mounts.get(mount_point, ())
         ]
     return _PreprocessRuleInputs(
         items=items,
@@ -662,8 +710,8 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
     if hook_runtime is not None:
         hook_parts = [
             script.read_bytes()
-            for script_paths in hook_runtime.mounts.values()
-            for script in script_paths
+            for mount_point in _PREPROCESS_HOOK_MOUNTS
+            for script in hook_runtime.mounts.get(mount_point, ())
         ]
 
     # Rule for "would reconvert" (shared with the TUI display via
@@ -685,7 +733,7 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
     processed_count = 0
     failed_count = 0
 
-    for item in items:
+    for item in items:  # ruff: ignore[too-many-nested-blocks]
         if cancel_event is not None and cancel_event.is_set():
             print("[cancelled] preprocess stopped — finished items are cached")
             break
@@ -740,6 +788,8 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
             else:
                 input_file = raw_file
 
+            succeeded = False
+            error: str | None = None
             try:  # ruff: ignore[too-many-statements-in-try-clause]
                 assert file_format in SUPPORTED_INPUT_FORMATS, (
                     f"Unsupported input format: {file_format}. "
@@ -773,48 +823,54 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
                         output_stem,
                         [(input_file, file_format)],
                     )
-                if hook_runtime is not None:
-                    hook_runtime.run(
-                        "after_preprocess_file",
-                        {
-                            "assignment_config": str(assignment_config_path),
-                            "input_file": str(raw_file),
-                            "output_file": str(output_file),
-                            "input_format": file_format,
-                            "success": True,
-                        },
-                    )
+                succeeded = True
             except Exception as exc:
                 print(f"[error] Failed to process {raw_file.name}: {exc}")
                 failed_count += 1
-                if hook_runtime is not None:
-                    hook_runtime.run(
-                        "after_preprocess_file",
-                        {
-                            "assignment_config": str(assignment_config_path),
-                            "input_file": str(raw_file),
-                            "output_file": str(output_file),
-                            "input_format": file_format,
-                            "success": False,
-                            "error": str(exc),
-                        },
+                error = str(exc)
+            # The after hook runs outside the conversion try: a hook failure
+            # must not abort the loop; on a converted item it drops the cache
+            # entry so the next run retries (conversion + hook).
+            if hook_runtime is not None:
+                after_payload = {
+                    "assignment_config": str(assignment_config_path),
+                    "input_file": str(raw_file),
+                    "output_file": str(output_file),
+                    "input_format": file_format,
+                    "success": succeeded,
+                }
+                if error is not None:
+                    after_payload["error"] = error
+                try:
+                    hook_runtime.run("after_preprocess_file", after_payload)
+                except Exception as hook_exc:
+                    print(
+                        f"[error] after_preprocess_file hook failed for "
+                        f"{raw_file.name}: {hook_exc}"
                     )
+                    if succeeded:
+                        processed_count -= 1
+                        failed_count += 1
+                        cache.pop(output_stem, None)
         else:
             # Multi-file student folder: convert each supported file to a
             # temp md, then concatenate into one <folder>.md with per-file
             # headers (file:, submitted: when the stamp is known). Hooks fire
             # per input file but always report the final concatenated file as
             # output_file.
-            output_file = processed_dir / f"{item.name}.md"
+            output_stem = _output_stem(
+                item, item_files_by, strip_canvas_suffix, clean_filenames
+            )
+            output_file = processed_dir / f"{output_stem}.md"
             entry = pending.get(item)
             if entry is None:
                 print(f"[cached] {output_file.name} (unchanged)")
                 if processing.visual_evaluation and _screenshots_missing(
-                    processed_dir / "screenshots", item.name, files
+                    processed_dir / "screenshots", output_stem, files
                 ):
                     _render_stem_screenshots(
                         processed_dir,
-                        item.name,
+                        output_stem,
                         files,
                     )
                 continue
@@ -823,15 +879,18 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
             converted = 0
             # R2: one render pass per stem with continuous numbering across
             # members (see _render_stem_screenshots for the cached path);
-            # clean the stem's old shots once before any member renders.
+            # the stem's old shots are cleaned once, right before the first
+            # successful render — never up front, so a fully failed item
+            # keeps its previous shots while it stays pending.
             page_offset = 0
             img_offset = 0
-            if processing.visual_evaluation:
-                _cleanup_stem_shots(processed_dir / "screenshots", item.name)
+            shots_cleaned = False
             for raw_file, fmt in files:
                 tmp_file: Path | None = None
                 input_file = raw_file
                 file_format = fmt
+                succeeded = False
+                error: str | None = None
                 try:  # ruff: ignore[too-many-statements-in-try-clause]
                     if hook_runtime is not None:
                         before_payload = hook_runtime.run(
@@ -888,9 +947,14 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
                     converted += 1
                     print(f"[processed] {raw_file.name} -> {output_file.name}")
                     if processing.visual_evaluation:
+                        if not shots_cleaned:
+                            _cleanup_stem_shots(
+                                processed_dir / "screenshots", output_stem
+                            )
+                            shots_cleaned = True
                         n_pages, n_images = _render_screenshots(
                             input_file,
-                            item.name,
+                            output_stem,
                             processed_dir,
                             file_format,
                             page_offset=page_offset,
@@ -898,38 +962,47 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
                         )
                         page_offset += n_pages
                         img_offset += n_images
-                    if hook_runtime is not None:
-                        hook_runtime.run(
-                            "after_preprocess_file",
-                            {
-                                "assignment_config": str(assignment_config_path),
-                                "input_file": str(raw_file),
-                                "output_file": str(output_file),
-                                "input_format": file_format,
-                                "success": True,
-                            },
-                        )
+                    succeeded = True
                 except Exception as exc:
                     print(f"[error] Failed to process {raw_file.name}: {exc}")
                     failed_count += 1
-                    if hook_runtime is not None:
-                        hook_runtime.run(
-                            "after_preprocess_file",
-                            {
-                                "assignment_config": str(assignment_config_path),
-                                "input_file": str(raw_file),
-                                "output_file": str(output_file),
-                                "input_format": file_format,
-                                "success": False,
-                                "error": str(exc),
-                            },
-                        )
+                    error = str(exc)
                 finally:
                     if tmp_file is not None:
                         tmp_file.unlink(missing_ok=True)
-            if converted:
+                # The after hook runs outside the conversion try: a hook
+                # failure must not abort the loop; on a converted member it
+                # reverts the member so the item stays uncached and the next
+                # run retries (conversion + hook).
+                if hook_runtime is not None:
+                    after_payload = {
+                        "assignment_config": str(assignment_config_path),
+                        "input_file": str(raw_file),
+                        "output_file": str(output_file),
+                        "input_format": file_format,
+                        "success": succeeded,
+                    }
+                    if error is not None:
+                        after_payload["error"] = error
+                    try:
+                        hook_runtime.run("after_preprocess_file", after_payload)
+                    except Exception as hook_exc:
+                        print(
+                            f"[error] after_preprocess_file hook failed for "
+                            f"{raw_file.name}: {hook_exc}"
+                        )
+                        if succeeded:
+                            converted -= 1
+                            failed_count += 1
+            if converted == len(files):
                 processed_count += 1
-                cache[item.name] = {"hash": item_hash, "src": src}
+                cache[output_stem] = {"hash": item_hash, "src": src}
+            elif converted > 0 and hook_runtime is None:
+                # Partial conversion: the item stays pending (no cache
+                # entry) and the partial md is removed so it cannot be
+                # graded. With hooks the output path may be redirected, so
+                # only the default path is safe to delete.
+                (processed_dir / f"{output_stem}.md").unlink(missing_ok=True)
 
     try:
         save_cache_file(cache_path, cache)
