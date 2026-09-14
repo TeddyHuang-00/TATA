@@ -10,6 +10,11 @@ from typing import Any
 
 from .assignment_config import AssignmentFileConfig, config_root
 
+# A hook script that needs more than this is hanging, not working —
+# an unbounded subprocess would stall the whole pipeline (and the TUI
+# job behind it) forever.
+HOOK_TIMEOUT_SECONDS = 600
+
 
 @dataclass(frozen=True)
 class HookRuntime:
@@ -29,6 +34,12 @@ class HookRuntime:
 
         project_root = config_root(assignment_config_path).resolve()
         hooks_dir = (project_root / cfg.hooks.dir).resolve()
+        if not hooks_dir.is_relative_to(project_root):
+            msg = (
+                f"hooks.dir {cfg.hooks.dir!r} must stay inside the "
+                f"project root {project_root}"
+            )
+            raise ValueError(msg)
 
         mounts: dict[str, list[Path]] = {}
         for mount_point, script_cfg in cfg.hooks.mounts.items():
@@ -36,6 +47,13 @@ class HookRuntime:
             script_paths: list[Path] = []
             for script_rel in script_rels:
                 script_path = (hooks_dir / script_rel).resolve()
+                if not script_path.is_relative_to(hooks_dir):
+                    msg = (
+                        f"Hook script {script_rel!r} for mount point "
+                        f"'{mount_point}' escapes the hooks dir "
+                        f"{hooks_dir}"
+                    )
+                    raise ValueError(msg)
                 if not script_path.exists():
                     msg = (
                         f"Hook script not found for mount point '{mount_point}': {script_path}\n"
@@ -74,14 +92,22 @@ class HookRuntime:
         env["TATA_HOOK_MOUNT_POINT"] = mount_point
         env["TATA_HOOK_PROJECT_ROOT"] = str(self.project_root)
 
-        proc = subprocess.run(
-            [sys.executable, str(script_path)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            env=env,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(script_path)],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                env=env,
+                check=False,
+                timeout=HOOK_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            msg = (
+                f"Hook timed out after {HOOK_TIMEOUT_SECONDS}s at mount "
+                f"point '{mount_point}' using {script_path}"
+            )
+            raise RuntimeError(msg) from exc
 
         if proc.returncode != 0:
             msg = (
