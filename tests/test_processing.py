@@ -1567,3 +1567,123 @@ def test_preprocess_stops_at_item_boundary_when_cancelled(
     assert result2 is not None
     assert result2["total"] == 1
     assert len(list((tmp_path / "processed").glob("*.md"))) == 2
+
+
+def test_folder_partial_conversion_stays_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A folder whose one member fails conversion must NOT be cached as
+    complete: the partial md is removed, the item stays pending, and the
+    next run retries the whole folder (audit: partial conversion was
+    cached forever, dropping the failed member from grading)."""
+
+    raw = tmp_path / "raw"
+    (raw / "100").mkdir(parents=True)
+    (raw / "100" / "100.html").write_text(
+        "<h1>Answer</h1><p>my <b>body</b></p>", encoding="utf-8"
+    )
+    (raw / "100" / "100_0.md").write_text("# broken member\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+
+    real = pipeline_mod._process_single_file
+    converted: list[str] = []
+
+    def fail_md(src: Path, dst: Path, *args: object, **kwargs: object) -> None:
+        converted.append(src.name)
+        if src.suffix == ".md":
+            msg = "simulated conversion failure"
+            raise RuntimeError(msg)
+        real(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pipeline_mod, "_process_single_file", fail_md)
+    result = preprocess_assignment(tmp_path / "config.toml")
+    assert result is not None
+    assert result["errors"] == 1
+    assert result["success"] == 0
+    # no partial output left behind, no cache entry for the folder
+    assert not (tmp_path / "processed" / "100.md").exists()
+    cache = load_cache_file(cache_file(tmp_path, "preprocess"))
+    assert "100" not in cache
+
+    # second run retries the whole folder (the healthy member converts again)
+    result2 = preprocess_assignment(tmp_path / "config.toml")
+    assert result2 is not None
+    assert result2["errors"] == 1
+    assert converted.count("100.html") == 2
+    assert not (tmp_path / "processed" / "100.md").exists()
+    assert "100" not in load_cache_file(cache_file(tmp_path, "preprocess"))
+
+    # once the failing member is fixed, the folder converts and caches
+    monkeypatch.setattr(pipeline_mod, "_process_single_file", real)
+    (raw / "100" / "100_0.md").write_text("# fixed member\n", encoding="utf-8")
+    result3 = preprocess_assignment(tmp_path / "config.toml")
+    assert result3 is not None
+    assert result3["success"] == 1
+    assert result3["errors"] == 0
+    md = tmp_path / "processed" / "100.md"
+    assert md.exists()
+    content = md.read_text(encoding="utf-8")
+    assert "my **body**" in content
+    assert "fixed member" in content
+    assert "100" in load_cache_file(cache_file(tmp_path, "preprocess"))
+
+
+def test_output_stem_collision_is_disambiguated(tmp_path: Path) -> None:
+    """Two Canvas-named files that clean to the same stem must not overwrite
+    each other's processed md: the first (sorted) keeps the stem, the second
+    gets a _2 suffix (audit: the second conversion clobbered the first
+    student's submission)."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "Alice_111_333_lab.md").write_text("# alice B\n", encoding="utf-8")
+    (raw / "Alice_111_222_lab.md").write_text("# alice A\n", encoding="utf-8")
+    _write_grading_config(tmp_path)
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+
+    md_a = tmp_path / "processed" / "Alice.md"
+    md_b = tmp_path / "processed" / "Alice_2.md"
+    assert result is not None
+    assert result["success"] == 2
+    assert md_a.exists()
+    assert md_b.exists()
+    # sorted name order: Alice_111_222 < Alice_111_333
+    assert "# alice A" in md_a.read_text(encoding="utf-8")
+    assert "# alice B" in md_b.read_text(encoding="utf-8")
+    cache = load_cache_file(cache_file(tmp_path, "preprocess"))
+    assert set(cache) == {"Alice", "Alice_2"}
+    # stable across runs: second run is a full cache hit
+    result2 = preprocess_assignment(tmp_path / "config.toml")
+    assert result2 is not None
+    assert result2["total"] == 0  # nothing pending
+
+
+def test_stem_with_glob_metacharacters(tmp_path: Path) -> None:
+    """A submission name containing glob metacharacters must match its own
+    shot files exactly (audit: '[12345]' acted as a glob class, so shots
+    were seen as missing forever / old shots were never cleaned)."""
+    from src.shared.screenshots import _cleanup_stem_shots
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "HW1 [12345].md").write_text("# hw\n", encoding="utf-8")
+    _write_grading_config(tmp_path, "[processing]\nclean_filenames = false\n")
+
+    result = preprocess_assignment(tmp_path / "config.toml")
+    assert result is not None
+    assert (tmp_path / "processed" / "HW1 [12345].md").exists()
+
+    shots = tmp_path / "processed" / "screenshots"
+    shots.mkdir()
+    (shots / "HW1 [12345]_p1.png").write_bytes(b"png")
+    (shots / "HW1 [12346]_p1.png").write_bytes(b"png")  # another student
+
+    assert (
+        pipeline_mod._screenshots_missing(
+            shots, "HW1 [12345]", [(raw / "HW1 [12345].md", "pdf")]
+        )
+        is False
+    )
+    _cleanup_stem_shots(shots, "HW1 [12345]")
+    assert not (shots / "HW1 [12345]_p1.png").exists()
+    assert (shots / "HW1 [12346]_p1.png").exists()
