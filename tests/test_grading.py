@@ -54,7 +54,7 @@ def _setup_grade_env(tmp_path: Path, *, visual_evaluation: bool = False) -> Path
 
 def _fake_client(calls: list) -> MagicMock:
     result = MagicMock()
-    result.model_dump_json.return_value = json.dumps({"C1": {"rating": "correct"}})
+    result.model_dump_json.return_value = json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}})
 
     def create(**kwargs: object) -> MagicMock:
         calls.append(kwargs)
@@ -666,7 +666,7 @@ def test_grade_cancel_mid_run_cancels_queued_futures(
         if submission.stem >= "100003":  # slow tail: held "in flight" 0.5 s
             time.sleep(0.5)
             slow_done.append(submission.stem)
-        return submission.name, json.dumps({"C1": {"rating": "correct"}}), None
+        return submission.name, json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}}), None
 
     monkeypatch.setattr(grading_mod, "_run_single_grading_task", fake_task)
 
@@ -773,3 +773,112 @@ def test_grade_cancel_during_encode_skips_the_submit_pass(
         "success_rate": 0,
     }
     assert not list((a_dir / "graded").glob("*.json"))  # nothing new on disk
+# --- audit fixes: stale prune, hook validation, cancel harvest -------------
+
+
+def test_grade_prunes_stale_graded_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit: graded/<stem>.json for a submission removed from processed/ was
+    never pruned and score kept treating it as a real student."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+    a_dir = config_path.parent
+    (a_dir / "graded").mkdir()
+    (a_dir / "graded" / "999999.json").write_text(
+        json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}}), encoding="utf-8"
+    )
+    save_cache_file(
+        cache_file(a_dir, "grading"), {"999999": {"hash": "stale"}}
+    )
+
+    result = grade_assignment(config_path)
+
+    assert result is not None
+    assert result["success"] == 1
+    assert not (a_dir / "graded" / "999999.json").exists()
+    envelope = json.loads(cache_file(a_dir, "grading").read_text(encoding="utf-8"))
+    assert "999999" not in envelope["data"]
+    assert "100001" in envelope["data"]
+
+
+def test_after_hook_invalid_json_not_trusted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit: the after hook's result_json was trusted verbatim — a
+    hook-supplied {} was written and marked cached until score errored."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+    hooks = config_path.parent.parent / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    (hooks / "bad_after.py").write_text(
+        "import json, sys\n"
+        "payload = json.loads(sys.stdin.read() or '{}')\n"
+        "payload['result_json'] = '{}'\n"
+        "print(json.dumps(payload))\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + '[hooks.mounts]\nafter_grade_submission = "bad_after.py"\n',
+        encoding="utf-8",
+    )
+
+    result = grade_assignment(config_path)
+
+    assert result is not None
+    assert result["success"] == 0
+    assert result["errors"] == 1
+    assert not (config_path.parent / "graded" / "100001.json").exists()
+    envelope = json.loads(
+        cache_file(config_path.parent, "grading").read_text(encoding="utf-8")
+    )
+    assert "100001" not in envelope["data"]
+
+
+def test_grade_writes_graded_json_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit: graded JSON was write_text — a crash mid-write left a truncated
+    file the cache would trust. It is now same-dir temp + replace."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+
+    grade_assignment(config_path)
+
+    a_dir = config_path.parent
+    # no temp litter left behind
+    assert list((a_dir / "graded").glob("*.tmp")) == []
+    text = (a_dir / "graded" / "100001.json").read_text(encoding="utf-8")
+    json.loads(text)  # complete, parseable
+
+
+def test_cancel_harvests_completed_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit: cancel used to discard already-completed futures — paid LLM
+    work was redone on rerun. Completed results must be written + cached."""
+    config_path = _setup_grade_env(tmp_path)
+    calls: list[MagicMock] = []
+    _patch_grade_deps(monkeypatch, calls)
+    a_dir = config_path.parent
+    (a_dir / "processed" / "100002.md").write_text(
+        "# second answer\n", encoding="utf-8"
+    )
+
+    def fake_task(submission: Path, **kwargs: object) -> tuple[str, str, None]:
+        if submission.stem == "100001":
+            time.sleep(1.5)  # outlives the cancel
+        return submission.name, json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}}), None
+
+    monkeypatch.setattr(grading_mod, "_run_single_grading_task", fake_task)
+    cancel = threading.Event()
+    threading.Timer(0.2, cancel.set).start()
+
+    result = grade_assignment(config_path, cancel_event=cancel)
+
+    assert result is not None
+    # both submissions' paid work is on disk and cached, not redone on rerun
+    assert (a_dir / "graded" / "100001.json").exists()
+    assert (a_dir / "graded" / "100002.json").exists()
+    envelope = json.loads(cache_file(a_dir, "grading").read_text(encoding="utf-8"))
+    assert set(envelope["data"]) == {"100001", "100002"}
+
+    result2 = grade_assignment(config_path)
+    assert result2 is not None
+    assert result2["total"] == 0  # cache hit — no regrade

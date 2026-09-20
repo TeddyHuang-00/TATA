@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -19,6 +19,7 @@ from .assignment_config import (
     resolve_assignment_paths,
 )
 from .caching import (
+    atomic_write_text,
     cache_file,
     content_hash,
     file_digest,
@@ -428,6 +429,19 @@ def _run_single_grading_task(  # ruff: ignore[too-many-arguments]
             )
             result_json = str(after_payload.get("result_json", result_json))
 
+        # Validate before the result is trusted as a grade: the LLM result is
+        # already model-shaped, but the after hook's result_json is verbatim
+        # stdout — a hook-supplied {} or truncated JSON must not be marked
+        # cached (audit: it counted as a valid grade until score errored).
+        try:
+            response_model.model_validate_json(result_json)
+        except (ValueError, TypeError) as exc:
+            return (
+                submission.name,
+                "",
+                f"InvalidGrade: {type(exc).__name__}: {exc}",
+            )
+
         return submission.name, result_json, None
     except Exception as exc:
         error_message = f"{type(exc).__name__}: {exc}"
@@ -527,6 +541,23 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
     pending_submissions, sub_hashes = grading_pending(cfg, cfg_model)
     cache = load_cache_file(cache_path)
 
+    # Prune graded JSONs (and cache entries) whose submission no longer
+    # exists in processed/: otherwise score keeps grading a student who
+    # stopped submitting (audit: never pruned).
+    live_stems = {p.stem for p in submissions}
+    pruned = 0
+    for old in cfg.graded_dir.glob("*.json"):
+        if old.stem not in live_stems:
+            old.unlink(missing_ok=True)
+            if cache.pop(old.stem, None) is not None:
+                pruned += 1
+    if pruned:
+        try:
+            save_cache_file(cache_path, cache)
+        except Exception as exc:  # grading must never break on cache
+            print(f"[warn] failed to write grading cache: {exc}")
+        print(f"Pruned {pruned} stale grade file(s) no longer in processed/.")
+
     if force:
         pending_submissions = submissions
         print("Force mode enabled: ignoring cache and regrading all submissions.")
@@ -608,16 +639,13 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
                 )
             ] = submission
 
-        for future in as_completed(future_to_submission):
-            if cancel_event is not None and cancel_event.is_set():
-                # Cancel queued (not yet started) submissions; running calls
-                # finish (the executor's own shutdown waits for them).
-                executor.shutdown(cancel_futures=True)
-                print(
-                    "[cancelled] grade stopped — queued submissions dropped, "
-                    "in-flight calls finish"
-                )
-                break
+        def _record_result(future: Future) -> None:
+            """Write one finished future's grade (atomic) + cache entry.
+
+            The cache is reloaded before each save so a concurrent run
+            (CLI + TUI) cannot clobber entries the other wrote since our
+            start snapshot (audit: whole-dict rewrite per submission)."""
+            nonlocal done_count, error_count
             submission = future_to_submission[future]
             output_file = cfg.graded_dir / f"{submission.stem}.json"
 
@@ -629,10 +657,11 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
                 error_message = f"FutureError: {type(exc).__name__}: {exc}"
 
             if error_message is None:
-                output_file.write_text(result_json, encoding="utf-8")
+                atomic_write_text(output_file, result_json)
                 try:
-                    cache[submission.stem] = {"hash": sub_hashes[submission.stem]}
-                    save_cache_file(cache_path, cache)
+                    fresh = load_cache_file(cache_path)
+                    fresh[submission.stem] = {"hash": sub_hashes[submission.stem]}
+                    save_cache_file(cache_path, fresh)
                 except Exception as exc:  # grading must never break on cache
                     print(f"[warn] failed to write grading cache: {exc}")
                 print(f"[done] {submission_name}")
@@ -642,6 +671,30 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
                     f.write(f"{submission_name}: {error_message}\n")
                 print(f"[error] {submission_name}: {error_message}")
                 error_count += 1
+
+        recorded: set[Future] = set()
+        cancelled = False
+        for future in as_completed(future_to_submission):
+            if cancel_event is not None and cancel_event.is_set():
+                # Cancel queued (not yet started) submissions; running calls
+                # finish (the executor's own shutdown waits for them).
+                executor.shutdown(cancel_futures=True)
+                cancelled = True
+                print(
+                    "[cancelled] grade stopped — queued submissions dropped, "
+                    "in-flight calls finish"
+                )
+                break
+            _record_result(future)
+            recorded.add(future)
+        if cancelled:
+            # Harvest results that completed before the cancel was observed:
+            # paid LLM work must not be redone on rerun (audit: cancel used
+            # to discard them). In-flight calls' results are dropped — the
+            # honest ceiling, synchronous calls cannot be killed.
+            for f in future_to_submission:
+                if f not in recorded and f.done():
+                    _record_result(f)
 
     if hook_runtime is not None:
         hook_runtime.run(

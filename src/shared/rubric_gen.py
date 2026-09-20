@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import tomlkit
+from pydantic import BaseModel, Field
 
 from .assignment_config import load_assignment_file
 from .grading import build_client
@@ -21,11 +22,41 @@ Output a RubricDefinition: an array "criterion". Each criterion is an object:
   quality levels (what a correct, a partially correct, and an incorrect
   answer look like) without tying them to specific points or deductions. It
   must be specific enough that a grader can locate the relevant part of a
-  student answer and apply it, and must not just restate the assignment
-  requirement. Describe each level in terms of the student's intent and
+  student answer and apply it. Restating the assignment's own question is fine:
+  a level may require exactly what the assignment asks for, and nothing more.
+  Describe each level in terms of the student's intent and
   result: the highest level must be reachable by any reasonable attempt that
   meets the requirement, even if it differs from the reference in approach,
   structure, or naming.
+  The correct level must be a single condition, never a list of independent
+  requirements joined by "and": an answer that meets the assignment must
+  never be rated partial just because one extra conjunct is missing. Never
+  require anything the assignment did not ask for: no justification,
+  explanation, comparison, elimination, trace, or shown work, and no specific
+  path, count, or value when the question only asks which one or whether. If a
+  fully correct answer to the assignment's question could fail the correct
+  wording, that wording is wrong.
+  The partial level must name the concrete error or the missing answer in the
+  assignment's own terms: never the absence of something the correct level
+  lists, never a shortfall in explanation, documentation, formatting, or
+  completeness, and never "addresses only part of the question" unless the
+  assignment asks for such parts. Keep each desc to at most four sentences.
+  If the assignment does not fix a value the criterion depends on -- a start or
+  goal node, a dataset, a column, a scenario, an example, or a threshold --
+  never assume one: a desc that quietly picks one (e.g. "the route from A to G"
+  when the assignment names no endpoints) adds a requirement the assignment never made.
+  Grade the student's own choice instead: correct when the answer is right for
+  the value the student states or clearly implies, and partial or incorrect
+  only when that choice is not permitted, when the answer contradicts the
+  student's own stated choice, or when the answer is wrong for it.
+  Worked example: for "What is the total cost of the cheapest route from A to
+  G?", a student answers "7". Correct wording: "States the total cost is 7."
+  Wrong wording: "Accumulates the per-edge costs, compares the alternative
+  routes, and traces the frontier"; it demands work the question never asked
+  for and would rate a correct answer partial. If the assignment had not named
+  those endpoints, a criterion that still named them would invent a start and
+  goal the assignment left open; correct wording grades the route the student
+  names instead.
 - "rating": "ternary" (correct, partial, incorrect). Always "ternary".
 - "grading": "standard". Always "standard"; never "custom", "strict", or
   "round up", and never generate "custom_scale".
@@ -60,6 +91,36 @@ Rules:
 - pts across all criteria should sum to the assignment total (100 unless the assignment states otherwise).
 - Respond only with the RubricDefinition object.
 """
+
+#: System prompt for the parameter audit that runs before generation: name every
+#: value the assignment's questions depend on that the text does not state. A
+#: weak model answers this narrow factual question correctly even when it will
+#: not obey the same rule while composing a rubric (the 4.08 start/goal node).
+RUBRIC_GEN_PARAMETER_PROMPT = """
+You are a meticulous reader of university assignment descriptions. The
+questions in an assignment depend on parameters such as a start or goal node, a
+dataset, a column, a scenario, an example, or a threshold. List every such
+parameter that the assignment text does NOT state. A parameter counts as stated
+only when you can quote the text that fixes it (including any graph, figure, or
+table in the assignment); if no quote fixes its value, it is not stated.
+Output one short line per unstated parameter: the parameter name, then either
+the quote that mentions it without fixing it or "NOT STATED" when the text
+never mentions it. List only parameters the assignment's questions depend on;
+an empty list is correct when the assignment fixes every value they need.
+"""
+
+
+class UnstatedParameters(BaseModel):
+    """Parameters the assignment's questions depend on but never fix."""
+
+    unstated_parameters: list[str] = Field(
+        default_factory=list,
+        description=(
+            "One short line per unstated parameter, e.g. 'Start node: NOT "
+            "STATED'. Empty when the assignment fixes every value its "
+            "questions need."
+        ),
+    )
 
 
 def _validate_rubric_content(rubric: RubricDefinition) -> None:
@@ -132,12 +193,34 @@ def generate_rubric(assignment_config_path: Path, out_path: Path) -> RubricDefin
         raise ValueError(msg)
 
     client, model_name = build_client(provider_name)
+
+    # Ask the narrow factual question first, then state its answer as fact in
+    # the generation call: a weak model answers this correctly even when it
+    # ignores the same rule while composing a rubric.
+    audit = client.chat.completions.create(
+        model=model_name,
+        response_model=UnstatedParameters,
+        messages=[
+            {"role": "system", "content": RUBRIC_GEN_PARAMETER_PROMPT},
+            {"role": "user", "content": f"Assignment Description:\n{assignment_text}"},
+        ],
+    )
+
+    user_message = f"Assignment Description:\n{assignment_text}"
+    if audit.unstated_parameters:
+        findings = "\n".join(f"- {item}" for item in audit.unstated_parameters)
+        user_message += (
+            "\n\nThe assignment does NOT state the following, so students choose"
+            " them themselves (grade each student's own choice, and do not assume"
+            f" one):\n{findings}"
+        )
+
     rubric = client.chat.completions.create(
         model=model_name,
         response_model=RubricDefinition,
         messages=[
             {"role": "system", "content": RUBRIC_GEN_SYSTEM_PROMPT},
-            {"role": "user", "content": f"Assignment Description:\n{assignment_text}"},
+            {"role": "user", "content": user_message},
         ],
     )
 

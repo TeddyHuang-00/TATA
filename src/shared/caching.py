@@ -74,6 +74,23 @@ def save_cache_file(path: Path, data: dict) -> None:
         raise
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    """Atomically write ``text`` (same-dir temp + replace) so a crash or
+    cancel mid-write never leaves a truncated file for consumers to parse."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        Path(tmp_name).replace(path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(tmp_name).unlink()
+        raise
+
+
 def file_digest(path: Path) -> str:
     """sha256 hexdigest of ``path``, memoized on ``(path, mtime_ns, size)``.
 
