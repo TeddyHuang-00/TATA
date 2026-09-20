@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import contextlib
 import json
-import os
 import re
 import shutil
-import tempfile
 import threading
 from dataclasses import dataclass
 from operator import itemgetter
@@ -29,6 +26,7 @@ from .assignment_config import (
     root_plagiarism_section,
 )
 from .caching import (
+    atomic_write_text,
     cache_file,
     content_hash,
     file_digest,
@@ -122,23 +120,6 @@ def _student_uid(file_name: str) -> str | None:
     ``<uid>``, ``<uid>_LATE_i``, ``<uid>__<member>``); None when absent."""
     match = _UID_PREFIX.match(Path(file_name).stem)
     return match.group(1) if match else None
-
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Write text atomically (same-dir temp + replace) so a crash or cancel
-    mid-write never leaves a truncated JSON for the aggregate/TUI to parse."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        Path(tmp_name).replace(path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            Path(tmp_name).unlink()
-        raise
 
 
 def _extract_notebook_code(input_path: Path) -> str:
@@ -250,7 +231,7 @@ def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
             "pair_count": 0,
             "pairs": [],
         }
-        _atomic_write_text(output_path, json.dumps(payload, indent=2))
+        atomic_write_text(output_path, json.dumps(payload, indent=2))
         return 0
 
     seen_pairs: set[tuple[str, str]] = set()
@@ -297,7 +278,7 @@ def _write_full_pair_data(detector: CopyDetector, output_path: Path) -> int:
         "pair_count": len(rows),
         "pairs": rows,
     }
-    _atomic_write_text(output_path, json.dumps(payload, indent=2))
+    atomic_write_text(output_path, json.dumps(payload, indent=2))
     return len(rows)
 
 
@@ -684,7 +665,7 @@ def _run_text_plagiarism(
         ),
         "pairs": [*code_rows, *rows],
     }
-    _atomic_write_text(cfg.full_pairs_file, json.dumps(payload, indent=2))
+    atomic_write_text(cfg.full_pairs_file, json.dumps(payload, indent=2))
 
     print(f"[text-plagiarism] {cfg.full_pairs_file} ({len(rows)} pairs)")
     for row in rows[:10]:

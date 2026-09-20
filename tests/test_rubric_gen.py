@@ -16,7 +16,9 @@ from src.shared.cli_options import (
 from src.shared.provider import ProviderInfo, ProviderList
 from src.shared.rubric import RubricDefinition, get_rubric_definition
 from src.shared.rubric_gen import (
+    RUBRIC_GEN_PARAMETER_PROMPT,
     RUBRIC_GEN_SYSTEM_PROMPT,
+    UnstatedParameters,
     _validate_rubric_content,
     generate_rubric,
 )
@@ -44,15 +46,28 @@ def _setup_env(
     return a_dir / "config.toml", out
 
 
-def _fake_client(rubric: RubricDefinition) -> MagicMock:
+def _fake_client(
+    rubric: RubricDefinition, unstated: list[str] | None = None
+) -> MagicMock:
     """Instructor client whose create returns a response_model instance."""
+
+    def create(**kwargs: object) -> object:
+        if kwargs["response_model"] is UnstatedParameters:
+            return UnstatedParameters(unstated_parameters=unstated or [])
+        return rubric
+
     client = MagicMock()
-    client.chat.completions.create.return_value = rubric
+    client.chat.completions.create.side_effect = create
     return client
 
 
-def _patch_deps(monkeypatch: pytest.MonkeyPatch, rubric: RubricDefinition) -> MagicMock:
-    client = _fake_client(rubric)
+def _patch_deps(
+    monkeypatch: pytest.MonkeyPatch,
+    rubric: RubricDefinition,
+    *,
+    unstated: list[str] | None = None,
+) -> MagicMock:
+    client = _fake_client(rubric, unstated)
     monkeypatch.setattr(
         "src.shared.rubric_gen.build_client", lambda name: (client, "m1")
     )
@@ -119,6 +134,53 @@ def test_generate_rubric_writes_readable_toml(
     assert loaded.criterion[0].pts == 10
     assert loaded.criterion[1].grading == "custom"
     assert loaded.criterion[1].custom_scale == [0, 0.25, 0.5, 0.75, 1.0]
+
+
+def test_generate_rubric_feeds_unstated_parameters_into_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parameter audit runs first, and its findings are stated as fact in
+    the generation message (the 4.08 fix: no endpoint the assignment leaves
+    open may be assumed)."""
+    config_path, out = _setup_env(tmp_path)
+    client = _patch_deps(
+        monkeypatch,
+        _valid_rubric(),
+        unstated=["Start node: NOT STATED", "Goal node: NOT STATED"],
+    )
+
+    generate_rubric(config_path, out)
+
+    calls = client.chat.completions.create.call_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs["response_model"] is UnstatedParameters
+    assert calls[0].kwargs["messages"][0]["content"] == RUBRIC_GEN_PARAMETER_PROMPT
+    generation = calls[1].kwargs["messages"][1]["content"]
+    assert "does NOT state" in generation
+    assert "- Start node: NOT STATED" in generation
+    assert "- Goal node: NOT STATED" in generation
+    assert "grade each student's own choice" in generation
+    assert "do not assume one" in generation
+    # The assignment text is still sent in full.
+    assert "# HW1" in generation
+
+
+def test_generate_rubric_empty_audit_leaves_generation_message_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit reports nothing unstated -> generation message is the plain one."""
+    config_path, out = _setup_env(tmp_path)
+    client = _patch_deps(monkeypatch, _valid_rubric(), unstated=[])
+
+    generate_rubric(config_path, out)
+
+    generation = client.chat.completions.create.call_args.kwargs["messages"][1][
+        "content"
+    ]
+    assert (
+        generation
+        == "Assignment Description:\n# HW1\nWrite a program that prints hello.\n"
+    )
 
 
 def test_generate_rubric_missing_assignment_md(
@@ -299,3 +361,47 @@ def test_prompt_default_ternary_standard() -> None:
     assert "generous" in prompt
     assert "reasonable alternative" in prompt
     assert "reachable by any reasonable attempt" in prompt
+
+
+def test_prompt_forbids_surplus_and_conjunctive_requirements() -> None:
+    """Desc rules that stop over-strict rubrics: the correct level is one
+    condition, no level demands anything the assignment did not ask for,
+    partial names the concrete error, and every desc stays within four
+    sentences (regression guard for the Module 4 over-strictness)."""
+    prompt = RUBRIC_GEN_SYSTEM_PROMPT.lower()
+    # Restating the assignment is allowed; the old clause that pushed the
+    # generator into additive requirements is gone.
+    assert "restating the assignment's own question is fine" in prompt
+    assert "must not just restate" not in prompt
+    # Correct is one condition, never a list of conjuncts.
+    assert "single condition" in prompt
+    assert "never a list of independent" in prompt
+    # No deliverables the assignment never asked for.
+    assert "no justification" in prompt
+    assert "trace, or shown work" in prompt
+    assert "which one or whether" in prompt
+    # Self-test: a fully correct answer must be able to satisfy the wording.
+    assert "fully correct answer" in prompt
+    assert "that wording is wrong" in prompt
+    # Partial names the concrete error, not an absence or a shortfall.
+    assert "concrete error" in prompt
+    assert "never the absence of something" in prompt
+    assert "addresses only part of the question" in prompt
+    # Sentence cap, plus the worked example teaching the dominant failure.
+    assert "four sentences" in prompt
+    assert "worked example" in prompt
+    assert "total cost" in prompt
+
+
+def test_prompt_forbids_inventing_unstated_parameters() -> None:
+    """A criterion must not bake in a value the assignment never fixes (start
+    or goal node, dataset, column, scenario, threshold): it grades the value
+    the student chooses instead (regression guard for the 4.08 answer key)."""
+    prompt = RUBRIC_GEN_SYSTEM_PROMPT.lower()
+    assert "does not fix a value" in prompt
+    assert "never assume one" in prompt
+    assert "the assignment never made" in prompt
+    assert "grade the student's own choice" in prompt
+    assert "the student states or clearly implies" in prompt
+    assert "that choice is not permitted" in prompt
+    assert "the answer is wrong for it" in prompt
