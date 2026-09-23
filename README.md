@@ -21,8 +21,13 @@ two commands into a terminal, you are ready.
    with `ollama serve`, and pull the bundled model with
    `ollama pull qwen3.8:latest`. Prefer a cloud provider? Any
    OpenAI-compatible service works (DeepSeek, for example), but then you
-   also need an API key. See [docs/config/provider.md](docs/config/provider.md)
-   for other options.
+   also need an API key.
+
+   **Already pay for ChatGPT or Claude?** You can grade through that
+   subscription instead of buying API credit. Sign in once to the vendor's
+   command line tool and point TATA at it — the bundled `chatgpt` and
+   `claude-code` providers need no API key at all. See
+   [docs/config/provider.md](docs/config/provider.md) for all options.
 
 3. **A Windows, macOS, or Linux computer.** Nothing else, no special
    hardware or accounts.
@@ -198,7 +203,9 @@ Run `uv run cli --help` any time to see what is available.
 - **Prompt**: the instructions you give the LLM about how to grade,
   markdown files under `data/prompt/`.
 - **Provider**: the LLM service to call, described by one TOML file under
-  `data/providers/` containing base_url, api_key, model, and mode.
+  `data/providers/` containing base_url, api_key, model, and mode — or,
+  for a subscription-backed provider, a `transport` naming the signed-in
+  CLI to grade through instead.
 - **Config**: a TOML text file describing an assignment: which rubric,
   prompt, provider, and folders to use. See Configuration below.
 - **Raw and processed**: `raw/` holds submissions as they come from
@@ -232,9 +239,35 @@ system_prompt = "prompt/system.md"
 provider = "ollama"
 ```
 
-The repository bundles two providers: `ollama` (local, recommended, no
-key) and `deepseek` (a cloud alternative that reads
-`DEEPSEEK_API_KEY` from `.env`).
+The repository bundles four providers:
+
+| Provider | Needs | Notes |
+| --- | --- | --- |
+| `ollama` | nothing | Local, recommended default, free |
+| `deepseek` | `DEEPSEEK_API_KEY` in `.env` | Cloud, pay per token |
+| `claude-code` | a signed-in `claude` | Uses your Claude subscription, no API key |
+| `chatgpt` | a signed-in `codex` | Uses your ChatGPT subscription, no API key |
+
+The last two set `transport` instead of `base_url`/`api_key`: TATA hands
+the prompt to the vendor's command line tool, which already holds your
+login and supplies the credentials itself. Set them up once with:
+
+```bash
+claude        # then type /login    -> enables the claude-code provider
+codex login   # choose "Sign in with ChatGPT" -> enables the chatgpt provider
+```
+
+Then point an assignment at one the same way as any other provider:
+
+```toml
+[grading]
+provider = "claude-code"
+```
+
+Two caveats. Grading is slower than a direct API call, because each
+submission starts a CLI process. And `temperature` is ignored, since
+neither tool exposes sampling controls — if you need the reproducibility
+that `temperature = 0.0` buys you, use a keyed provider.
 
 How paths resolve: `rubric` and `system_prompt` are relative to the
 `data/` folder (for example `data/rubrics/example_rubric.toml`);
@@ -315,6 +348,9 @@ The repository ships with working example files:
   recommended default (no key needed)
 - `data/providers/deepseek.toml`: an optional cloud provider that
   reads `DEEPSEEK_API_KEY` from your `.env` file
+- `data/providers/claude-code.toml` and `data/providers/chatgpt.toml`:
+  optional subscription-backed providers that grade through a signed-in
+  `claude` or `codex` install instead of an API key
 
 Once you are set up, confirm everything is ready with:
 

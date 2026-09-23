@@ -18,6 +18,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.widgets import Button, Input, Label, Select, Static
 
 from src import REPO_ROOT
+from src.shared.cli_transport import CliTransportError, Transport, cli_login_hint
 from src.shared.provider import (
     ProviderInfo,
     build_provider_client,
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 
 
 _MODE_VALUES = tuple(mode.value for mode in Mode)
+_TRANSPORT_VALUES = tuple(transport.value for transport in Transport)
 
 
 def _provider_reference_configs(data_dir: Path, name: str) -> list[Path]:
@@ -52,13 +54,24 @@ def _provider_reference_configs(data_dir: Path, name: str) -> list[Path]:
     return hits
 
 
-def _ping_provider(base_url: str, api_key: str, model: str, mode: str) -> None:
-    """Real connectivity probe: one tiny chat completion via the shared
-    instructor-wrapped client (same construction as grading). Runs on a
-    worker thread; raises on any failure."""
-    client = build_provider_client(base_url, api_key, Mode(mode))
+def _ping_provider(info: ProviderInfo) -> None:
+    """Real connectivity probe: one tiny completion via the shared client
+    (same construction as grading). Runs on a worker thread; raises on any
+    failure.
+
+    For a CLI transport this doubles as a login check — an unauthenticated
+    ``claude``/``codex`` exits non-zero and the transport turns that into a
+    message naming the sign-in command."""
+    client = build_provider_client(
+        info.base_url,
+        info.api_key,
+        info.mode,
+        transport=info.transport,
+        cli_path=info.cli_path,
+        timeout=info.timeout,
+    )
     client.chat.completions.create(
-        model=model,
+        model=info.model,
         messages=[{"role": "user", "content": "ping"}],
         max_tokens=1,
     )
@@ -110,6 +123,13 @@ class ProvidersPane(Vertical):
             yield Static("", id="pv-status")
             with Vertical(id="pv-form"):
                 with Vertical(classes="rb-field"):
+                    yield Label("transport")
+                    yield Select(
+                        [(value, value) for value in _TRANSPORT_VALUES],
+                        id="pv-transport",
+                        allow_blank=False,
+                    )
+                with Vertical(classes="rb-field"):
                     yield Label("base_url")
                     yield Input(
                         id="pv-base-url", placeholder="https://api.example.com/v1"
@@ -134,6 +154,9 @@ class ProvidersPane(Vertical):
                     yield Input(
                         id="pv-temperature", placeholder="blank = provider default"
                     )
+                with Vertical(classes="rb-field"):
+                    yield Label("cli_path (optional, CLI transports only)")
+                    yield Input(id="pv-cli-path", placeholder="blank = find on PATH")
             with Horizontal(id="pv-actions"):
                 yield Button("Save", id="pv-save", variant="primary")
                 yield Button("Rename", id="pv-rename", disabled=True)
@@ -153,6 +176,8 @@ class ProvidersPane(Vertical):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "pv-name":
             self._on_name_change(str(event.value))
+        elif event.select.id == "pv-transport":
+            self._sync_transport(str(event.value))
 
     def _on_name_change(self, value: str) -> None:
         is_new = value == new_value
@@ -173,6 +198,11 @@ class ProvidersPane(Vertical):
         if mode not in _MODE_VALUES:
             mode = _MODE_VALUES[0]
         temperature = doc.get("temperature")
+        transport = str(doc.get("transport", Transport.OPENAI.value))
+        if transport not in _TRANSPORT_VALUES:
+            transport = Transport.OPENAI.value
+        self.query_one("#pv-transport", Select).value = transport
+        self.query_one("#pv-cli-path", Input).value = str(doc.get("cli_path", ""))
         self.query_one("#pv-base-url", Input).value = str(doc.get("base_url", ""))
         self.query_one("#pv-api-key", Input).value = str(doc.get("api_key", ""))
         self.query_one("#pv-model", Input).value = str(doc.get("model", ""))
@@ -180,16 +210,37 @@ class ProvidersPane(Vertical):
         self.query_one("#pv-temperature", Input).value = (
             "" if temperature is None else str(temperature)
         )
+        self._sync_transport(transport)
         self._set_status("")
         self._sync_buttons()
 
     def _clear_form(self) -> None:
+        self.query_one("#pv-transport", Select).value = Transport.OPENAI.value
         self.query_one("#pv-base-url", Input).value = ""
         self.query_one("#pv-api-key", Input).value = ""
         self.query_one("#pv-model", Input).value = ""
         self.query_one("#pv-mode", Select).value = _MODE_VALUES[0]
         self.query_one("#pv-temperature", Input).value = ""
+        self.query_one("#pv-cli-path", Input).value = ""
+        self._sync_transport(Transport.OPENAI.value)
         self._sync_buttons()
+
+    def _sync_transport(self, transport: str) -> None:
+        """Show only the fields the selected transport actually reads.
+
+        base_url/api_key are meaningless for a CLI transport (the CLI owns the
+        credential), and cli_path is meaningless without one — hiding the
+        inactive pair is what makes the two-mode form legible."""
+        is_cli = Transport(transport).is_cli
+        for field_id in ("#pv-base-url", "#pv-api-key"):
+            self.query_one(field_id, Input).parent.display = (
+                "none" if is_cli else "block"
+            )
+        self.query_one("#pv-cli-path", Input).parent.display = (
+            "block" if is_cli else "none"
+        )
+        if is_cli:
+            self._set_status(cli_login_hint(Transport(transport)))
 
     def _sync_buttons(self) -> None:
         disabled = self._current is None
@@ -202,26 +253,34 @@ class ProvidersPane(Vertical):
     # ---------- form ----------
 
     def _form_values(self) -> dict | None:
+        transport = str(self.query_one("#pv-transport", Select).value)
         base_url = self.query_one("#pv-base-url", Input).value.strip()
         api_key = self.query_one("#pv-api-key", Input).value.strip()
         model = self.query_one("#pv-model", Input).value.strip()
         mode = str(self.query_one("#pv-mode", Select).value)
         temperature = self.query_one("#pv-temperature", Input).value.strip()
-        if not base_url:
+        cli_path = self.query_one("#pv-cli-path", Input).value.strip()
+        is_cli = Transport(transport).is_cli
+        if not is_cli and not base_url:
             self._set_status("[red]base_url cannot be empty[/red]")
             return None
-        if not api_key:
+        if not is_cli and not api_key:
             self._set_status("[red]api_key cannot be empty[/red]")
             return None
         if not model:
             self._set_status("[red]model cannot be empty[/red]")
             return None
         values: dict = {
-            "base_url": base_url,
-            "api_key": api_key,
+            "transport": transport,
             "model": model,
             "mode": mode,
         }
+        if is_cli:
+            if cli_path:
+                values["cli_path"] = cli_path
+        else:
+            values["base_url"] = base_url
+            values["api_key"] = api_key
         if temperature:
             try:
                 values["temperature"] = float(temperature)
@@ -287,9 +346,10 @@ class ProvidersPane(Vertical):
         doc = self._doc(name)
         for key, value in values.items():
             doc[key] = value
-        if "temperature" not in values:
-            with suppress(KeyError):
-                del doc["temperature"]
+        for key in ("temperature", "base_url", "api_key", "cli_path"):
+            if key not in values:
+                with suppress(KeyError):
+                    del doc[key]
         if not self._write(name, doc):
             return
         self._current = name
@@ -417,14 +477,26 @@ class ProvidersPane(Vertical):
         values = self._form_values()
         if values is None:
             return
-        base_url = values["base_url"]
-        api_key = resolve_env_placeholders(values["api_key"])
-        model = values["model"]
+        # api_key is absent for a CLI transport, which carries no credential
+        # of its own; ${VAR} is resolved here so the probe tests the real key.
+        probed = {
+            **values,
+            "api_key": resolve_env_placeholders(values.get("api_key", "")),
+        }
+        try:
+            info = ProviderInfo.model_validate(probed)
+        except ValidationError as exc:
+            self._show_validation_errors(exc)
+            return
+        model = info.model
         self._set_status("[dim]Testing connection…[/dim]")
 
         def probe() -> None:
             try:
-                _ping_provider(base_url, api_key, model, values["mode"])
+                _ping_provider(info)
+            except CliTransportError as exc:
+                # Already a full sentence naming the sign-in command.
+                ok, message = False, f"Test connection failed: {exc}"
             except Exception as exc:
                 ok, message = (
                     False,

@@ -289,6 +289,9 @@ def build_client(provider_name: str) -> tuple[Any, str]:
         provider.api_key,
         provider.mode,
         provider.temperature,
+        transport=provider.transport,
+        cli_path=provider.cli_path,
+        timeout=provider.timeout,
     )
     return client, provider.model
 
