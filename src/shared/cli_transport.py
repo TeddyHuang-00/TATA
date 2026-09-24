@@ -173,6 +173,32 @@ def _split_messages(
     return "\n\n".join(system_parts), body
 
 
+def _strict_schema(response_model: type[BaseModel]) -> dict[str, Any]:
+    """Pydantic's JSON Schema, rewritten for OpenAI strict structured output.
+
+    Strict mode rejects a schema unless every object sets
+    ``additionalProperties: false`` and lists all of its properties as
+    required — Pydantic emits neither. Optional fields are folded into
+    ``required`` because strict mode has no notion of an optional key; the
+    model may still answer ``null`` where the field allows it.
+    """
+
+    def walk(node: Any) -> None:  # ruff: ignore[any-type]
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                node["additionalProperties"] = False
+                node["required"] = sorted(node["properties"])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    schema = response_model.model_json_schema()
+    walk(schema)
+    return schema
+
+
 def _schema_instruction(response_model: type[BaseModel]) -> str:
     """The contract that replaces instructor's tool-call structured output."""
     schema = json.dumps(response_model.model_json_schema(), indent=2)
@@ -269,6 +295,7 @@ def _codex_text(stdout: str) -> str:
     falls back to the raw stream if none matched.
     """
     latest: str | None = None
+    failure: str | None = None
     for raw_line in stdout.splitlines():
         line = raw_line.strip()
         if not line.startswith("{"):
@@ -278,6 +305,12 @@ def _codex_text(stdout: str) -> str:
         except ValueError:
             continue
         if not isinstance(event, dict):
+            continue
+        # A refused or failed turn emits no agent message; report why rather
+        # than letting the caller retry against an empty reply.
+        if event.get("type") in {"error", "turn.failed"}:
+            detail = event.get("message") or event.get("error")
+            failure = str(detail.get("message") if isinstance(detail, dict) else detail)
             continue
         # Newer: {"type": "item.completed", "item": {"type": "agent_message", …}}
         item = event.get("item")
@@ -292,6 +325,9 @@ def _codex_text(stdout: str) -> str:
         # Flat: {"type": "agent_message", "message": …}
         if event.get("type") == "agent_message":
             latest = str(event.get("message") or event.get("text") or latest or "")
+    if latest is None and failure is not None:
+        msg = f"codex reported an error: {failure}"
+        raise CliTransportError(msg)
     return latest if latest is not None else stdout
 
 
@@ -312,12 +348,15 @@ def _resolve_binary(transport: Transport, cli_path: str | None) -> str:
     return found
 
 
-def _argv(
+def _argv(  # ruff: ignore[too-many-arguments]
     transport: Transport,
     binary: str,
     model: str,
     system_prompt: str,
     image_paths: list[Path],
+    *,
+    schema_path: Path | None = None,
+    last_message_path: Path | None = None,
 ) -> list[str]:
     """Build the headless invocation; the prompt itself arrives on stdin.
 
@@ -342,6 +381,14 @@ def _argv(
         argv += ["--model", model]
     # Read-only sandbox: the model has no reason to touch the filesystem.
     argv += ["--sandbox", "read-only"]
+    if schema_path is not None:
+        # Native structured output: the API enforces the schema, which beats
+        # asking the model nicely and parsing whatever comes back.
+        argv += ["--output-schema", str(schema_path)]
+    if last_message_path is not None:
+        # Deterministic extraction of the final reply, so the JSONL event
+        # shapes only matter as a fallback.
+        argv += ["--output-last-message", str(last_message_path)]
     for path in image_paths:
         argv += ["--image", str(path)]
     return argv
@@ -422,37 +469,72 @@ class _Completions:
         images: list[bytes] = []
         system_prompt, body = _split_messages(messages, images)
 
-        if response_model is not None:
-            body = f"{body}\n\n{_schema_instruction(response_model)}"
-
         with tempfile.TemporaryDirectory(prefix="tata-cli-") as tmpdir:
-            image_paths = _spill_images(images, Path(tmpdir))
+            work = Path(tmpdir)
+            image_paths = _spill_images(images, work)
             if image_paths and self._transport is Transport.CLAUDE_CLI:
                 listing = "\n".join(
                     f"- attachment {index}: {path}"
                     for index, path in enumerate(image_paths, start=1)
                 )
                 body = f"{body}\n\nRead these image files:\n{listing}"
-            argv = _argv(self._transport, binary, model, system_prompt, image_paths)
-            return self._complete(argv, binary, body, response_model)
+            return self._complete(
+                binary=binary,
+                model=model,
+                system_prompt=system_prompt,
+                image_paths=image_paths,
+                body=body,
+                response_model=response_model,
+                work=work,
+            )
 
-    def _complete(
+    def _complete(  # ruff: ignore[too-many-arguments]
         self,
-        argv: list[str],
+        *,
         binary: str,
+        model: str,
+        system_prompt: str,
+        image_paths: list[Path],
         body: str,
         response_model: type[BaseModel] | None,
+        work: Path,
     ) -> BaseModel | str:
-        """Invoke the CLI, retrying a parse failure with the error attached."""
-        prompt = body
+        """Invoke the CLI, retrying a parse failure with the error attached.
+
+        Codex can enforce the response schema itself; Claude Code cannot, so
+        there the schema goes into the prompt. If the API rejects the schema
+        (strict mode is fussy about what it accepts), this drops to the
+        prompted path rather than failing the submission."""
+        native = self._native_schema_path(response_model, work)
+        last_message = (
+            work / "last-message.txt"
+            if self._transport is Transport.CODEX_CLI
+            else None
+        )
+        prompt = body if native else self._prompted(body, response_model)
         last: CliTransportError | None = None
+
         for _attempt in range(self._max_retries + 1):
-            stdout = _run(self._transport, binary, argv, prompt, self._timeout)
-            text = (
-                _claude_text(stdout)
-                if self._transport is Transport.CLAUDE_CLI
-                else _codex_text(stdout)
+            argv = _argv(
+                self._transport,
+                binary,
+                model,
+                system_prompt,
+                image_paths,
+                schema_path=native,
+                last_message_path=last_message,
             )
+            try:
+                stdout = _run(self._transport, binary, argv, prompt, self._timeout)
+            except CliTransportError as exc:
+                if native is None or "invalid_json_schema" not in str(exc):
+                    raise
+                # Strict mode refused this schema: fall back to prompting.
+                native = None
+                prompt = self._prompted(body, response_model)
+                continue
+
+            text = self._extract(stdout, last_message)
             if response_model is None:
                 return text
             try:
@@ -460,13 +542,41 @@ class _Completions:
             except CliTransportError as exc:
                 last = exc
                 prompt = (
-                    f"{body}\n\nYour previous reply could not be parsed:\n{exc}\n"
+                    f"{self._prompted(body, response_model)}\n\n"
+                    f"Your previous reply could not be parsed:\n{exc}\n"
                     "Reply again with only the JSON object."
                 )
         if last is None:  # unreachable: the loop runs at least once
             msg = "no completion attempt was made"
             raise CliTransportError(msg)
         raise last
+
+    def _native_schema_path(
+        self, response_model: type[BaseModel] | None, work: Path
+    ) -> Path | None:
+        """Write the strict schema for codex, or None when unavailable."""
+        if response_model is None or self._transport is not Transport.CODEX_CLI:
+            return None
+        path = work / "schema.json"
+        path.write_text(json.dumps(_strict_schema(response_model)), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _prompted(body: str, response_model: type[BaseModel] | None) -> str:
+        if response_model is None:
+            return body
+        return f"{body}\n\n{_schema_instruction(response_model)}"
+
+    def _extract(self, stdout: str, last_message: Path | None) -> str:
+        """Prefer the file codex writes the final reply to; parse events only
+        as a fallback, since the event schema moves between releases."""
+        if last_message is not None and last_message.is_file():
+            text = last_message.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        if self._transport is Transport.CLAUDE_CLI:
+            return _claude_text(stdout)
+        return _codex_text(stdout)
 
 
 def _spill_images(images: list[bytes], tmpdir: Path) -> list[Path]:

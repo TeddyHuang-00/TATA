@@ -248,6 +248,10 @@ The repository bundles four providers:
 | `claude-code` | a signed-in `claude` | Uses your Claude subscription, no API key |
 | `chatgpt` | a signed-in `codex` | Uses your ChatGPT subscription, no API key |
 
+On macOS the Codex binary ships inside the ChatGPT app rather than on
+`PATH`; set `cli_path` in `data/providers/chatgpt.toml` if `codex` is not
+found.
+
 The last two set `transport` instead of `base_url`/`api_key`: TATA hands
 the prompt to the vendor's command line tool, which already holds your
 login and supplies the credentials itself. Set them up once with:

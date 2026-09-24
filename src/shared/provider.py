@@ -43,7 +43,8 @@ class ProviderInfo(BaseModel):
         description="API key for authenticating with the provider. Can include environment variable placeholders like ${ENV_VAR}. Required by the 'openai' transport; the CLI transports authenticate through the CLI's own login instead.",
     )
     model: str = Field(
-        ..., description="Model name or identifier to use with the provider."
+        ...,
+        description="Model name or identifier to use with the provider. May be blank for a CLI transport, which then uses whatever model that CLI is configured to use.",
     )
     mode: Mode = Field(
         ..., description="Mode of instructor parsing to use with the model."

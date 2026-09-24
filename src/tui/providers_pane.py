@@ -267,7 +267,7 @@ class ProvidersPane(Vertical):
         if not is_cli and not api_key:
             self._set_status("[red]api_key cannot be empty[/red]")
             return None
-        if not model:
+        if not model and not is_cli:
             self._set_status("[red]model cannot be empty[/red]")
             return None
         values: dict = {
