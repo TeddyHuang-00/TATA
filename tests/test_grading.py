@@ -22,6 +22,7 @@ from src.shared.grading import (
     load_assignment_config,
     pending_grade_submissions,
 )
+from src.shared.cli_transport import DEFAULT_TIMEOUT, Transport
 from src.shared.provider import ProviderInfo, ProviderList
 
 
@@ -568,6 +569,11 @@ class TestBuildClient:
         mock_provider.api_key = "sk-test"
         mock_provider.model = "test-model"
         mock_provider.mode = "TOOLS"
+        # A MagicMock attribute is truthy, so transport must be set explicitly
+        # or build_client dispatches to the CLI branch.
+        mock_provider.transport = Transport.OPENAI
+        mock_provider.cli_path = None
+        mock_provider.timeout = DEFAULT_TIMEOUT
         mock_provider.temperature = 0.0
 
         mock_instance = MagicMock()
@@ -591,6 +597,11 @@ class TestBuildClient:
         mock_provider.api_key = "sk-test"
         mock_provider.model = "test-model"
         mock_provider.mode = "TOOLS"
+        # A MagicMock attribute is truthy, so transport must be set explicitly
+        # or build_client dispatches to the CLI branch.
+        mock_provider.transport = Transport.OPENAI
+        mock_provider.cli_path = None
+        mock_provider.timeout = DEFAULT_TIMEOUT
         mock_provider.temperature = None
 
         mock_instance = MagicMock()
