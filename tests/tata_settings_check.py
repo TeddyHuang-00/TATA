@@ -41,6 +41,7 @@ from pathlib import Path
 import tomlkit
 
 from e2e_common import make_course, wait_for  # isort: skip - seeds repo-root sys.path before src imports
+import src.tui.settings as settings_mod
 from dotenv import dotenv_values
 from src.shared.aliases import load_alias_file
 from src.shared.assignment_config import load_assignment_file
@@ -1012,6 +1013,37 @@ async def _check_canvas_env_edit(root: Path) -> None:
         assert "EFGH4567123456" not in statics, statics
 
 
+async def _check_canvas_test_button(root: Path) -> None:
+    """Regression (user report): Test Canvas after saving a token crashed.
+
+    The probe worker called ``Screen.call_from_thread``, which does not
+    exist (it lives on the App), so the worker error shut the app down. The
+    probe must also use the saved ``<root>/.env``, not a cwd walk.
+    """
+    (root / ".env").write_text(
+        "CANVAS_BASE_URL=https://canvas.test/\nCANVAS_ACCESS_TOKEN=tok123\n",
+        encoding="utf-8",
+    )
+    state = _make_state(root, course=False, assignment=False)
+    probed: list[tuple[str, str]] = []
+
+    def fake_client(base_url: str, token: str) -> object:
+        probed.append((base_url, token))
+        return object()
+
+    original = (settings_mod.make_canvas_client, settings_mod.list_courses)
+    settings_mod.make_canvas_client = fake_client
+    settings_mod.list_courses = lambda _canvas: [(1, "C1"), (2, "C2")]
+    try:
+        async with _open(state, "global") as (_app, pilot, screen):
+            await pilot.click("#btn-test-canvas")
+            await wait_for(pilot, lambda: "Canvas: OK" in _status_text(screen))
+            assert "2 course(s)" in _status_text(screen), _status_text(screen)
+    finally:
+        settings_mod.make_canvas_client, settings_mod.list_courses = original
+    assert probed == [("https://canvas.test/", "tok123")], probed
+
+
 async def _check_env_buttons_overflow(root: Path) -> None:
     """Canvas tab (global) in a SHORT window: env buttons keep full height.
 
@@ -1165,6 +1197,7 @@ async def main() -> None:
         _check_inherited_values,
         _check_titles,
         _check_canvas_env_edit,
+        _check_canvas_test_button,
         _check_env_buttons_overflow,
         _check_tooltips,
     ):
