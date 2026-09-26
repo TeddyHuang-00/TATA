@@ -67,7 +67,6 @@ from src.shared.assignment_config import (
 )
 from src.shared.canvas_fetch import (
     list_courses,
-    load_env,
     make_canvas_client,
     read_env_state,
 )
@@ -1211,18 +1210,22 @@ class SettingsScreen(Screen[None]):
             self.app.notify("Canvas .env missing", severity="warning")
             return
         self._set_result("[yellow]Testing Canvas connection…[/yellow]")
+        # Probe the .env the guard just checked (<root_dir>/.env), not
+        # whatever load_env() finds walking up from the cwd.
+        base_url = str(self.state.env_state.get("base_url") or "")
+        token = str(self.state.env_state.get("token") or "")
 
         def probe() -> None:
             try:
-                base_url, token = load_env()
                 courses = list_courses(make_canvas_client(base_url, token))
                 message = f"Canvas: OK — {len(courses)} course(s)"
                 ok = True
-            except BaseException as exc:  # load_env exits via SystemExit
+            except Exception as exc:
                 message = f"Canvas test failed: {type(exc).__name__}: {exc}"
                 ok = False
+            # Screen has no call_from_thread; it lives on the App.
             with contextlib.suppress(RuntimeError):  # app closed mid-probe
-                self.call_from_thread(self._canvas_done, ok, message)
+                self.app.call_from_thread(self._canvas_done, ok, message)
 
         self.run_worker(probe, thread=True, group="settings-test")
 
