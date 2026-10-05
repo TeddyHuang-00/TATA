@@ -36,7 +36,7 @@ import asyncio
 import re
 import tempfile
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -110,7 +110,7 @@ def _fix(root: Path) -> None:
 
 
 @contextmanager
-def _hermetic_providers(root: Path) -> Iterator[None]:
+def _hermetic_providers(root: Path) -> Generator[None, None, None]:
     """Point provider reads/writes at the tmp data root (the app defaults to
     the repo's data/providers; the check must never touch real data). Both
     globals are resolved at call time, so an instance patched before compose

@@ -599,7 +599,9 @@ def test_preprocess_hash_tracks_fetch_cache_entries(tmp_path: Path) -> None:
     assert "submitted: S2" in md.read_text(encoding="utf-8")
 
 
-def test_fetch_empty_listing_keeps_local_tree(tmp_path: Path, capfd) -> None:
+def test_fetch_empty_listing_keeps_local_tree(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
     """Empty submission listing + non-empty local tree: ambiguous (API
     hiccup vs everyone unsubmitted) — prune must NOT wipe the tree, and a
     warning must be printed instead."""
@@ -624,11 +626,14 @@ def test_fetch_empty_listing_keeps_local_tree(tmp_path: Path, capfd) -> None:
     assert (out / "100" / "100.html").exists()
     assert (out / "100" / "100_1.html").exists()
     cache = load_cache_file(cache_file(out.parent, "fetch"))
-    assert "100.html" in cache and "100_1.html" in cache
+    assert "100.html" in cache
+    assert "100_1.html" in cache
     assert "returned no submissions" in capfd.readouterr().out
 
 
-def test_fetch_dotless_attachment_saved_without_extension(tmp_path: Path, capfd) -> None:
+def test_fetch_dotless_attachment_saved_without_extension(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
     """A dotless attachment name is not a file extension: it is saved
     extension-less with a warning, never as '<uid>.<name>' (a fabricated
     format that preprocess silently skips)."""

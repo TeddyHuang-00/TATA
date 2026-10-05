@@ -22,7 +22,7 @@ import queue
 import re
 import shutil
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -200,7 +200,7 @@ class _FakeProviders:
 
 
 @contextmanager
-def _fake_providers(names: list[str]) -> Iterator[None]:
+def _fake_providers(names: list[str]) -> Generator[None, None, None]:
     """Patch ``src.tui.modals.get_providers`` (repo provider.toml is not a
     fixture); restores on exit."""
     import src.tui.modals as ta

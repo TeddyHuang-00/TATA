@@ -74,8 +74,7 @@ def test_hooks_dir_cannot_escape_project_root(tmp_path: Path) -> None:
     (tmp_path / "outside" / "h.py").write_text(_NOOP_HOOK, encoding="utf-8")
     config_path, _ = _setup(
         tmp_path,
-        '[hooks]\ndir = "../outside"\n'
-        '[hooks.mounts]\nafter_preprocess_file = "h.py"\n',
+        '[hooks]\ndir = "../outside"\n[hooks.mounts]\nafter_preprocess_file = "h.py"\n',
     )
     with pytest.raises(ValueError, match="must stay inside the project root"):
         HookRuntime.from_config(

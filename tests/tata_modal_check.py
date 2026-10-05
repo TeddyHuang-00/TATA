@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -74,7 +74,7 @@ class _FakeProviders:
 
 
 @contextmanager
-def _fake_providers(names: list[str]) -> Iterator[None]:
+def _fake_providers(names: list[str]) -> Generator[None, None, None]:
     """Patch ``src.tui.modals.get_providers`` (the repo provider.toml is not a
     fixture); restores on exit."""
     import src.tui.modals as ta

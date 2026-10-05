@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import tomllib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -81,7 +81,7 @@ async def _click_pane_button(pilot: Pilot, pane: RubricsPane, selector: str) -> 
 @asynccontextmanager
 async def _library_app(
     root: Path,
-) -> AsyncIterator[tuple[TataApp, Pilot, RubricsPane]]:
+) -> AsyncGenerator[tuple[TataApp, Pilot, RubricsPane], None]:
     """TataApp with the Library tab activated; yields (app, pilot, pane)."""
     app = TataApp(root_dir=root)
     async with app.run_test(size=(120, 44)) as pilot:

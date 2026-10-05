@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import tomllib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -170,7 +170,7 @@ async def _open(
     ctx: str,
     size: tuple[int, int] = (120, 44),
     tooltips: bool = False,
-) -> AsyncIterator[tuple[App[None], Pilot, SettingsScreen]]:
+) -> AsyncGenerator[tuple[App[None], Pilot, SettingsScreen], None]:
     """Run the host app with the settings screen for ``ctx`` pushed.
 
     ``tooltips`` turns Textual's tooltip widget on (``run_test`` disables it
