@@ -72,10 +72,24 @@ def _strip_canvas_suffix(filename: str) -> str:
 
 
 def _remove_base64_images(content: str) -> str:
-    """Remove base64 encoded images from markdown content."""
+    """Remove base64 encoded images from markdown content.
+
+    Two inline forms arrive from notebook/HTML conversions: markdown images
+    (``![alt](data:image/...;base64,...)``) and raw HTML tags
+    (``<img src="data:...">``) — Canvas/Colab markdown cells carry promo
+    images as inline HTML data URIs, and one such blob (hundreds of KB) gets
+    embedded verbatim into grading prompts.
+    """
     # Pattern matches ![alt](data:image/...base64,...)
     pattern = r"!\[.*?\]\(data:image/[^;]+;base64,[^)]+\)"
-    return re.sub(pattern, "", content, flags=re.MULTILINE)
+    content = re.sub(pattern, "", content, flags=re.MULTILINE)
+    # HTML form: <img ... src="data:..."> (attribute value quoted or bare).
+    return re.sub(
+        r"""<img\b[^>]*\bsrc\s*=\s*["']?data:[^"'\s>]*["']?[^>]*>""",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
 
 
 class _TableHTMLParser(HTMLParser):

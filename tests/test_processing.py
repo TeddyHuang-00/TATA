@@ -19,6 +19,7 @@ from src.shared.grading import _read_reference_text
 from src.shared.processing import (
     SUPPORTED_INPUT_FORMATS,
     _format_for_suffix,
+    _remove_base64_images,
     convert_ipynb_to_markdown,
     convert_pdf_to_markdown,
     convert_pptx_to_markdown,
@@ -1081,6 +1082,83 @@ def test_visual_eval_ipynb_extracts_image_outputs(tmp_path: Path) -> None:
     shots = tmp_path / "processed" / "screenshots"
     assert (shots / "100_i0.png").read_bytes() == first.getvalue()
     assert (shots / "100_i1.png").read_bytes() == second.getvalue()
+
+
+def test_remove_base64_images_strips_html_img_data_uri() -> None:
+    """HTML-form inline data URIs (``<img src="data:...">``) are stripped
+    too, not just the markdown form — regression for 2978557/425226, where a
+    Colab promo cell's 394 KB inline PNG was embedded verbatim into every
+    grading prompt (silent server-side input reduction, invalid all-incorrect
+    grade)."""
+    tiny = base64.b64encode(b"PNG-bytes").decode()
+    content = (
+        "before\n"
+        f"<img alt='Thumbnail for a video' src=\"data:image/png;base64,{tiny}\">\n"
+        "after\n"
+    )
+    out = _remove_base64_images(content)
+    assert "data:image" not in out
+    assert "<img" not in out
+    assert "before" in out
+    assert "after" in out
+
+
+def test_remove_base64_images_strips_html_img_attribute_variants() -> None:
+    """Single-quoted, bare and uppercase HTML variants are all stripped."""
+    tiny = base64.b64encode(b"x").decode()
+    for tag in (
+        f"<img src='data:image/png;base64,{tiny}'>",
+        f"<img src=data:image/png;base64,{tiny}>",
+        f'<IMG SRC="data:image/jpeg;base64,{tiny}">',
+    ):
+        out = _remove_base64_images(f"A\n{tag}\nB")
+        assert "data:" not in out, tag
+        assert "A" in out
+        assert "B" in out
+
+
+def test_remove_base64_images_keeps_regular_images() -> None:
+    """Remote/local images stay; only data: URI payloads are removed."""
+    md_tiny = base64.b64encode(b"x").decode()
+    content = (
+        f"![fig](data:image/png;base64,{md_tiny})\n"
+        '<img src="https://example.com/fig.png" alt="remote">\n'
+        "![alt](images/local.png)\n"
+    )
+    out = _remove_base64_images(content)
+    assert "data:image" not in out
+    assert 'src="https://example.com/fig.png"' in out
+    assert "![alt](images/local.png)" in out
+
+
+def test_preprocess_strips_inline_html_data_uri_image(tmp_path: Path) -> None:
+    """End-to-end: a notebook markdown cell embedding an HTML data-URI image
+    converts to a processed md without the blob, keeping the surrounding
+    text — the 2978557/425226 incident path."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    tiny = base64.b64encode(b"tiny-png").decode()
+    nb = nbformat.v4.new_notebook(
+        cells=[
+            nbformat.v4.new_markdown_cell(
+                "## Promo\n"
+                "<a href='https://example.com'>"
+                f"<img alt='thumb' src=\"data:image/png;base64,{tiny}\"></a>\n"
+                "keep this text\n"
+                '<img src="https://example.com/remote.png">\n'
+            ),
+            nbformat.v4.new_code_cell("print('hi')"),
+        ]
+    )
+    nbformat.write(nb, raw / "100.ipynb")
+    _write_grading_config(tmp_path)
+
+    preprocess_assignment(tmp_path / "config.toml")
+
+    content = (tmp_path / "processed" / "100.md").read_text(encoding="utf-8")
+    assert "data:image" not in content
+    assert "keep this text" in content
+    assert "https://example.com/remote.png" in content
 
 
 def test_visual_eval_ipynb_normalizes_non_png_outputs(tmp_path: Path) -> None:
