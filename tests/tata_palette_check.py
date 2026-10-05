@@ -70,7 +70,7 @@ WORKSPACE_ROWS = [
     "Settings  ,",
     "Rescan  r",
 ]
-SETTINGS_ROWS = ["Save  ctrl+s", "Reset  r", "Edit config  e", "Test Canvas  t"]
+SETTINGS_ROWS = ["Save  ctrl+s", "Reset  r", "Edit config  e"]
 PLAGIARISM_ROWS = ["Run detection  p", "Run aggregate  a", "Cancel job  x", "Reload  r"]
 SCORE_REVIEW_ROWS = ["Toggle raw JSON  j"]
 

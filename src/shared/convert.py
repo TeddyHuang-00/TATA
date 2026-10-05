@@ -16,6 +16,7 @@ from .assignment_config import InputFormat
 
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = (
     "ipynb",
+    "python",
     "html",
     "markdown",
     "docx",
@@ -26,6 +27,7 @@ SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = (
 
 _SUFFIX_FORMATS: dict[str, InputFormat] = {
     ".ipynb": "ipynb",
+    ".py": "python",
     ".html": "html",
     ".txt": "html",  # Canvas text-entry bodies arrive as .txt but contain HTML
     ".md": "markdown",

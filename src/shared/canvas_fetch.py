@@ -16,6 +16,7 @@ from typing import Any
 import dotenv
 import tomlkit
 from canvasapi import Canvas
+from canvasapi.exceptions import CanvasException
 
 from src.shared.aliases import upsert_student_aliases
 from src.shared.caching import cache_file, load_cache_file, save_cache_file
@@ -161,7 +162,8 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
                     "it unless renamed)"
                 )
             if body and i == 0:
-                suffix = "_0"  # avoid clashing with the body html
+                # avoid clashing with the body html
+                suffix = "_LATE_0" if late else "_0"
             elif late:
                 suffix = f"_LATE_{i}"
             else:
@@ -198,7 +200,14 @@ def fetch_assignment(  # ruff: ignore[too-many-locals, too-many-branches, too-ma
                 dest.write_text(body, encoding="utf-8")
                 cache[fname] = stamp
             else:
-                att.download(dest)
+                try:
+                    att.download(dest)
+                except (OSError, CanvasException) as exc:
+                    # Partial file out, no stamp: the next run retries this one.
+                    dest.unlink(missing_ok=True)
+                    cache.pop(fname, None)
+                    print(f"[fetch] warning: could not download {fname}: {exc}")
+                    continue
                 cache[fname] = stamp
         rows.append({
             "user_id": uid,

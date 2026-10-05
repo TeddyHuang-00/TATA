@@ -140,6 +140,17 @@ def _modal_message(app: App) -> str:
     return str(app.screen.query_one(".confirm-modal").query(Static)[1].content)
 
 
+async def _answer_replace(pilot: Pilot, app: App) -> None:
+    """Answer the 'Use generated rubric' Replace prompt (affirmative).
+
+    A successful generation pushes this confirmation; it must be answered so it
+    doesn't block the next #rb-autogen click.
+    """
+    await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+    await pilot.click("#replace")
+    await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmationModal))
+
+
 async def _check_shell_and_rubrics(root: Path) -> None:
     """Three shell tabs; Library tab with Rubrics + Prompts + Providers sub-panes."""
     app = TataApp(root_dir=root)
@@ -812,39 +823,46 @@ async def _check_autogen_overwrite(root: Path) -> None:
             ], calls
             assert out.read_text(encoding="utf-8") == NEW_TOML
             assert not expected_tmp.exists()
-            assert _autogen_meta(pane).value == "000001.toml"
-            # second round with an alias: the overwrite message names the
-            # effective (alias-aware) file, keeping the assignment context
-            rubrics_dir = root / "data" / "rubrics"
-            (rubrics_dir / "my-alias.toml").write_text(SAMPLE_TOML, encoding="utf-8")
-            await wait_for(
-                pilot, lambda: not pane.query_one("#rb-autogen").has_class("-active")
-            )
-            await pilot.click("#rb-autogen")
-            await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
-            app.screen.query_one("#ag-assignment", Select).value = str(
-                root / "data" / "c1" / "000001" / "config.toml"
-            )
-            app.screen.query_one("#ag-alias", Input).value = "my-alias"
-            await pilot.pause()
-            await pilot.click("#ag-generate")
             await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
-            assert "rubrics/my-alias.toml already exists" in _modal_message(app)
-            assert "assignment c1/000001" in _modal_message(app)
-            await pilot.click("#overwrite")
-            await wait_for(
-                pilot,
-                lambda: any(
-                    message == "Generated rubric: my-alias.toml" and sev == "success"
-                    for message, sev in notices
-                ),
-            )
-            assert (rubrics_dir / "my-alias.toml").read_text(
-                encoding="utf-8"
-            ) == NEW_TOML
-            assert _autogen_meta(pane).value == "my-alias.toml"
+            assert "Replace the rubric configured for assignment" in _modal_message(app)
+            await _answer_replace(pilot, app)
+            assert _autogen_meta(pane).value == "000001.toml"
+            await _autogen_alias_round(root, pilot, app, pane, notices)
     finally:
         tui_rubrics_pane.generate_rubric = original
+
+
+async def _autogen_alias_round(
+    root: Path, pilot: Pilot, app: App, pane: RubricsPane, notices: list
+) -> None:
+    """Second AutoGen round with an alias: the overwrite message names the
+    effective (alias-aware) file, keeping the assignment context."""
+    rubrics_dir = root / "data" / "rubrics"
+    (rubrics_dir / "my-alias.toml").write_text(SAMPLE_TOML, encoding="utf-8")
+    await wait_for(
+        pilot, lambda: not pane.query_one("#rb-autogen").has_class("-active")
+    )
+    await pilot.click("#rb-autogen")
+    await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
+    app.screen.query_one("#ag-assignment", Select).value = str(
+        root / "data" / "c1" / "000001" / "config.toml"
+    )
+    app.screen.query_one("#ag-alias", Input).value = "my-alias"
+    await pilot.pause()
+    await pilot.click("#ag-generate")
+    await wait_for(pilot, lambda: isinstance(app.screen, ConfirmationModal))
+    assert "rubrics/my-alias.toml already exists" in _modal_message(app)
+    assert "assignment c1/000001" in _modal_message(app)
+    await pilot.click("#overwrite")
+    await wait_for(
+        pilot,
+        lambda: any(
+            message == "Generated rubric: my-alias.toml" and sev == "success"
+            for message, sev in notices
+        ),
+    )
+    assert (rubrics_dir / "my-alias.toml").read_text(encoding="utf-8") == NEW_TOML
+    assert _autogen_meta(pane).value == "my-alias.toml"
 
 
 async def _check_autogen_empty(root: Path) -> None:
@@ -979,6 +997,7 @@ async def _check_autogen_reentrancy(root: Path) -> None:
             ):
                 assert pane.query_one(selector).disabled is False, selector
             assert pane.query_one("#rb-filename").disabled is False
+            await _answer_replace(pilot, app)
             await pilot.click("#rb-autogen")
             await wait_for(pilot, lambda: isinstance(app.screen, AutoGenModal))
     finally:

@@ -304,6 +304,9 @@ def _read_reference_text(reference_file: Path) -> str:
     if suffix == ".md":
         return reference_file.read_text(encoding="utf-8")
 
+    if suffix == ".py":
+        return reference_file.read_text(encoding="utf-8")
+
     if suffix == ".ipynb":
         try:
             return MarkdownExporter().from_filename(str(reference_file))[0]
@@ -326,7 +329,7 @@ def _read_reference_text(reference_file: Path) -> str:
 
     msg = (
         f"Unsupported reference file format: {reference_file.suffix}\n"
-        "Supported reference formats are .md, .ipynb, and .html."
+        "Supported reference formats are .md, .ipynb, .py, and .html."
     )
     raise ValueError(msg)
 

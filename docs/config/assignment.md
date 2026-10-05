@@ -31,7 +31,7 @@ in the global file) still works as an abbreviation.
   plus overrides (`template_file`, ...). No `[fetch]` here — the assignment
   identity is the numeric dir name.
 - Standalone assignment configs without a global/course config still fetch:
-  the assignment resolves via `--course`/`--assignment` or interactively.
+  the assignment resolves via `fetch COURSE ASSIGNMENT` or interactively.
   Nothing is remembered — fetch memory is written only into a course config.
 
 The course list is the course's source of truth: `uv run cli fetch -c data/<course>/config.toml` fetches every listed entry in one shot (fetch collects

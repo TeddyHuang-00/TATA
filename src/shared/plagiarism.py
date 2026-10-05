@@ -33,12 +33,6 @@ from .caching import (
     load_cache_file,
     save_cache_file,
 )
-from .cli_options import (
-    AliasChoices,
-    ConfigFileCliOptions,
-    Field,
-    parse_cli_args,
-)
 from .hooks_runtime import HookRuntime
 from .plagiarism_aggregate import (
     DEFAULT_PAIRS_GLOB,
@@ -51,21 +45,6 @@ from .plagiarism_aggregate import (
 # cosine, was raw dot product) so stale caches with the old scale are not
 # blended into fresh runs.
 EMBEDDING_CACHE_VERSION = 2
-
-
-class PlagiarismCliOptions(ConfigFileCliOptions):
-    """Direct-run options (``python src/plagiarism.py``); the main CLI lives
-    in ``src/cli_options.py``."""
-
-    aggregate: bool = Field(
-        default=False,
-        description="Produce the cross-assignment z-score aggregate report.",
-    )
-    output: Path | None = Field(
-        default=None,
-        validation_alias=AliasChoices("output", "o"),
-        description="Write the aggregate report to this file instead of stdout.",
-    )
 
 
 @dataclass(frozen=True)
@@ -488,7 +467,8 @@ def embedding_input_hash(processed_dir: Path, model: str) -> str:
     production rule instead of reimplementing it.
     """
     md_digests = [
-        file_digest(md).encode("utf-8") for md in sorted(processed_dir.glob("*.md"))
+        md.name.encode("utf-8") + b"\0" + file_digest(md).encode("utf-8")
+        for md in sorted(processed_dir.glob("*.md"))
     ]
     return content_hash([
         *md_digests,
@@ -901,12 +881,3 @@ def detect_plagiarism(
             quiet=quiet,
         )
     return summary
-
-
-def main() -> None:
-    args = parse_cli_args(PlagiarismCliOptions)
-    detect_plagiarism(args.config, aggregate=args.aggregate, output=args.output)
-
-
-if __name__ == "__main__":
-    main()

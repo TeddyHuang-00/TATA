@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import (
     AliasChoices,
@@ -31,6 +31,12 @@ def validate_existing_file(path: Path, *, option_name: str = "--config") -> Path
         msg = f"{option_name} must be a file: {path}"
         raise ValueError(msg)
     return path
+
+
+def usage_error(msg: str) -> NoReturn:
+    """Usage error: exit 1 with ``error: ...`` as the SystemExit message."""
+    text = f"error: {msg}"
+    raise SystemExit(text)
 
 
 class CliOptions(BaseSettings):
@@ -97,12 +103,20 @@ class PlagiarismCliOptions(ConfigFileOptions):
         description="Write the aggregate report to this file instead of stdout.",
     )
 
+    @model_validator(mode="after")
+    def _validate_output(self) -> PlagiarismCliOptions:
+        if self.output is not None and not self.aggregate:
+            msg = "--output requires --aggregate."
+            raise ValueError(msg)
+        return self
+
 
 class GradeCliOptions(ConfigFileOptions):
     """Grade submissions with the configured LLM provider."""
 
     force: bool = Field(
         default=False,
+        validation_alias=AliasChoices("force", "f"),
         description="Ignore the grading hash cache and regrade all submissions.",
     )
 
@@ -254,13 +268,13 @@ def parse_cli_args[TModel: CliOptions](
     try:
         return model_cls(**settings_kwargs)
     except ValidationError as exc:
-        err = exc.errors()[0]
-        msg = err["msg"]
-        if msg.startswith("Value error, "):
-            msg = msg.removeprefix("Value error, ")
-        elif msg == "Field required":
-            msg = f"{'.'.join(map(str, err['loc']))} is required."
-        print(f"error: {msg}", file=sys.stderr)
+        msgs = []
+        for err in exc.errors():
+            msg = err["msg"].removeprefix("Value error, ")
+            if msg == "Field required":
+                msg = f"{'.'.join(map(str, err['loc']))} is required."
+            msgs.append(msg)
+        print(f"error: {'; '.join(msgs)}", file=sys.stderr)
         raise SystemExit(2) from exc
     except SettingsError as exc:
         msg = str(exc).removeprefix("error parsing CLI: ")

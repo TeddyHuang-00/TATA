@@ -164,7 +164,9 @@ def _process_single_file(  # ruff: ignore[too-many-arguments, too-many-positiona
 ) -> None:
     """Process a single input file to markdown output."""
     # Convert based on format
-    if input_format == "ipynb":
+    if input_format == "python":
+        output_file.write_text(input_file.read_text(encoding="utf-8"), encoding="utf-8")
+    elif input_format == "ipynb":
         convert_ipynb_to_markdown(
             input_file,
             output_file,
@@ -639,7 +641,7 @@ def preprocess_assignment(  # ruff: ignore[too-many-branches, too-many-statement
             print(
                 "No supported files found in raw directory: "
                 f"{raw_dir}\n"
-                "Add student files to raw/ (supported: .ipynb, .html, .txt, .md, .docx, .pptx, .pdf, .jpg, .jpeg, .png), "
+                "Add student files to raw/ (supported: .ipynb, .py, .html, .txt, .md, .docx, .pptx, .pdf, .jpg, .jpeg, .png), "
                 "then run preprocess again."
             )
         else:

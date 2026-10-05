@@ -592,23 +592,28 @@ def test_folder_skip_messages_for_unsupported_files(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Unsupported files inside a folder print a [skip] line (not silent);
-    a folder with no supported files prints one '[skip] folder' line."""
+    a folder with no supported files prints one '[skip] folder' line.
+    .py is a supported format, so it is processed, not skipped."""
     raw = tmp_path / "raw"
     (raw / "100").mkdir(parents=True)
     (raw / "100" / "100.html").write_text("<h1>ok</h1>", encoding="utf-8")
-    (raw / "100" / "100.py").write_text("print(1)", encoding="utf-8")
+    (raw / "100" / "100.xyz").write_text("junk", encoding="utf-8")
     (raw / "200").mkdir(parents=True)
     (raw / "200" / "200.py").write_text("print(2)", encoding="utf-8")
+    (raw / "300").mkdir(parents=True)
+    (raw / "300" / "300.xyz").write_text("junk", encoding="utf-8")
     _write_grading_config(tmp_path)
 
     result = preprocess_assignment(tmp_path / "config.toml")
 
     out = capsys.readouterr().out
-    assert "[skip] 100.py (unsupported format)" in out
-    assert "[skip] folder 200 (no supported files)" in out
+    assert "[skip] 100.xyz (unsupported format)" in out
+    assert "[processed] 200.py ->" in out
+    assert "[skip] folder 300 (no supported files)" in out
     assert (tmp_path / "processed" / "100.md").exists()
+    assert (tmp_path / "processed" / "200.md").exists()
     assert result is not None
-    assert result["success"] == 1
+    assert result["success"] == 2
 
 
 def test_top_level_unsupported_file_prints_skip(
@@ -619,13 +624,13 @@ def test_top_level_unsupported_file_prints_skip(
     raw = tmp_path / "raw"
     raw.mkdir()
     (raw / "100001.html").write_text("<h1>ok</h1>", encoding="utf-8")
-    (raw / "100002.py").write_text("print(1)", encoding="utf-8")
+    (raw / "100002.xyz").write_text("junk", encoding="utf-8")
     _write_grading_config(tmp_path)
 
     result = preprocess_assignment(tmp_path / "config.toml")
 
     out = capsys.readouterr().out
-    assert "[skip] 100002.py (unsupported format)" in out
+    assert "[skip] 100002.xyz (unsupported format)" in out
     assert (tmp_path / "processed" / "100001.md").exists()
     assert result is not None
     assert result["success"] == 1

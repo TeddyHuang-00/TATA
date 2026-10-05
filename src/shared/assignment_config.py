@@ -9,7 +9,9 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_vali
 
 # Single source for accepted input formats; processing.py imports this so the
 # config schema and the pipeline never drift apart.
-InputFormat = Literal["ipynb", "html", "markdown", "docx", "pptx", "pdf", "image"]
+InputFormat = Literal[
+    "ipynb", "python", "html", "markdown", "docx", "pptx", "pdf", "image"
+]
 ScoreReportDetail = Literal["full", "slim"]
 ScoreOutputStyle = Literal["markdown", "plain", "html"]
 HookMountPoint = Literal[

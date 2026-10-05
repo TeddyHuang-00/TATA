@@ -40,7 +40,7 @@ def read_config(path: Path) -> dict:
     """Tolerant read: {} when the file is missing, unreadable, or invalid TOML."""
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return {}
 
 
@@ -86,9 +86,12 @@ def edit_config(
     failure).
     """
     try:
-        doc = tomlkit.parse(path.read_text(encoding="utf-8"))
-    except (OSError, tomlkit.exceptions.ParseError):
-        doc = tomlkit.parse("")
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = ""
+    # A broken file raises (ParseError and UnicodeDecodeError are ValueErrors):
+    # starting from an empty doc would overwrite every other section.
+    doc = tomlkit.parse(text)
     for section, keys in (deletes or {}).items():
         table = doc.get(section)
         if not isinstance(table, MutableMapping):

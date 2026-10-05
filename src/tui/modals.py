@@ -20,6 +20,7 @@ from textual.widgets import Button, Checkbox, Input, Select, Static
 from src.shared.aliases import load_alias_file, seed_course_alias, set_alias
 from src.shared.canvas_fetch import list_assignments, list_courses, make_canvas_client
 from src.shared.provider import get_providers
+from src.tui.pane_shared import validate_name
 from src.tui.scan import CourseInfo
 
 if TYPE_CHECKING:
@@ -45,7 +46,7 @@ class _ImportBase(ModalScreen[object | None]):
         )
 
     def _safe_post(self, fn: Callable[..., None], *args: object) -> None:
-        with suppress(Exception):
+        with suppress(RuntimeError):
             self.app.call_from_thread(fn, *args)  # modal may be dismissed already
 
 
@@ -100,16 +101,27 @@ class ImportCourseModal(_ImportBase):
             self.app.notify("No course selected", severity="error")
             return
         course_id = select.value
-        dir_name = self.query_one("#modal-dir", Input).value.strip() or str(course_id)
+        raw_dir = self.query_one("#modal-dir", Input).value.strip()
+        dir_name = str(course_id)
+        if raw_dir:
+            checked = validate_name(raw_dir, "")
+            if checked is None:
+                self.app.notify(f"Invalid course dir: {raw_dir}", severity="error")
+                return
+            dir_name = checked
         dest = self.state.assignments_dir / dir_name
         if dest.exists():
             self.app.notify(f"Directory already exists: {dir_name}", severity="error")
             return
-        dest.mkdir(parents=True)
-        (dest / "config.toml").write_text(
-            tomlkit.dumps(tomlkit.item({"fetch": {"course_id": course_id}})),
-            encoding="utf-8",
-        )
+        try:
+            dest.mkdir(parents=True)
+            (dest / "config.toml").write_text(
+                tomlkit.dumps(tomlkit.item({"fetch": {"course_id": course_id}})),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            self.app.notify(f"Could not create course: {exc}", severity="error")
+            return
         name = next((n for cid, n in self._items if cid == course_id), None)
         if name:
             seed_course_alias(self.state.assignments_dir, course_id, name)
@@ -345,20 +357,23 @@ class AliasEditorModal(ModalScreen[bool | None]):
                 yield Button("Cancel", id="cancel")
                 yield Button("Save", id="save", variant="primary")
 
-    def action_close(self) -> None:
-        self.dismiss(None)
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss(None)
         elif event.button.id == "save":
             self._do_save()
 
+    def on_input_submitted(self, _event: Input.Submitted) -> None:
+        self._do_save()  # U6: Enter in the name field saves
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
     def _do_save(self) -> None:
         name = self.query_one("#alias-name", Input).value.strip()
         try:
             set_alias(self.alias_path, self.section, self._key, name)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:  # B5
             self.app.notify(str(exc), severity="error")
             return
         self.app.notify("Alias saved", severity="information")

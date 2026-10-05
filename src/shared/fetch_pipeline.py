@@ -31,7 +31,7 @@ from src.shared.canvas_fetch import (
     make_canvas_client,
     remember_course_fetch,
 )
-from src.shared.cli_options import FetchCliOptions
+from src.shared.cli_options import FetchCliOptions, usage_error
 
 
 def format_job_summary(summary: dict) -> str:
@@ -231,20 +231,21 @@ def retry_fetch(
     )
 
 
-def pick_interactive() -> None:
+def pick_interactive(cfg_path: Path | None) -> None:
     base_url, token = load_env()
     canvas = make_canvas_client(base_url, token)
 
     courses = list_courses(canvas)
     if not sys.stdin.isatty():
         print_options("courses", courses)
-        sys.exit(
-            "provide --course/--assignment, or run in a terminal to pick interactively"
+        usage_error(
+            "provide COURSE ASSIGNMENT (fetch COURSE ASSIGNMENT), "
+            "or run in a terminal to pick interactively"
         )
     course_id = ask_choice(courses, "course")
     assignments = list_assignments(canvas, course_id)
     assignment_id = ask_choice(assignments, "assignment")
-    out = (Path.cwd() / str(assignment_id) / "raw").resolve()
+    out = out_dir(cfg_path, assignment_id)
     fetch_assignment(canvas, course_id, assignment_id, out)
     remember(None, course_id, assignment_id)
 
@@ -272,6 +273,17 @@ def ask_number(prompt: str, count: int, default: int) -> int:
         if 1 <= num <= count:
             return num
         print(f"Enter a number between 1 and {count}.")
+
+
+def out_dir(cfg_path: Path | None, assignment_id: int) -> Path:
+    """Raw-submission dir for one assignment: no config -> <cwd>/<aid>/raw;
+    course/global config -> <config dir>/<aid>/raw; assignment config ->
+    <config dir>/raw."""
+    if cfg_path is None:
+        return (Path.cwd() / str(assignment_id) / "raw").resolve()
+    if is_container(cfg_path):
+        return (cfg_path.parent / str(assignment_id) / "raw").resolve()
+    return (cfg_path.parent / "raw").resolve()
 
 
 def run_fetch(
@@ -306,17 +318,14 @@ def run_fetch(
         else (cfg.course_id if cfg is not None else None)
     )
     if course_id is None:
-        pick_interactive()
+        pick_interactive(cfg_path)
         return
-
-    # The out dir for a single fetch: assignment config -> <dir>/raw;
-    # course config (or no config) -> <course (cwd)>/<aid>/raw.
-    is_container_path = cfg_path is not None and is_container(cfg_path)
 
     # Assignment id: positional > numeric assignment dir name > interactive.
     # Interactive only with no config or a container (course/global) config —
     # an assignment config with a non-numeric dir name has no id to derive,
     # and reading the terminal hangs under the TUI worker.
+    is_container_path = cfg_path is not None and is_container(cfg_path)
     if args.assignment is not None:
         assignment_id = args.assignment
     elif (
@@ -331,21 +340,19 @@ def run_fetch(
         assignments = list_assignments(canvas, course_id)
         if not sys.stdin.isatty():
             print_options("assignments", assignments)
-            sys.exit("provide --assignment, or run in a terminal to pick interactively")
+            usage_error(
+                "provide ASSIGNMENT (fetch COURSE ASSIGNMENT), "
+                "or run in a terminal to pick interactively"
+            )
         assignment_id = ask_choice(assignments, "assignment")
     else:
-        sys.exit(
-            "assignment dir name is not a numeric id — pass "
-            "--course/--assignment (or migrate dirs to assignment ids "
-            "with python -m src.shared.aliases migrate <course_dir>)"
+        usage_error(
+            "assignment dir name is not a numeric id — pass the ASSIGNMENT "
+            "positional (fetch COURSE ASSIGNMENT) (or migrate dirs to assignment "
+            "ids with python -m src.shared.aliases migrate <course_dir>)"
         )
 
-    if cfg_path is None:
-        out = (Path.cwd() / str(assignment_id) / "raw").resolve()
-    elif is_container_path:
-        out = (cfg_path.parent / str(assignment_id) / "raw").resolve()
-    else:
-        out = (cfg_path.parent / "raw").resolve()
+    out = out_dir(cfg_path, assignment_id)
 
     if cancel_event is not None and cancel_event.is_set():
         print("[cancelled] fetch stopped — nothing fetched")

@@ -723,9 +723,11 @@ class RubricsPane(Vertical):
             message = f"Generated rubric: {out.name}"
             ok = True
         with suppress(RuntimeError):  # app closed mid-generation
-            self.app.call_from_thread(self._autogen_done, ok, message, out)
+            self.app.call_from_thread(self._autogen_done, ok, message, out, config_path)
 
-    def _autogen_done(self, ok: bool, message: str, out: Path) -> None:
+    def _autogen_done(
+        self, ok: bool, message: str, out: Path, config_path: Path
+    ) -> None:
         self._autogen_running = False
         self._restore_autogen_buttons()
         self.reload_files()
@@ -734,6 +736,36 @@ class RubricsPane(Vertical):
             select.value = out.name
             self._on_file_change(str(select.value))
         self.app.notify(message, severity="success" if ok else "error")
+        if ok:
+            self.app.push_screen(
+                ConfirmationModal(
+                    "Use generated rubric",
+                    f"Replace the rubric configured for assignment "
+                    f"{config_path.parent.parent.name}/{config_path.parent.name} "
+                    f"with rubrics/{out.name}?",
+                    [("Replace", "replace")],
+                ),
+                lambda choice: self._use_generated_rubric(
+                    choice, config_path, f"rubrics/{out.name}"
+                ),
+            )
+
+    def _use_generated_rubric(
+        self, choice: str | None, config_path: Path, rubric_ref: str
+    ) -> None:
+        if choice != "replace":
+            return
+        try:
+            doc = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+            grading = doc.setdefault("grading", tomlkit.table())
+            grading["rubric"] = rubric_ref
+            config_path.write_text(tomlkit.dumps(doc), encoding="utf-8")
+        except (OSError, tomlkit.exceptions.ParseError, TypeError) as exc:
+            self.app.notify(
+                f"Could not update assignment rubric: {exc}", severity="error"
+            )
+            return
+        self.app.notify(f"Assignment rubric set to {rubric_ref}", severity="success")
 
     def _select_first_file(self) -> None:
         """Point the Select at the first remaining file, or New when empty."""

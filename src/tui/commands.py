@@ -71,7 +71,7 @@ class TataCommands(Provider):
     async def search(self, query: str) -> Hits:
         """Fuzzy-match the current view's commands against the query."""
         matcher = self.matcher(query)
-        help_text, rows = self._entries()
+        help_text, rows = self._enabled_entries()
         for name, key_hint, target, action in rows:
             if (score := matcher.match(name)) > 0:
                 label = _label(name, key_hint)
@@ -85,7 +85,7 @@ class TataCommands(Provider):
 
     async def discover(self) -> Hits:
         """The current view's commands, shown before the user types."""
-        help_text, rows = self._entries()
+        help_text, rows = self._enabled_entries()
         for name, key_hint, target, action in rows:
             yield DiscoveryHit(
                 _label(name, key_hint),
@@ -93,6 +93,20 @@ class TataCommands(Provider):
                 text=_label(name, key_hint),
                 help=help_text,
             )
+
+    def _enabled_entries(self) -> tuple[str, list[Row]]:
+        """``_entries`` minus rows the target's ``check_action`` disables/hides.
+
+        Palette rows bypass key-binding gating, so re-apply it here (B6/B9):
+        only ``True`` keeps a row (``None`` = disabled-but-visible in the footer,
+        ``False`` = hidden — neither should be runnable from the palette).
+        """
+        help_text, rows = self._entries()
+        return help_text, [
+            row
+            for row in rows
+            if row[2].check_action(row[3], ()) is True  # type: ignore[attr-defined]
+        ]
 
     def _entries(self) -> tuple[str, list[Row]]:
         """``(context help, rows)`` for the calling screen.

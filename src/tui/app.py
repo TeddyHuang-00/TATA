@@ -115,6 +115,11 @@ class AppState:
             self.assignments_dir / course.dir_name,
             threshold_pct=threshold_pct,
         )
+        # Keep current_assignment pointing at the fresh scan object (B2).
+        current = self.current_assignment
+        if current is not None:
+            fresh = {a.dir_name: a for a in self.assignments}
+            self.current_assignment = fresh.get(current.dir_name, current)
 
 
 def _fmt_score(value: float | None) -> str:
@@ -259,10 +264,6 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         state = self.state
         if state.current_course is not None:
             state.load_assignments(state.current_course)
-            current = state.current_assignment
-            if current is not None:
-                fresh = {a.dir_name: a for a in state.assignments}
-                state.current_assignment = fresh.get(current.dir_name, current)
         self.render_level()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -297,6 +298,7 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         )
 
         if state.dashboard_level == "global":
+            state.refresh_courses()  # B1: aggregates change at assignment level
             breadcrumb.update("Global")
             table.add_columns(
                 "Course",
@@ -328,7 +330,12 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
                 empty,
                 "No courses match the search."
                 if self._search
-                else "No courses yet. Press `c` to import (configure .env first).",
+                else (
+                    "No courses yet. Press `c` to import."
+                    if state.env_state.get("has_env")
+                    else "No courses yet. Configure .env (CANVAS_BASE_URL, "
+                    "CANVAS_ACCESS_TOKEN) to import from Canvas."
+                ),
                 table,
                 workspace,
             )
@@ -385,7 +392,7 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
                 empty,
                 "No assignments match the filter/search."
                 if self._filter is not None or self._search
-                else "No assignments in this course yet.",
+                else "No assignments in this course yet. Press `c` to import.",
                 table,
                 workspace,
             )
@@ -625,6 +632,10 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         # the worker's ('done', …) marker lands (probe: job kept running
         # after esc; ws._job / active_job released on finish).
         state = self.state
+        search = self.query_one("#search-input", Input)
+        if self._search and search.has_focus:
+            search.value = ""  # U1: Esc clears a non-empty filter (Changed re-renders)
+            return
         self._remember_selection()
         self._sort = None  # level change resets sort to default name asc
         if state.dashboard_level == "assignment":
@@ -649,7 +660,7 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
     # ---------- actions: import / config / fetch / plagiarism / review / filter ----------
 
     def action_import_item(self) -> None:
-        if self._job is not None:
+        if self._job is not None or self.state.active_job is not None:
             self.app.notify("A job is already running", severity="warning")
             return
         if self.state.dashboard_level == "global":
@@ -709,10 +720,22 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         course = self.state.current_course
         if course is None or course.course_id is None:
             return
+        if self.state.active_job is not None:  # B7: refuse before writing config
+            self.app.notify(
+                f"'{self.state.active_job}' is running — finish or cancel it first",
+                severity="warning",
+            )
+            return
         config_dir = self.state.assignments_dir / course.dir_name / str(aid)
-        config_dir.mkdir(parents=True, exist_ok=True)
         config_path = config_dir / "config.toml"
-        edit_config(config_path, {"grading": value})
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            edit_config(config_path, {"grading": value})
+        except (ValueError, OSError) as exc:  # B7: corrupt config / write failure
+            self.app.notify(
+                f"Could not write assignment config: {exc}", severity="error"
+            )
+            return
         if name:
             seed_assignment_alias(
                 self.state.assignments_dir / course.dir_name, aid, name
@@ -953,7 +976,7 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
             else:
                 lines.append(f"[dim]○ {label}[/dim]")
         panel = self.query_one("#dash-progress", Static)
-        panel.display = True
+        panel.display = self.state.dashboard_level == "course"  # B3
         panel.update("\n".join(lines))
         if self.state.active_job == "fetch-all":
             done = sum(1 for t in self._fetch_progress if t["state"] != "pending")
@@ -1078,6 +1101,8 @@ class DashboardScreen(Vertical):  # ruff: ignore[too-many-public-methods]
         if error is not None:
             self.query_one("#dash-status", Static).update("Job failed")
             self.app.notify(f"Job failed: {error}", severity="error")
+            if stage == "fetch-all":
+                self._fetch_done = True  # R3: don't leave the progress panel stuck
             return
         progress = self._fetch_progress
         fetch_all = stage == "fetch-all" and progress is not None
