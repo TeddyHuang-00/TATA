@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -9,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from instructor.core import IncompleteOutputException
 from pydantic import AliasChoices, BaseModel, Field
 
 from .assignment_config import (
@@ -329,6 +331,27 @@ def _read_reference_text(reference_file: Path) -> str:
     raise ValueError(msg)
 
 
+# Retry image caps (longest edge in px) tried in order when the provider cuts
+# generation off at its context window (finish_reason="length"): for a prompt
+# already at the window edge, smaller screenshots are the one input facet that
+# can shrink without dropping graded text.
+_RETRY_IMAGE_SIDES = (1024, 768)
+
+
+def _shrink_b64_images(images: list[str], max_side: int) -> list[str]:
+    """Base64 PNGs re-encoded with every longest edge capped at ``max_side``."""
+    from PIL import Image  # ruff: ignore[import-outside-top-level]
+
+    shrunk: list[str] = []
+    for payload in images:
+        image = Image.open(io.BytesIO(base64.b64decode(payload)))
+        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        shrunk.append(base64.b64encode(buffer.getvalue()).decode())
+    return shrunk
+
+
 def _grade_one_submission(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     client: Any,  # ruff: ignore[any-type]
     model_name: str,
@@ -338,13 +361,29 @@ def _grade_one_submission(  # ruff: ignore[too-many-arguments, too-many-position
     student_text: str,
     images: list[str] | None = None,
 ) -> BaseModel:
-    return client.chat.completions.create(
-        model=model_name,
-        response_model=response_model,
-        messages=_build_grading_messages(
-            system_prompt, reference_text, student_text, images
-        ),
-    )
+    attempt_images = images
+    for attempt in range(1 + (len(_RETRY_IMAGE_SIDES) if images else 0)):
+        try:
+            return client.chat.completions.create(
+                model=model_name,
+                response_model=response_model,
+                messages=_build_grading_messages(
+                    system_prompt, reference_text, student_text, attempt_images
+                ),
+            )
+        except IncompleteOutputException as exc:
+            # Provider ran out of context before the JSON finished (input
+            # already fills its window). Retry with smaller screenshots — the
+            # one input facet that can shrink without dropping graded text —
+            # and re-raise once the last rung is used up.
+            if not images or attempt == len(_RETRY_IMAGE_SIDES):
+                raise
+            try:
+                attempt_images = _shrink_b64_images(images, _RETRY_IMAGE_SIDES[attempt])
+            except Exception:
+                raise exc from None  # unshrinkable screenshots: truncation stands
+    msg = "unreachable: the retry loop returns or raises on every attempt"
+    raise RuntimeError(msg)
 
 
 def _build_grading_messages(

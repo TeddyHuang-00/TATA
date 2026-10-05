@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 import threading
@@ -10,12 +11,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from instructor import Mode
+from instructor.core import IncompleteOutputException
+from PIL import Image
+from pydantic import BaseModel
 from src.shared import grading as grading_mod
 from src.shared.assignment_config import load_assignment_file
 from src.shared.caching import cache_file, save_cache_file
 from src.shared.grading import (
     _GRADE_HOOK_MOUNTS,
     _build_grading_messages,
+    _grade_one_submission,
     build_client,
     grade_assignment,
     grading_pending,
@@ -607,6 +612,97 @@ class TestBuildClient:
 
             call_kwargs = mock_openai.call_args.kwargs
             assert "temperature" not in call_kwargs
+
+
+def _png_b64(size: int) -> str:
+    """A solid-colour ``size``x``size`` PNG encoded as base64."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (size, size), "red").save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+class TestGradeRetryOnContextTruncation:
+    """Length-truncated completions retry with progressively smaller images.
+
+    Providers that cut generation off at their context window surface as
+    ``IncompleteOutputException`` (finish_reason="length"); the retry shrinks
+    the screenshot payload — the one grade input that can shrink without
+    dropping graded text.
+    """
+
+    @staticmethod
+    def _client(
+        calls: list[list[str]], *, failures: int
+    ) -> tuple[MagicMock, MagicMock]:
+        result = MagicMock()
+
+        def create(**kwargs: object) -> MagicMock:
+            content = kwargs["messages"][-1]["content"]  # type: ignore[index]
+            if isinstance(content, str):
+                calls.append([])
+            else:
+                calls.append([
+                    part["image_url"]["url"]
+                    for part in content
+                    if part["type"] == "image_url"
+                ])
+            if len(calls) <= failures:
+                raise IncompleteOutputException()
+            return result
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = create
+        return client, result
+
+    @staticmethod
+    def _run(client: MagicMock, images: list[str] | None) -> BaseModel:
+        return _grade_one_submission(
+            client=client,
+            model_name="m1",
+            response_model=BaseModel,
+            system_prompt="sys",
+            reference_text="",
+            student_text="answer",
+            images=images,
+        )
+
+    def test_retries_with_shrunk_images_then_succeeds(self) -> None:
+        calls: list[list[str]] = []
+        client, result = self._client(calls, failures=1)
+        payload = _png_b64(1600)
+
+        graded = self._run(client, [payload])
+
+        assert graded is result
+        assert len(calls) == 2
+        assert calls[0] == [f"data:image/png;base64,{payload}"]
+        shrunk_url = calls[1][0]
+        shrunk = Image.open(io.BytesIO(base64.b64decode(shrunk_url.split(",", 1)[1])))
+        assert max(shrunk.size) == 1024
+
+    def test_uses_each_rung_then_reraises(self) -> None:
+        calls: list[list[str]] = []
+        client, _ = self._client(calls, failures=99)
+
+        with pytest.raises(IncompleteOutputException):
+            self._run(client, [_png_b64(1600)])
+
+        # full-size, then 1024px, then 768px
+        assert len(calls) == 3
+        sizes = [
+            max(Image.open(io.BytesIO(base64.b64decode(urls[0].split(",", 1)[1]))).size)
+            for urls in calls
+        ]
+        assert sizes == [1600, 1024, 768]
+
+    def test_no_images_single_attempt(self) -> None:
+        calls: list[list[str]] = []
+        client, _ = self._client(calls, failures=99)
+
+        with pytest.raises(IncompleteOutputException):
+            self._run(client, None)
+
+        assert calls == [[]]
 
 
 def test_grade_cancel_before_submit_returns_immediately(
