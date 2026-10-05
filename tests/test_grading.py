@@ -16,7 +16,7 @@ from PIL import Image
 from pydantic import BaseModel
 from src.shared import grading as grading_mod
 from src.shared.assignment_config import load_assignment_file
-from src.shared.caching import cache_file, save_cache_file
+from src.shared.caching import cache_file, load_cache_file, save_cache_file
 from src.shared.grading import (
     _GRADE_HOOK_MOUNTS,
     _build_grading_messages,
@@ -59,7 +59,9 @@ def _setup_grade_env(tmp_path: Path, *, visual_evaluation: bool = False) -> Path
 
 def _fake_client(calls: list) -> MagicMock:
     result = MagicMock()
-    result.model_dump_json.return_value = json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}})
+    result.model_dump_json.return_value = json.dumps({
+        "c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}
+    })
 
     def create(**kwargs: object) -> MagicMock:
         calls.append(kwargs)
@@ -732,14 +734,16 @@ def test_grade_cancel_mid_run_cancels_queued_futures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cooperative cancel mid-run: the in-flight call finishes (honest
-    ceiling), the results processed so far are returned, and submissions
-    still queued when the run reacts are cancelled (``cancel_futures``) —
-    with the slow tail tasks the single worker cannot drain the queue
-    before the main loop's shutdown lands.
+    ceiling) and the submissions still queued when the run reacts are
+    cancelled (``cancel_futures``) — with the slow tail tasks the single
+    worker cannot drain the queue before the main loop's shutdown lands.
 
-    The one racy slot is the item a freed worker grabs at the exact
-    completion instant; the assertion only requires that everything beyond
-    that slot never starts.
+    Results that completed before the run reacted are harvested (audit:
+    paid LLM work is not redone on rerun), so the 100003 call that was in
+    flight at cancel time lands as graded. The one racy slot is the item a
+    freed worker grabs at the exact completion instant: it finishes its
+    slow call during the executor shutdown but stays uncollected, and the
+    assertion only requires that everything beyond that slot never starts.
     """
     config_path = _setup_grade_env(tmp_path)
     a_dir = tmp_path / "data" / "c1" / "a1"
@@ -762,7 +766,17 @@ def test_grade_cancel_mid_run_cancels_queued_futures(
         if submission.stem >= "100003":  # slow tail: held "in flight" 0.5 s
             time.sleep(0.5)
             slow_done.append(submission.stem)
-        return submission.name, json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}}), None
+        return (
+            submission.name,
+            json.dumps({
+                "c1": {
+                    "rating": "correct",
+                    "chain_of_thought": "ok",
+                    "feedback": "good",
+                }
+            }),
+            None,
+        )
 
     monkeypatch.setattr(grading_mod, "_run_single_grading_task", fake_task)
 
@@ -793,11 +807,14 @@ def test_grade_cancel_mid_run_cancels_queued_futures(
     assert sorted(p.stem for p in (a_dir / "graded").glob("*.json")) == [
         "100001",
         "100002",
-    ]  # post-cancel results are dropped, incl. the finished in-flight one
+        "100003",
+    ]  # 100003 completed before the cancel was observed -> harvested; the
+    # still-running tail slot (100004) and the cancelled queue (100005)
+    # never land on disk
     result = result_box[0]
     assert result is not None
-    assert result["success"] == 2
-    assert result["total"] == 2
+    assert result["success"] == 3
+    assert result["total"] == 3
     assert result["errors"] == 0
 
 
@@ -808,7 +825,10 @@ def test_grade_cancel_during_encode_skips_the_submit_pass(
     screenshots stops the submit pass at the next boundary — the remaining
     submissions are neither encoded nor submitted, so no text-only grade
     can slip past the visual-evaluation cache check. Mutating the loop-top
-    check in ``grade_assignment`` must fail this test."""
+    check in ``grade_assignment`` must fail this test. The submission whose
+    own encode ran before the cancel landed is already queued: it finishes
+    and is harvested (audit: paid LLM work is not redone on rerun), and it
+    is the only grade this run writes."""
     config_path = _setup_grade_env(tmp_path, visual_evaluation=True)
     a_dir = tmp_path / "data" / "c1" / "a1"
     for uid in ("100002", "100003"):
@@ -863,16 +883,22 @@ def test_grade_cancel_during_encode_skips_the_submit_pass(
     assert len(submits) == 1, f"only the in-flight submission queued: {submits}"
     assert result == {
         "stage": "grade",
-        "success": 0,
+        "success": 1,
         "errors": 0,
-        "total": 0,
-        "success_rate": 0,
+        "total": 1,
+        "success_rate": 100.0,
     }
-    assert not list((a_dir / "graded").glob("*.json"))  # nothing new on disk
+    # Only the submission that was encoded + submitted before the cancel is
+    # graded — 100002/100003 never reached the client.
+    assert sorted(p.stem for p in (a_dir / "graded").glob("*.json")) == ["100001"]
+
+
 # --- audit fixes: stale prune, hook validation, cancel harvest -------------
 
 
-def test_grade_prunes_stale_graded_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_grade_prunes_stale_graded_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Audit: graded/<stem>.json for a submission removed from processed/ was
     never pruned and score kept treating it as a real student."""
     config_path = _setup_grade_env(tmp_path)
@@ -881,11 +907,12 @@ def test_grade_prunes_stale_graded_files(tmp_path: Path, monkeypatch: pytest.Mon
     a_dir = config_path.parent
     (a_dir / "graded").mkdir()
     (a_dir / "graded" / "999999.json").write_text(
-        json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}}), encoding="utf-8"
+        json.dumps({
+            "c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}
+        }),
+        encoding="utf-8",
     )
-    save_cache_file(
-        cache_file(a_dir, "grading"), {"999999": {"hash": "stale"}}
-    )
+    save_cache_file(cache_file(a_dir, "grading"), {"999999": {"hash": "stale"}})
 
     result = grade_assignment(config_path)
 
@@ -897,13 +924,17 @@ def test_grade_prunes_stale_graded_files(tmp_path: Path, monkeypatch: pytest.Mon
     assert "100001" in envelope["data"]
 
 
-def test_after_hook_invalid_json_not_trusted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_after_hook_invalid_json_not_trusted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Audit: the after hook's result_json was trusted verbatim — a
     hook-supplied {} was written and marked cached until score errored."""
     config_path = _setup_grade_env(tmp_path)
     calls: list[MagicMock] = []
     _patch_grade_deps(monkeypatch, calls)
-    hooks = config_path.parent.parent / "hooks"
+    # HookRuntime resolves hooks.dir against config_root (the data/ root):
+    # tmp_path/data/hooks, not the course dir.
+    hooks = tmp_path / "data" / "hooks"
     hooks.mkdir(parents=True, exist_ok=True)
     (hooks / "bad_after.py").write_text(
         "import json, sys\n"
@@ -924,13 +955,14 @@ def test_after_hook_invalid_json_not_trusted(tmp_path: Path, monkeypatch: pytest
     assert result["success"] == 0
     assert result["errors"] == 1
     assert not (config_path.parent / "graded" / "100001.json").exists()
-    envelope = json.loads(
-        cache_file(config_path.parent, "grading").read_text(encoding="utf-8")
-    )
-    assert "100001" not in envelope["data"]
+    # A rejected grade must not be marked cached; the failed run writes no
+    # cache record at all (a missing file reads as {}).
+    assert "100001" not in load_cache_file(cache_file(config_path.parent, "grading"))
 
 
-def test_grade_writes_graded_json_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_grade_writes_graded_json_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Audit: graded JSON was write_text — a crash mid-write left a truncated
     file the cache would trust. It is now same-dir temp + replace."""
     config_path = _setup_grade_env(tmp_path)
@@ -946,7 +978,9 @@ def test_grade_writes_graded_json_atomically(tmp_path: Path, monkeypatch: pytest
     json.loads(text)  # complete, parseable
 
 
-def test_cancel_harvests_completed_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cancel_harvests_completed_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Audit: cancel used to discard already-completed futures — paid LLM
     work was redone on rerun. Completed results must be written + cached."""
     config_path = _setup_grade_env(tmp_path)
@@ -960,7 +994,17 @@ def test_cancel_harvests_completed_results(tmp_path: Path, monkeypatch: pytest.M
     def fake_task(submission: Path, **kwargs: object) -> tuple[str, str, None]:
         if submission.stem == "100001":
             time.sleep(1.5)  # outlives the cancel
-        return submission.name, json.dumps({"c1": {"rating": "correct", "chain_of_thought": "ok", "feedback": "good"}}), None
+        return (
+            submission.name,
+            json.dumps({
+                "c1": {
+                    "rating": "correct",
+                    "chain_of_thought": "ok",
+                    "feedback": "good",
+                }
+            }),
+            None,
+        )
 
     monkeypatch.setattr(grading_mod, "_run_single_grading_task", fake_task)
     cancel = threading.Event()

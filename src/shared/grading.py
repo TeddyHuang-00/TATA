@@ -712,13 +712,22 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
                 error_count += 1
 
         recorded: set[Future] = set()
-        cancelled = False
+        harvest: list[Future] = []
         for future in as_completed(future_to_submission):
             if cancel_event is not None and cancel_event.is_set():
+                # Snapshot what finished before this observation. The shutdown
+                # below waits out the running calls, and only this snapshot is
+                # harvested: results still in flight when the run reacts are
+                # dropped (the honest ceiling, synchronous calls cannot be
+                # killed) and the cancelled queued futures are not errors.
+                harvest = [
+                    f
+                    for f in future_to_submission
+                    if f.done() and not f.cancelled() and f not in recorded
+                ]
                 # Cancel queued (not yet started) submissions; running calls
                 # finish (the executor's own shutdown waits for them).
                 executor.shutdown(cancel_futures=True)
-                cancelled = True
                 print(
                     "[cancelled] grade stopped — queued submissions dropped, "
                     "in-flight calls finish"
@@ -726,14 +735,11 @@ def grade_assignment(  # ruff: ignore[too-many-branches, too-many-statements, to
                 break
             _record_result(future)
             recorded.add(future)
-        if cancelled:
-            # Harvest results that completed before the cancel was observed:
-            # paid LLM work must not be redone on rerun (audit: cancel used
-            # to discard them). In-flight calls' results are dropped — the
-            # honest ceiling, synchronous calls cannot be killed.
-            for f in future_to_submission:
-                if f not in recorded and f.done():
-                    _record_result(f)
+        # Harvest results that completed before the cancel was observed: paid
+        # LLM work must not be redone on rerun (audit: cancel used to discard
+        # them).
+        for f in harvest:
+            _record_result(f)
 
     if hook_runtime is not None:
         hook_runtime.run(
