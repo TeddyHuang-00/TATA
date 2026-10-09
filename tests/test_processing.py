@@ -70,6 +70,26 @@ def test_ipynb_converts_to_markdown(tmp_path: Path) -> None:
     assert "print(42)" in content
 
 
+def test_read_notebook_normalizes_missing_fields(tmp_path: Path) -> None:
+    from src.shared.convert import read_notebook
+
+    nb_path = tmp_path / "bare.ipynb"
+    nb_path.write_text(
+        json.dumps({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{"cell_type": "code", "metadata": {}, "source": "x = 1"}],
+        }),
+        encoding="utf-8",
+    )
+
+    nb = read_notebook(nb_path)
+
+    assert isinstance(nb.cells[0].id, str)
+    assert nb.cells[0].id
+
+
 def test_reference_text_converts_ipynb_and_html(tmp_path: Path) -> None:
     nb = nbformat.v4.new_notebook(
         cells=[
@@ -1591,12 +1611,12 @@ def test_convert_ipynb_passes_template_config(
         def __init__(self, **kwargs: object) -> None:
             captured.update(kwargs)
 
-        def from_filename(self, path: str) -> tuple[str, dict]:
+        def from_notebook_node(self, nb: object, resources: dict) -> tuple[str, dict]:
             return "# nb\n", {}
 
     monkeypatch.setattr("nbconvert.MarkdownExporter", FakeExporter)
     nb = tmp_path / "nb.ipynb"
-    nb.write_text("{}", encoding="utf-8")
+    nbformat.write(nbformat.v4.new_notebook(), nb)
 
     tpl_dir = tmp_path / "templates"
     convert_ipynb_to_markdown(

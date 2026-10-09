@@ -9,10 +9,14 @@ import shutil
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anydoc
 
 from .assignment_config import InputFormat
+
+if TYPE_CHECKING:
+    from nbformat import NotebookNode
 
 SUPPORTED_INPUT_FORMATS: tuple[InputFormat, ...] = (
     "ipynb",
@@ -232,6 +236,20 @@ def _normalize_dtype_label_html(content: str) -> str:
     )
 
 
+def read_notebook(path: Path) -> NotebookNode:
+    """Read a notebook as nbformat v4 and normalize it (missing fields filled in).
+
+    ponytail: nbformat will stop normalizing silently, so every notebook read goes
+    through this one helper instead of relying on nbformat's implicit repair.
+    """
+    import nbformat  # ruff: ignore[import-outside-top-level]
+    from nbformat.validator import normalize  # ruff: ignore[import-outside-top-level]
+
+    nb = nbformat.read(str(path), as_version=4)
+    _changes, nb = normalize(nb)
+    return nb
+
+
 def convert_ipynb_to_markdown(
     input_path: Path,
     output_path: Path,
@@ -249,7 +267,12 @@ def convert_ipynb_to_markdown(
         kwargs["extra_template_basedirs"] = [str(template_dir)]
     exporter = MarkdownExporter(**kwargs)
     try:
-        content, _resources = exporter.from_filename(str(input_path))
+        content, _resources = exporter.from_notebook_node(
+            read_notebook(input_path),
+            resources={
+                "metadata": {"name": input_path.stem, "path": str(input_path.parent)}
+            },
+        )
     except Exception as exc:
         msg = f"Failed to convert notebook {input_path}: {exc}"
         raise RuntimeError(msg) from exc

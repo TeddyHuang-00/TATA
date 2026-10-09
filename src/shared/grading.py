@@ -309,7 +309,17 @@ def _read_reference_text(reference_file: Path) -> str:
 
     if suffix == ".ipynb":
         try:
-            return MarkdownExporter().from_filename(str(reference_file))[0]
+            from .convert import read_notebook  # ruff: ignore[import-outside-top-level]
+
+            return MarkdownExporter().from_notebook_node(
+                read_notebook(reference_file),
+                resources={
+                    "metadata": {
+                        "name": reference_file.stem,
+                        "path": str(reference_file.parent),
+                    }
+                },
+            )[0]
         except Exception as exc:
             msg = (
                 f"Failed to convert reference notebook to markdown: {reference_file}\n"

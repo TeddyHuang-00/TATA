@@ -102,10 +102,9 @@ def _student_uid(file_name: str) -> str | None:
 
 
 def _extract_notebook_code(input_path: Path) -> str:
-    import nbformat  # ruff: ignore[import-outside-top-level]
+    from .convert import read_notebook  # ruff: ignore[import-outside-top-level]
 
-    with input_path.open("r", encoding="utf-8") as file:
-        notebook = nbformat.read(file, as_version=4)
+    notebook = read_notebook(input_path)
     code_cells = [
         str(cell.source).strip()
         for cell in notebook.cells
